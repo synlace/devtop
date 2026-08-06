@@ -1,0 +1,38 @@
+---
+title: "Data Layer"
+---
+
+# Data Layer
+
+## Dual Storage Model
+
+The filesystem is the source of truth. SQLite acts as a read cache synced from files on startup and via a file watcher.
+
+### Sync Process
+
+1. On startup, all `.mdx` and `.md` files under `.devtop/docs/` and `.devtop/tickets/` are parsed
+2. YAML frontmatter is extracted and stored in SQLite
+3. A file watcher (`fsnotify`) re-syncs on file changes
+4. All agent writes go to the filesystem first, then update the cache
+
+## Key Modules
+
+| File | Responsibility |
+|------|---------------|
+| `db.go` | SQLite database layer (documents, tickets, threads CRUD) |
+| `sync.go` | Filesystem ↔ DB sync (MDX parsing, YAML frontmatter, rendering) |
+| `models.go` | AI model cache (fetch from API, cache to disk) |
+
+## MDX Format
+
+Documentation files use MDX — YAML frontmatter with a markdown body. This makes them compatible with Starlight, Next.js, Docusaurus, and other MDX-supporting tools.
+
+```yaml
+---
+title: "My Document"
+---
+
+# My Document
+
+Content here...
+```

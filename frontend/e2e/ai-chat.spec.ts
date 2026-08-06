@@ -1,0 +1,71 @@
+import { test, expect, type Page } from '@playwright/test'
+
+// Real-AI specs are opt-in and make live (paid, non-deterministic) model calls
+// through the actual CopilotKit runtime on :4000. They're skipped unless the
+// stack was launched with DEVTOP_AI_TESTS=1 (see `just test ai`), which also
+// requires the OpenRouter key in devtop/.env.
+const aiEnabled = process.env.DEVTOP_AI_TESTS === '1'
+
+// CopilotKit auto-attaches its <cpk-web-inspector> overlay, which can swallow
+// pointer events in the chat panel.
+async function hideWebInspector(page: Page) {
+  await page.addStyleTag({ content: 'cpk-web-inspector, cpk-thread-inspector { display: none !important; }' })
+}
+
+// Send a message in the auto-created chat thread and return the latest
+// assistant message locator. Tool results (fixture docs/tickets) are
+// deterministic, so assertions target content from them rather than the
+// model's wording.
+//
+// Threads persist server-side, so the browser restores the previous test's
+// conversation on load — always assert on the LAST user message, which is the
+// one just sent.
+async function ask(page: Page, prompt: string) {
+  const input = page.getByTestId('copilot-chat-textarea')
+  await expect(input).toBeVisible()
+  await input.fill(prompt)
+  await page.keyboard.press('Enter')
+
+  const userMessage = page.getByTestId('copilot-user-message').last()
+  await expect(userMessage).toContainText(prompt, { timeout: 30_000 })
+
+  return page.getByTestId('copilot-assistant-message').last()
+}
+
+test('@ai chat answers a ticket query with a real model and tool results', async ({ page }) => {
+  test.skip(!aiEnabled, 'AI tests opt-in: run with `just test ai` (needs AI_API_KEY in devtop/.env)')
+  test.setTimeout(180_000)
+
+  await page.goto('/')
+  await hideWebInspector(page)
+
+  const reply = await ask(page, 'Which tickets are currently open?')
+  await expect(reply).toContainText('Fix the login button', { timeout: 120_000 })
+})
+
+test('@ai chat answers a doc question from the read_doc tool', async ({ page }) => {
+  test.skip(!aiEnabled, 'AI tests opt-in: run with `just test ai` (needs AI_API_KEY in devtop/.env)')
+  test.setTimeout(180_000)
+
+  await page.goto('/')
+  await hideWebInspector(page)
+
+  const reply = await ask(page, 'Use the read_doc tool to read docs/architecture/overview.mdx and tell me what it says.')
+  await expect(reply).toContainText(/Fixture architecture content|architecture/i, { timeout: 120_000 })
+})
+
+test('@ai chat creates a ticket that appears on the board', async ({ page }) => {
+  test.skip(!aiEnabled, 'AI tests opt-in: run with `just test ai` (needs AI_API_KEY in devtop/.env)')
+  test.setTimeout(180_000)
+
+  await page.goto('/')
+  await hideWebInspector(page)
+
+  const reply = await ask(page, 'Create a new ticket titled "AI e2e ticket" with priority high and assignee alice.')
+  await expect(reply).toContainText('AI e2e ticket', { timeout: 120_000 })
+
+  // The tool wrote the ticket into the throwaway fixture; the board re-fetches
+  // on navigation, so the new row must appear.
+  await page.locator('nav').getByRole('link', { name: 'Board' }).click()
+  await expect(page.getByRole('row', { name: /AI e2e ticket/ })).toBeVisible()
+})

@@ -1,0 +1,40 @@
+---
+title: "Configuration"
+---
+
+# Configuration
+
+Environment variables are loaded from `.env` in the project root. See `.env.example` for defaults.
+
+## Core Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `8000` | HTTP server port |
+| `DB_PATH` | `.devtop/data/devtop.db` | SQLite database file |
+
+## AI / LLM
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LLM_API_KEY` | — | OpenAI-compatible API key (OpenRouter, LM Studio, etc.) |
+| `LLM_BASE_URL` | `https://openrouter.ai/api/v1` | API base URL |
+| `LLM_MODEL` | `openai/gpt-4o` | Model identifier |
+| `MCP_SERVERS` | — | JSON array of MCP server configs |
+
+## MCP Server Config
+
+The `MCP_SERVERS` variable accepts a JSON array:
+
+```json
+[
+  {
+    "name": "my-server",
+    "transport": "stdio",
+    "command": "node",
+    "args": ["server.js"]
+  }
+]
+```
+
+Supported transports: `stdio`, `streamable-http`.

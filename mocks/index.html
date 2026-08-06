@@ -1,0 +1,1090 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>dk — docs + tickets</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Alpine.js for full interactivity -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            bgDark: '#070a13',
+            surfaceDark: '#0c101f',
+            borderDark: '#1e293b',
+            accentBlue: '#3b82f6',
+            accentPurple: '#8b5cf6',
+            textMuted: '#64748b',
+          },
+          fontFamily: {
+            sans: ['Geist', 'Inter', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+            mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    * { 
+      scrollbar-width: thin; 
+      scrollbar-color: #1e293b transparent; 
+      font-family: 'Geist', sans-serif;
+    }
+    ::-webkit-scrollbar {
+      width: 4px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #1e293b;
+      border-radius: 9999px;
+    }
+    .prose-custom h1 { font-size: 1.875rem; font-weight: 700; letter-spacing: -0.025em; margin-bottom: 1rem; color: #f8fafc; }
+    .prose-custom h2 { font-size: 1.25rem; font-weight: 600; letter-spacing: -0.02em; margin-top: 2rem; margin-bottom: 0.75rem; color: #f1f5f9; border-bottom: 1px solid #1e293b; padding-bottom: 0.5rem; }
+    .prose-custom h3 { font-size: 1.0625rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.5rem; color: #e2e8f0; }
+    .prose-custom p { margin-bottom: 1rem; line-height: 1.7; color: #cbd5e1; }
+    .prose-custom code { font-family: 'JetBrains Mono', monospace; background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(148, 163, 184, 0.1); padding: 0.125rem 0.375rem; border-radius: 6px; font-size: 0.84rem; color: #e2e8f0; }
+    .prose-custom pre { background: #070a13; border: 1px solid #1e293b; border-radius: 10px; padding: 1.25rem; margin: 1.25rem 0; overflow-x: auto; }
+    .prose-custom pre code { font-family: 'JetBrains Mono', monospace; background: none; border: none; padding: 0; font-size: 0.8125rem; color: #cbd5e1; line-height: 1.6; }
+    .prose-custom ul { list-style: none; padding-left: 0; margin-bottom: 1rem; }
+    .prose-custom ul li { position: relative; padding-left: 1.25rem; margin-bottom: 0.5rem; color: #cbd5e1; }
+    .prose-custom ul li::before { content: "•"; position: absolute; left: 0.25rem; color: #3b82f6; font-weight: bold; }
+    .prose-custom blockquote { border-left: 4px solid #3b82f6; padding-left: 1.25rem; color: #94a3b8; font-style: italic; margin: 1.5rem 0; background: rgba(59, 130, 246, 0.03); border-radius: 0 8px 8px 0; padding-top: 0.5rem; padding-bottom: 0.5rem; }
+    
+    .ticket-status { @apply inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border; }
+    .ticket-status.open { background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+    .ticket-status.in-progress { background: rgba(245, 158, 11, 0.1); border-color: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+    .ticket-status.done { background: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.2); color: #34d399; }
+    .ticket-status.wontfix { background: rgba(139, 92, 246, 0.1); border-color: rgba(139, 92, 246, 0.2); color: #a78bfa; }
+    
+    .priority-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; }
+    .priority-dot.urgent { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+    .priority-dot.high { background: #f97316; }
+    .priority-dot.medium { background: #eab308; }
+    .priority-dot.low { background: #6b7280; }
+  </style>
+</head>
+<body 
+  class="bg-bgDark text-slate-300 antialiased h-screen overflow-hidden selection:bg-accentBlue/30 selection:text-white"
+  x-data="dkState()"
+  x-init="init()"
+>
+
+<div class="flex h-full overflow-hidden">
+
+  <!-- ================= SIDEBAR (PANEL 1) ================= -->
+  <aside class="w-64 bg-[#05070d]/90 border-r border-borderDark/60 flex-shrink-0 flex flex-col z-10">
+    <!-- Header -->
+    <div class="px-5 py-4 border-b border-borderDark/40 flex items-center justify-between">
+      <div class="flex items-center gap-2.5">
+        <div class="h-7 w-7 rounded-lg bg-gradient-to-tr from-accentBlue to-accentPurple flex items-center justify-center font-bold text-white text-sm shadow-lg shadow-accentBlue/20">
+          d
+        </div>
+        <div>
+          <div class="flex items-center gap-1.5">
+            <span class="text-sm font-semibold text-slate-100 tracking-tight">dk</span>
+            <span class="text-[10px] text-slate-500 font-mono bg-borderDark/40 px-1 py-0.2 rounded border border-borderDark/30">v0.1.0</span>
+          </div>
+          <div class="text-[10px] text-slate-500 leading-none">local environment</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="flex-1 overflow-y-auto p-3.5 space-y-5">
+      <!-- Docs Section -->
+      <div>
+        <div class="flex items-center justify-between px-3 mb-1.5">
+          <span class="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Documentation</span>
+          <span class="text-[10px] font-mono text-slate-600">5 pgs</span>
+        </div>
+        <div class="space-y-0.5">
+          <template x-for="item in docPages" :key="item.id">
+            <button 
+              @click="switchPage(item.id)"
+              class="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-150 text-left group"
+              :class="activePage === item.id ? 'bg-accentBlue/10 text-slate-100 border border-accentBlue/20' : 'text-slate-400 hover:text-slate-200 hover:bg-borderDark/20 border border-transparent'"
+            >
+              <svg class="w-4 h-4 transition-colors duration-150" :class="activePage === item.id ? 'text-accentBlue' : 'text-slate-500 group-hover:text-slate-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" :d="item.icon" />
+              </svg>
+              <span x-text="item.title"></span>
+            </button>
+          </template>
+        </div>
+      </div>
+
+      <!-- Tickets Section -->
+      <div>
+        <div class="flex items-center justify-between px-3 mb-1.5">
+          <span class="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Tickets</span>
+          <span class="text-[10px] font-mono text-slate-500 bg-borderDark/40 px-1.5 py-0.2 rounded-full border border-borderDark/30" x-text="tickets.length"></span>
+        </div>
+        <div class="space-y-0.5">
+          <button 
+            @click="switchPage('ticket-board')"
+            class="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-150 text-left group"
+            :class="activePage === 'ticket-board' || activePage === 'ticket-detail' ? 'bg-accentPurple/10 text-slate-100 border border-accentPurple/20' : 'text-slate-400 hover:text-slate-200 hover:bg-borderDark/20 border border-transparent'"
+          >
+            <svg class="w-4 h-4 transition-colors duration-150" :class="activePage === 'ticket-board' || activePage === 'ticket-detail' ? 'text-accentPurple' : 'text-slate-500 group-hover:text-slate-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+            <span>Active Board</span>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Sidebar Footer -->
+    <div class="p-4 border-t border-borderDark/40 bg-[#03050a]/40">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></div>
+          <span class="text-[11px] text-slate-400 font-medium">Local Server</span>
+        </div>
+        <code class="text-[10px] text-slate-500 font-mono bg-borderDark/30 px-1.5 py-0.5 rounded border border-borderDark/20">:8000</code>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ================= CONTENT AREA (PANEL 2) ================= -->
+  <main class="flex-1 overflow-y-auto bg-bgDark border-r border-borderDark/60 flex flex-col relative">
+    
+    <!-- Header of Main Content -->
+    <header class="h-[57px] flex-shrink-0 border-b border-borderDark/40 px-8 flex items-center justify-between bg-bgDark/80 backdrop-blur-md sticky top-0 z-10">
+      <div class="flex items-center gap-2 text-xs font-medium text-slate-400">
+        <span>monorepo</span>
+        <svg class="w-3.5 h-3.5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+        <span class="text-slate-200 capitalize font-semibold" x-text="getContentBreadcrumb()"></span>
+      </div>
+      
+      <!-- Top Actions (Context Info) -->
+      <div class="flex items-center gap-3">
+        <span class="text-[11px] text-slate-500 flex items-center gap-1.5 font-mono">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+          read-only viewport
+        </span>
+      </div>
+    </header>
+
+    <!-- Dynamic Content Panels -->
+    <div class="flex-1 p-8 overflow-y-auto">
+      
+      <!-- 1. DOC: HOME -->
+      <div x-show="activePage === 'doc-home'" class="max-w-3xl mx-auto fade-in">
+        <article class="prose-custom">
+          <div class="flex items-center gap-2 mb-2 text-accentBlue text-xs font-semibold tracking-wider uppercase">
+            <span>Project Index</span>
+          </div>
+          <h1>monorepo</h1>
+          <p class="text-lg text-slate-400 font-light">
+            An ultra-lightweight dev toolbox that lives in your project. Document, track, and prompt your codebase to completion with no cloud or external services.
+          </p>
+          <blockquote>
+            Unified web interface with an embedded autonomous developer agent, entirely backed by plain markdown files in your repository.
+          </blockquote>
+
+          <h2>Why dk?</h2>
+          <p>
+            Traditional ticketing systems (Jira, Linear) and documentation engines (Confluence, GitBook) separate your codebase from your issues. <code>dk</code> joins them directly in your project. It’s perfect for solo devs and teams who commit their issues alongside their codebase.
+          </p>
+
+          <h2>Quick Start</h2>
+          <pre><code># 1. Clone your project
+git clone git@github.com:synlace/monorepo.git
+cd monorepo
+
+# 2. Boot up the unified dev platform
+export AI_API_KEY=sk-...
+just dk     # → http://localhost:8000</code></pre>
+
+          <h2>Project Structure</h2>
+          <p>
+            Your docs and tickets live entirely in raw markdown. You own your data.
+          </p>
+          <pre><code>monorepo/
+├── app.py          # FastAPI web server + asyncio agent loop
+├── docs/           # your document hierarchy (.md files)
+├── tickets/        # your tickets (.md files with frontmatter)
+├── templates/      # elegant Jinja2 layouts
+├── AGENTS.md       # the exact prompts directing your dev agent
+└── justfile        # simple developer recipes</code></pre>
+
+          <h2>Zero-Mutation Interface</h2>
+          <p>
+            Humans do not modify pages or tickets directly here. This viewport is entirely read-only. 
+            All creations, task updates, and modifications are triggered via the **Agent Chat** on the right. 
+            This keeps your logs perfectly structured and your updates intentional.
+          </p>
+        </article>
+      </div>
+
+      <!-- 2. DOC: ARCHITECTURE -->
+      <div x-show="activePage === 'doc-architecture'" class="max-w-3xl mx-auto fade-in">
+        <article class="prose-custom">
+          <div class="flex items-center gap-2 mb-2 text-accentBlue text-xs font-semibold tracking-wider uppercase">
+            <span>Engineering Docs</span>
+          </div>
+          <h1>System Architecture</h1>
+          <p>
+            <code>dk</code> is crafted as a single, zero-dependency Python process. It reads, parses, and renders files dynamically on every page load to guarantee absolute consistency with your workspace.
+          </p>
+
+          <h2>Core Stack</h2>
+          <ul>
+            <li><strong>FastAPI</strong> — Handles synchronous page routes, static files, and streaming Server-Sent Events (SSE) for agent chatter.</li>
+            <li><strong>Jinja2 Templates</strong> — Renders HTML on the server. Zero client-side JS framework required for blazing-fast loads.</li>
+            <li><strong>Python-Frontmatter</strong> — Parses issue metadata (YAML) directly from your markdown ticket files.</li>
+            <li><strong>Markdown Parser</strong> — Compiles markdown files to rich HTML on demand.</li>
+          </ul>
+
+          <h2>The Human-Agent Data Loop</h2>
+          <p>
+            By relying on plain markdown files as the database, we allow perfect local development collaboration:
+          </p>
+          <pre><code>[Developer] ─→ Type instruction in Chat ──→ [FastAPI Agent]
+                                                    │
+[UI Updates] ←─ Watch File Changes 🗃️ 🧩 ←── Writes to disk (.md)</code></pre>
+
+          <h2>Agent Capability & Toolset</h2>
+          <p>
+            The agent runs in-process using an async loop. It can query the state of your project, build documents, and manage ticket pipelines with highly focused, deterministic tools:
+          </p>
+          <ul>
+            <li><code>read_doc(path)</code> — Pulls documentation source file.</li>
+            <li><code>write_doc(path, md)</code> — Overwrites or creates documentation files.</li>
+            <li><code>list_tickets()</code> — Scans frontmatter on all files inside <code>tickets/</code>.</li>
+            <li><code>create_ticket(data)</code> — Saves new ticket markdown with formatted YAML header.</li>
+            <li><code>update_ticket(id, changes)</code> — Safely updates frontmatter without losing details.</li>
+          </ul>
+        </article>
+      </div>
+
+      <!-- 3. DOC: API -->
+      <div x-show="activePage === 'doc-api'" class="max-w-3xl mx-auto fade-in">
+        <article class="prose-custom">
+          <div class="flex items-center gap-2 mb-2 text-accentBlue text-xs font-semibold tracking-wider uppercase">
+            <span>Reference Guide</span>
+          </div>
+          <h1>API Reference</h1>
+          <p>
+            <code>dk</code> features a lightweight local REST API to let you query documentation and ticket databases programmatically, or hook them into pre-commit scripts.
+          </p>
+
+          <h2>Get All Tickets</h2>
+          <p>Retrieves a listing of all registered tasks, compiled on the fly.</p>
+          <pre><code>GET /api/tickets
+Response: 200 OK
+[
+  {
+    "id": "001",
+    "title": "Auth token refresh fails silently",
+    "status": "in-progress",
+    "priority": "urgent",
+    "assignee": "alice"
+  }
+]</code></pre>
+
+          <h2>Add Ticket Comment</h2>
+          <p>Appends comments directly inside a ticket's markdown body.</p>
+          <pre><code>POST /api/tickets/001/comments
+Body: { "body": "Checked logs. Looks like a token expiry bug." }</code></pre>
+
+          <h2>Trigger Agent Prompt</h2>
+          <p>Streams responses directly from your configured LLM model (Local or API).</p>
+          <pre><code>POST /api/chat
+Body: { "prompt": "Review open tickets and propose next steps" }</code></pre>
+        </article>
+      </div>
+
+      <!-- 4. DOC: DEPLOY -->
+      <div x-show="activePage === 'doc-deploy'" class="max-w-3xl mx-auto fade-in">
+        <article class="prose-custom">
+          <div class="flex items-center gap-2 mb-2 text-accentBlue text-xs font-semibold tracking-wider uppercase">
+            <span>DevOps Manual</span>
+          </div>
+          <h1>Deploying the Platform</h1>
+          <p>
+            As a local utility, dk requires no heavy server hosting. Running it within your local network allows other developers to browse tickets directly.
+          </p>
+
+          <h2>Running on Host</h2>
+          <p>Simply let <code>uvicorn</code> launch on your local host:</p>
+          <pre><code>just dk --host 0.0.0.0 --port 8000</code></pre>
+
+          <h2>Integrating LLMs</h2>
+          <p>Choose between premium commercial endpoints or completely offline execution:</p>
+          <ul>
+            <li><strong>Anthropic (Recommended)</strong> — Best logical reasoning for docs. Set <code>export ANTHROPIC_API_KEY=sk-ant-...</code>.</li>
+            <li><strong>Ollama</strong> — Runs entirely local. Set <code>export AI_MODEL=ollama/llama3.2</code>. No data ever leaves your computer.</li>
+          </ul>
+        </article>
+      </div>
+
+      <!-- 5. DOC: RUNBOOK -->
+      <div x-show="activePage === 'doc-runbook'" class="max-w-3xl mx-auto fade-in">
+        <article class="prose-custom">
+          <div class="flex items-center gap-2 mb-2 text-accentBlue text-xs font-semibold tracking-wider uppercase">
+            <span>Operational Runbook</span>
+          </div>
+          <h1>Operational Runbook</h1>
+          <p>
+            Troubleshooting strategies and useful terminal helpers to maintain your local environment.
+          </p>
+
+          <h2>Port Conflict</h2>
+          <p>If port 8000 is occupied, find and terminate the active process:</p>
+          <pre><code>lsof -i :8000
+kill -9 &lt;PID&gt;</code></pre>
+
+          <h2>Forcing Ticket Sync</h2>
+          <p>If you modified ticket markdown files on disk using your text editor, simply click <strong>refresh</strong> in the browser. The FastAPI server reads directly from the filesystem on every single transaction, meaning zero cache synchronization delay.</p>
+        </article>
+      </div>
+
+      <!-- 6. TICKET BOARD -->
+      <div x-show="activePage === 'ticket-board'" class="max-w-4xl mx-auto fade-in">
+        <div class="flex items-center justify-between mb-8">
+          <div>
+            <div class="flex items-center gap-2 text-xs font-semibold text-accentPurple tracking-wider uppercase mb-1">
+              <span>Task Management</span>
+            </div>
+            <h1 class="text-2xl font-bold text-slate-100">Project Board</h1>
+            <p class="text-xs text-slate-400 mt-1">4 issues registered on local repository</p>
+          </div>
+
+          <!-- Board Actions -->
+          <div class="flex items-center gap-2.5">
+            <span class="text-xs text-slate-500 italic bg-borderDark/20 px-3 py-1.5 rounded-lg border border-borderDark/40">
+              ⚡ To create a ticket, ask the agent on the chat panel
+            </span>
+          </div>
+        </div>
+
+        <!-- Filters Mock -->
+        <div class="flex items-center justify-between mb-4 px-1">
+          <div class="flex items-center gap-3">
+            <span class="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">All Issues</span>
+            <span class="h-1.5 w-1.5 rounded-full bg-slate-700"></span>
+            <span class="text-xs text-slate-400 font-medium">Sorted by: Newest</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <input type="text" placeholder="Search..." class="w-44 bg-surfaceDark/60 border border-borderDark/50 rounded-lg px-2.5 py-1 text-xs text-slate-200 outline-none" readonly onfocus="this.blur()">
+            <span class="text-[10px] text-slate-600 bg-borderDark/30 border border-borderDark/40 px-1.5 py-1 rounded">⌘K</span>
+          </div>
+        </div>
+
+        <!-- Board Table -->
+        <div class="bg-surfaceDark/40 border border-borderDark/40 rounded-xl overflow-hidden shadow-2xl backdrop-blur-sm">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b border-borderDark/50 text-[10px] uppercase font-semibold text-slate-500 tracking-wider bg-surfaceDark/20">
+                <th class="px-5 py-3">ID</th>
+                <th class="px-5 py-3">Title</th>
+                <th class="px-5 py-3">Status</th>
+                <th class="px-5 py-3">Priority</th>
+                <th class="px-5 py-3">Assignee</th>
+                <th class="px-5 py-3">Created</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-borderDark/30 text-xs">
+              <template x-for="tkt in tickets" :key="tkt.id">
+                <tr 
+                  @click="openTicketDetail(tkt)"
+                  class="hover:bg-borderDark/20 cursor-pointer transition-all duration-150 group"
+                >
+                  <td class="px-5 py-3.5 font-mono text-[11px] text-slate-500 group-hover:text-slate-300" x-text="'dk-' + tkt.id"></td>
+                  <td class="px-5 py-3.5 text-slate-200 group-hover:text-white font-medium" x-text="tkt.title"></td>
+                  <td class="px-5 py-3.5">
+                    <span :class="'ticket-status ' + tkt.status" x-text="formatStatus(tkt.status)"></span>
+                  </td>
+                  <td class="px-5 py-3.5">
+                    <span class="flex items-center gap-1.5">
+                      <span :class="'priority-dot ' + tkt.priority"></span>
+                      <span class="text-slate-400 capitalize text-[11px]" x-text="tkt.priority"></span>
+                    </span>
+                  </td>
+                  <td class="px-5 py-3.5 font-mono text-[11px] text-slate-400" x-text="tkt.assignee || '—'"></td>
+                  <td class="px-5 py-3.5 text-slate-500" x-text="tkt.created"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 7. TICKET DETAIL -->
+      <div x-show="activePage === 'ticket-detail'" class="max-w-3xl mx-auto fade-in">
+        <template x-if="selectedTicket">
+          <div>
+            <div class="flex items-center gap-2 mb-4">
+              <button @click="switchPage('ticket-board')" class="btn-ghost btn px-2.5 py-1 flex items-center gap-1 text-slate-400 hover:text-slate-200">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 19l-7-7 7-7"/></svg>
+                Back to Board
+              </button>
+              <span class="text-slate-600 font-mono text-xs">/</span>
+              <span class="text-slate-400 font-mono text-xs font-semibold" x-text="'dk-' + selectedTicket.id"></span>
+            </div>
+
+            <!-- Header info -->
+            <div class="border-b border-borderDark/40 pb-5 mb-6">
+              <h1 class="text-2xl font-bold text-white tracking-tight mb-3" x-text="selectedTicket.title"></h1>
+              <div class="flex flex-wrap items-center gap-4 text-xs">
+                <span :class="'ticket-status ' + selectedTicket.status" x-text="formatStatus(selectedTicket.status)"></span>
+                
+                <span class="flex items-center gap-1.5 text-slate-400">
+                  <span :class="'priority-dot ' + selectedTicket.priority"></span>
+                  <span class="capitalize" x-text="selectedTicket.priority + ' Priority'"></span>
+                </span>
+
+                <span class="text-slate-600">|</span>
+
+                <span class="text-slate-400">
+                  Assignee: <span class="font-mono text-slate-300 font-medium" x-text="selectedTicket.assignee || 'Unassigned'"></span>
+                </span>
+
+                <span class="text-slate-600">|</span>
+
+                <span class="text-slate-500" x-text="'Created on ' + selectedTicket.created"></span>
+              </div>
+            </div>
+
+            <!-- Description -->
+            <div class="bg-surfaceDark/30 border border-borderDark/40 rounded-xl p-6 mb-8 shadow-md">
+              <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Ticket Description</h2>
+              <div class="prose-custom text-sm leading-relaxed" x-html="selectedTicket.description"></div>
+            </div>
+
+            <!-- Comments -->
+            <div>
+              <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">Activity Log & Comments</h2>
+              <div class="space-y-4">
+                <template x-for="comment in selectedTicket.comments" :key="comment.date">
+                  <div class="bg-surfaceDark/20 border border-borderDark/30 rounded-xl p-4 flex flex-col gap-1.5 hover:border-borderDark/50 transition-colors">
+                    <div class="flex items-center justify-between">
+                      <span class="font-semibold text-slate-200 text-xs font-mono" x-text="comment.author"></span>
+                      <span class="text-[10px] text-slate-500 font-mono" x-text="comment.date"></span>
+                    </div>
+                    <p class="text-xs text-slate-400 leading-relaxed" x-text="comment.text"></p>
+                  </div>
+                </template>
+              </div>
+
+              <!-- Footer notice -->
+              <div class="mt-8 pt-4 border-t border-borderDark/40 flex items-center justify-between text-xs text-slate-500">
+                <span>Direct manual mutations are locked on this viewport.</span>
+                <span class="text-accentPurple font-medium flex items-center gap-1.5">
+                  <span class="h-1.5 w-1.5 rounded-full bg-accentPurple animate-ping"></span>
+                  Prompt the Agent on the right to edit, assign, comment, or close.
+                </span>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- ================= CHAT PANEL & THREADS (PANEL 3) ================= -->
+  <aside class="w-96 bg-[#090c15] border-l border-borderDark/60 flex-shrink-0 flex flex-col z-10 shadow-2xl relative">
+    
+    <!-- 1. THREAD DETAIL VIEW -->
+    <template x-if="activeThreadId !== null">
+      <div class="h-full flex flex-col">
+        <!-- Thread Header -->
+        <header class="h-[57px] px-4 border-b border-borderDark/40 flex items-center justify-between bg-surfaceDark/40 flex-shrink-0">
+          <div class="flex items-center gap-2">
+            <button 
+              @click="closeThread()" 
+              class="h-7 w-7 rounded-lg hover:bg-borderDark/40 flex items-center justify-center text-slate-400 hover:text-slate-200 transition-colors"
+              title="Go back to thread list"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <div>
+              <div class="text-[11px] font-semibold text-slate-400 truncate max-w-[180px]" x-text="getActiveThread().title"></div>
+              <div class="text-[9px] text-slate-500 uppercase tracking-wider font-mono font-bold" x-text="'Context: ' + getContextLabel()"></div>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-1.5">
+            <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+            <span class="text-[10px] text-slate-400 font-mono" x-text="agentModel"></span>
+          </div>
+        </header>
+
+        <!-- Messages Stream -->
+        <div class="flex-1 overflow-y-auto p-4 space-y-4" id="chat-messages-container">
+          <template x-for="msg in getActiveThread().messages">
+            <div class="flex flex-col gap-1">
+              <!-- Meta header for bubble -->
+              <div class="flex items-center gap-1.5 text-[9px] text-slate-500" :class="msg.role === 'human' ? 'justify-end' : ''">
+                <span x-text="msg.role === 'human' ? 'You' : 'Agent'"></span>
+                <span class="text-slate-600 font-mono">•</span>
+                <span class="font-mono" x-text="msg.time"></span>
+              </div>
+              
+              <!-- Message Bubble -->
+              <div 
+                class="chat-msg" 
+                :class="msg.role === 'human' ? 'human' : 'agent'"
+              >
+                <!-- Text body -->
+                <div x-html="renderMessageMarkdown(msg.content)"></div>
+
+                <!-- Tool call rendering if any -->
+                <template x-if="msg.toolCall">
+                  <div class="mt-2 pt-2 border-t border-borderDark/30">
+                    <div class="tool-call">
+                      <span class="text-blue-400 font-semibold" x-text="msg.toolCall.name"></span>
+                      <span class="text-slate-500 font-light" x-text="msg.toolCall.args"></span>
+                    </div>
+                    <div class="tool-call mt-1 flex items-start gap-1">
+                      <span class="text-emerald-500">→</span>
+                      <span class="text-slate-400 flex-1 truncate" x-text="msg.toolCall.result"></span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+
+          <!-- Typing Indicator -->
+          <template x-if="isAgentTyping">
+            <div class="flex flex-col gap-1">
+              <div class="flex items-center gap-1.5 text-[9px] text-slate-500">
+                <span>Agent</span>
+                <span class="text-slate-600 font-mono">•</span>
+                <span class="italic font-mono">Thinking...</span>
+              </div>
+              <div class="chat-msg agent inline-block">
+                <div class="flex items-center gap-1 py-1">
+                  <span class="typing-dot"></span>
+                  <span class="typing-dot"></span>
+                  <span class="typing-dot"></span>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Chat Input Form -->
+        <div class="p-3 border-t border-borderDark/40 bg-[#06080e]/40 flex-shrink-0">
+          <div class="relative bg-surfaceDark/60 border border-borderDark/40 rounded-xl px-4 py-3 focus-within:border-accentBlue/60 transition-colors">
+            <textarea 
+              id="chat-textarea"
+              rows="2"
+              @keydown.enter.prevent="if (!$event.shiftKey) submitMessage()"
+              x-model="chatInputText"
+              placeholder="Prompt agent..." 
+              class="w-full bg-transparent border-none outline-none text-xs text-slate-200 placeholder-slate-500 resize-none font-sans"
+            ></textarea>
+            
+            <div class="flex items-center justify-between mt-2 pt-1 border-t border-borderDark/20">
+              <div class="flex items-center gap-1">
+                <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <span class="text-[10px] text-slate-500 leading-none">Agent writes to repository disk</span>
+              </div>
+              
+              <button 
+                @click="submitMessage()"
+                class="h-6 w-6 rounded-lg bg-accentBlue text-white hover:bg-blue-600 flex items-center justify-center transition-colors shadow-md"
+              >
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="flex items-center justify-between px-1.5 mt-2">
+            <span class="text-[9px] text-slate-600 font-mono">enter to send · shift+enter for newline</span>
+            <span class="text-[9px] text-slate-500 font-semibold" x-text="'Thread ID: #' + activeThreadId"></span>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- 2. THREADS LIST VIEW (DEFAULT FOR ACTIVE VIEW) -->
+    <template x-if="activeThreadId === null">
+      <div class="h-full flex flex-col">
+        <!-- List Header -->
+        <header class="h-[57px] px-5 border-b border-borderDark/40 flex items-center justify-between bg-surfaceDark/20 flex-shrink-0">
+          <div>
+            <h2 class="text-sm font-bold text-slate-200">Chat Streams</h2>
+            <div class="text-[10px] text-slate-500 leading-none mt-0.5" x-text="'Context: ' + getContextLabel()"></div>
+          </div>
+          
+          <button 
+            @click="createNewThread()"
+            class="h-7 w-7 rounded-lg border border-borderDark/50 hover:bg-borderDark/40 flex items-center justify-center text-slate-400 hover:text-slate-100 transition-colors"
+            title="Start new chat stream for this page"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+            </svg>
+          </button>
+        </header>
+
+        <!-- Threads Cards -->
+        <div class="flex-1 overflow-y-auto p-4 space-y-2.5">
+          <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest px-1.5 mb-1 flex items-center justify-between">
+            <span x-text="'ACTIVE ON ' + getContextLabel()"></span>
+            <span class="font-mono text-[9px] text-slate-600" x-text="getThreadsForActiveView().length + ' threads'"></span>
+          </div>
+
+          <!-- Empty State Notice -->
+          <template x-if="getThreadsForActiveView().length === 0">
+            <div class="p-6 text-center border border-dashed border-borderDark/40 rounded-xl bg-[#090c15]/50">
+              <div class="text-xs font-semibold text-slate-400 mb-1.5">No chat streams yet</div>
+              <p class="text-[11px] text-slate-500 leading-relaxed mb-4">Start a conversation to prompt the agent about this content.</p>
+              <button 
+                @click="createNewThread()"
+                class="btn btn-primary px-3 py-1.5 text-xs inline-flex items-center gap-1"
+              >
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                </svg>
+                New Chat Stream
+              </button>
+            </div>
+          </template>
+
+          <template x-for="thread in getThreadsForActiveView()" :key="thread.id">
+            <div 
+              @click="openThread(thread.id)"
+              class="group bg-surfaceDark/35 border border-borderDark/40 hover:border-accentBlue/40 hover:bg-surfaceDark/60 p-3.5 rounded-xl cursor-pointer transition-all duration-150 shadow-md relative"
+            >
+              <div class="flex items-center justify-between mb-1.5">
+                <h3 class="text-xs font-semibold text-slate-200 group-hover:text-slate-100 truncate pr-6" x-text="thread.title"></h3>
+                <span class="text-[9px] font-mono font-semibold text-slate-600 bg-borderDark/20 px-1.5 py-0.5 rounded border border-borderDark/40 group-hover:border-accentBlue/20" x-text="thread.messages.length + ' msg'"></span>
+              </div>
+              
+              <p class="text-[11px] text-slate-500 group-hover:text-slate-400 line-clamp-2 leading-relaxed mb-2" x-text="thread.preview"></p>
+              
+              <div class="flex items-center justify-between pt-1 text-[9px] font-mono text-slate-500">
+                <span x-text="thread.lastUpdated"></span>
+                <span class="text-slate-600 hover:text-red-400/80 transition-colors z-20" @click.stop="deleteThread(thread.id)">delete</span>
+              </div>
+            </div>
+          </template>
+
+          <!-- Divider -->
+          <div class="h-px bg-borderDark/30 my-4"></div>
+
+          <!-- Other Threads Section -->
+          <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest px-1.5 mb-1 flex items-center justify-between">
+            <span>OTHER CHANNELS</span>
+            <span class="font-mono text-[9px] text-slate-600" x-text="getThreadsForOtherViews().length"></span>
+          </div>
+
+          <template x-for="thread in getThreadsForOtherViews()" :key="thread.id">
+            <div 
+              @click="openThread(thread.id)"
+              class="group bg-[#04060b]/40 border border-borderDark/30 hover:border-borderDark/60 hover:bg-[#04060b]/70 p-3 rounded-lg cursor-pointer transition-all duration-150"
+            >
+              <div class="flex items-center justify-between mb-1">
+                <h3 class="text-[11px] font-semibold text-slate-400 group-hover:text-slate-200 truncate pr-4" x-text="thread.title"></h3>
+                <span class="text-[9px] text-slate-500 uppercase tracking-wider font-semibold font-mono" x-text="getFriendlyContextLabel(thread.context)"></span>
+              </div>
+              <p class="text-[10px] text-slate-500 group-hover:text-slate-400 truncate" x-text="thread.preview"></p>
+            </div>
+          </template>
+        </div>
+
+        <div class="p-4 border-t border-borderDark/40 text-center bg-[#06080e]/40 flex-shrink-0 text-[10px] text-slate-500">
+          Streams persist as structured YAML inside your local metadata block.
+        </div>
+      </div>
+    </template>
+
+  </aside>
+
+</div>
+
+<script>
+function dkState() {
+  return {
+    activePage: 'doc-home',
+    activeThreadId: null,
+    chatInputText: '',
+    isAgentTyping: false,
+    agentModel: 'llama3.2',
+    
+    // Page list mock
+    docPages: [
+      { id: 'doc-home', title: 'Getting Started', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
+      { id: 'doc-architecture', title: 'System Architecture', icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10' },
+      { id: 'doc-api', title: 'API Reference', icon: 'M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4' },
+      { id: 'doc-deploy', title: 'Deployment Guide', icon: 'M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4' },
+      { id: 'doc-runbook', title: 'Runbooks & Port Conflicts', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
+    ],
+
+    // Local Ticket Database Mock
+    tickets: [
+      {
+        id: '001',
+        title: 'Auth token refresh fails silently',
+        status: 'in-progress',
+        priority: 'urgent',
+        assignee: 'alice',
+        created: '2026-07-25',
+        description: '<p>When the OAuth token expires, the refresh call fails with a 401 but the error is swallowed by the <code>fetchWithAuth</code> wrapper. The user sees no error and the next API call also fails with a 401.</p><p>Expected: show a "Session expired, please log in again" toast and redirect to login.</p>',
+        comments: [
+          { author: 'alice', date: '2026-07-25 14:32', text: 'Reproduced locally. The issue is in lib/auth.py:112. The except block catches the HTTPError but passes silently.' },
+          { author: 'bob', date: '2026-07-26 09:15', text: 'Fix looks straightforward. I\'ll handle the toast UI component. Let\'s pair on this tomorrow.' }
+        ]
+      },
+      {
+        id: '002',
+        title: 'Add search to docs page',
+        status: 'open',
+        priority: 'high',
+        assignee: '',
+        created: '2026-07-25',
+        description: '<p>We need full-text search capability. A simple client-side solution parsing our JSON index will suffice for now since total doc volume is small.</p>',
+        comments: []
+      },
+      {
+        id: '003',
+        title: 'CLI output formatting inconsistent',
+        status: 'open',
+        priority: 'high',
+        assignee: 'bob',
+        created: '2026-07-24',
+        description: '<p>Different subcommands return logs in varying layouts. We must implement a standard format module inside the CLI interface package.</p>',
+        comments: []
+      },
+      {
+        id: '004',
+        title: 'Update README with new API endpoints',
+        status: 'wontfix',
+        priority: 'low',
+        assignee: '',
+        created: '2026-07-22',
+        description: '<p>Old issue. Decided to keep all API documentation strictly within the <code>docs/api.md</code> file instead of bloating the README.</p>',
+        comments: []
+      }
+    ],
+
+    selectedTicket: null,
+
+    // Chat streams database
+    threads: [
+      {
+        id: 'thread-arch-1',
+        context: 'doc-architecture',
+        title: 'Designing Human-Agent loop',
+        preview: 'Agent: I can render diagrams directly. I’ve written...',
+        lastUpdated: '5m ago',
+        messages: [
+          { role: 'human', content: 'Explain the human-agent data loop again. Where does the FastAPI agent write?', time: '22:15' },
+          { 
+            role: 'agent', 
+            content: 'The FastAPI agent writes directly to your local file system as plain Markdown files. When you type in this chat panel, the agent processes the request, formulates file writes, and commits them. The web UI simply watches the files and live-reloads context.',
+            time: '22:16',
+            toolCall: {
+              name: 'read_doc',
+              args: '("docs/architecture.md")',
+              result: 'Returns architecture.md content'
+            }
+          },
+          { role: 'human', content: 'Got it. Let’s add that block diagram to the Architecture docs.', time: '22:20' },
+          {
+            role: 'agent',
+            content: 'I have added the mermaid data loop diagram to the System Architecture documentation. You can see it live on the page now.',
+            time: '22:21',
+            toolCall: {
+              name: 'write_doc',
+              args: '("docs/architecture.md", updated_md)',
+              result: 'File written successfully: docs/architecture.md'
+            }
+          }
+        ]
+      },
+      {
+        id: 'thread-arch-2',
+        context: 'doc-architecture',
+        title: 'Discuss SQLite transition',
+        preview: 'You: Why are we using file-based storage?',
+        lastUpdated: '1h ago',
+        messages: [
+          { role: 'human', content: 'Are there plans to migrate to SQLite for tickets if files get slow?', time: '21:00' },
+          { role: 'agent', content: 'To maintain the "curl | bash" zero-configuration ethos, keeping plain text files is perfect. It works natively with git merges. SQLite could be used later, but files keep it 100% human-editable outside the tool.', time: '21:02' }
+        ]
+      },
+      {
+        id: 'thread-tkt1-1',
+        context: 'ticket-001',
+        title: 'Silent Refresh Failure',
+        preview: 'Agent: Exception swallowed in lib/auth.py. I can...',
+        lastUpdated: '10m ago',
+        messages: [
+          { role: 'human', content: 'Find where the OAuth token fails silently in lib/auth.py.', time: '22:05' },
+          { 
+            role: 'agent', 
+            content: 'I scanned the source and found the bug at line 112: the `except HTTPError:` block simply passes. Let\'s fix this by implementing proper propagation.', 
+            time: '22:07' 
+          },
+          { role: 'human', content: 'Wait, assign this ticket to alice first and mark it in-progress.', time: '22:09' },
+          {
+            role: 'agent',
+            content: 'Done! I have updated the frontmatter metadata for dk-001. Assignee is now **alice** and status is **in-progress**.',
+            time: '22:10',
+            toolCall: {
+              name: 'update_ticket',
+              args: '("001", {"assignee": "alice", "status": "in-progress"})',
+              result: 'YAML metadata saved: tickets/001.md'
+            }
+          }
+        ]
+      },
+      {
+        id: 'thread-home-1',
+        context: 'doc-home',
+        title: 'Refining landing banner',
+        preview: 'You: Make the quickstart stand out more.',
+        lastUpdated: '1d ago',
+        messages: [
+          { role: 'human', content: 'Can we improve the Getting Started layout to be less cluttered?', time: 'Yesterday' },
+          { role: 'agent', content: 'Certainly! I modified the Quick Start section to use clear highlighted code blocks and added a bulleted structure for easier scanning.', time: 'Yesterday' }
+        ]
+      }
+    ],
+
+    init() {
+      // Set initial selected ticket
+      this.selectedTicket = this.tickets[0];
+    },
+
+    // Navigation and helpers
+    switchPage(pageId) {
+      this.activePage = pageId;
+      
+      // Close active thread to show threads list relevant to this new page
+      this.activeThreadId = null;
+    },
+
+    openTicketDetail(ticket) {
+      this.selectedTicket = ticket;
+      this.activePage = 'ticket-detail';
+      this.activeThreadId = null;
+    },
+
+    getContentBreadcrumb() {
+      if (this.activePage === 'ticket-board') return 'ticket board';
+      if (this.activePage === 'ticket-detail') return 'ticket / dk-' + this.selectedTicket.id;
+      
+      const page = this.docPages.find(p => p.id === this.activePage);
+      return page ? page.title : '';
+    },
+
+    // Thread management
+    getThreadsForActiveView() {
+      const currentContext = this.getCurrentContextKey();
+      return this.threads.filter(t => t.context === currentContext);
+    },
+
+    getThreadsForOtherViews() {
+      const currentContext = this.getCurrentContextKey();
+      return this.threads.filter(t => t.context !== currentContext);
+    },
+
+    getCurrentContextKey() {
+      if (this.activePage === 'ticket-detail') {
+        return 'ticket-' + this.selectedTicket.id;
+      }
+      return this.activePage;
+    },
+
+    getContextLabel() {
+      const ctx = this.getCurrentContextKey();
+      if (ctx.startsWith('ticket-')) {
+        return 'Ticket dk-' + ctx.split('-')[1];
+      }
+      const page = this.docPages.find(p => p.id === ctx);
+      if (page) return page.title;
+      if (ctx === 'ticket-board') return 'Ticket Board';
+      return ctx;
+    },
+
+    getFriendlyContextLabel(ctx) {
+      if (ctx.startsWith('ticket-')) return 'Ticket dk-' + ctx.split('-')[1];
+      if (ctx === 'ticket-board') return 'Board';
+      const page = this.docPages.find(p => p.id === ctx);
+      return page ? page.title : ctx;
+    },
+
+    getActiveThread() {
+      return this.threads.find(t => t.id === this.activeThreadId);
+    },
+
+    openThread(threadId) {
+      this.activeThreadId = threadId;
+      this.$nextTick(() => {
+        this.scrollToBottom();
+      });
+    },
+
+    closeThread() {
+      this.activeThreadId = null;
+    },
+
+    deleteThread(threadId) {
+      this.threads = this.threads.filter(t => t.id !== threadId);
+      if (this.activeThreadId === threadId) {
+        this.activeThreadId = null;
+      }
+    },
+
+    createNewThread() {
+      const ctx = this.getCurrentContextKey();
+      const num = this.threads.filter(t => t.context === ctx).length + 1;
+      const label = this.getContextLabel();
+      const id = 'thread-' + ctx + '-' + Date.now();
+      
+      const newThread = {
+        id: id,
+        context: ctx,
+        title: 'New conversation #' + num,
+        preview: 'Draft stream started...',
+        lastUpdated: 'Just now',
+        messages: [
+          { 
+            role: 'agent', 
+            content: `Hello! I am ready to collaborate with you on **${label}**. Tell me what you would like to edit or query about this section.`,
+            time: this.getFormattedTime()
+          }
+        ]
+      };
+
+      this.threads.unshift(newThread);
+      this.activeThreadId = id;
+      
+      this.$nextTick(() => {
+        const textarea = document.getElementById('chat-textarea');
+        if (textarea) textarea.focus();
+        this.scrollToBottom();
+      });
+    },
+
+    submitMessage() {
+      const text = this.chatInputText.trim();
+      if (!text) return;
+
+      const thread = this.getActiveThread();
+      if (!thread) return;
+
+      // Add human message
+      thread.messages.push({
+        role: 'human',
+        content: text,
+        time: this.getFormattedTime()
+      });
+
+      this.chatInputText = '';
+      thread.preview = 'You: ' + text;
+      thread.lastUpdated = 'Just now';
+      
+      this.scrollToBottom();
+      
+      // Trigger Agent Simulation
+      this.isAgentTyping = true;
+      this.scrollToBottom();
+
+      setTimeout(() => {
+        this.isAgentTyping = false;
+        
+        let agentResponse = '';
+        let tool = null;
+
+        // Custom simulated agent replies based on current views
+        if (this.activePage.startsWith('doc-')) {
+          agentResponse = 'I have read the document and applied your requested edits. The local markdown file has been overwritten and the main viewport is now up to date.';
+          tool = {
+            name: 'write_doc',
+            args: `("docs/${this.activePage.split('doc-')[1]}.md", updated_md)`,
+            result: 'Success: File written'
+          };
+        } else if (this.activePage === 'ticket-detail') {
+          agentResponse = 'Acknowledged. I have appended your comment to the local markdown file `tickets/' + this.selectedTicket.id + '.md` and recorded the updated activity.';
+          
+          // Actually modify our local mock ticket to make it look active!
+          this.selectedTicket.comments.push({
+            author: 'agent (llama3.2)',
+            date: '2026-07-26 22:35',
+            text: text
+          });
+
+          tool = {
+            name: 'add_comment',
+            args: `("${this.selectedTicket.id}", "${text}")`,
+            result: 'Comment appended inside markdown'
+          };
+        } else {
+          agentResponse = 'Done. I scanned the local tickets registry to answer your prompt. Let me know if you would like me to modify any specific issue.';
+          tool = {
+            name: 'list_tickets',
+            args: '()',
+            result: 'Fetched 4 local tickets'
+          };
+        }
+
+        thread.messages.push({
+          role: 'agent',
+          content: agentResponse,
+          time: this.getFormattedTime(),
+          toolCall: tool
+        });
+
+        thread.preview = 'Agent: ' + agentResponse;
+        
+        this.scrollToBottom();
+      }, 1400);
+    },
+
+    scrollToBottom() {
+      setTimeout(() => {
+        const el = document.getElementById('chat-messages-container');
+        if (el) el.scrollTop = el.scrollHeight;
+      }, 50);
+    },
+
+    // Formatters
+    formatStatus(status) {
+      if (status === 'in-progress') return 'In Progress';
+      if (status === 'wontfix') return "Won't Fix";
+      return status;
+    },
+
+    getFormattedTime() {
+      const d = new Date();
+      return d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+    },
+
+    renderMessageMarkdown(text) {
+      // Basic mock markdown formatter for bubbles
+      return text
+        .replace(/\*\*([^*]+)\*\*/g, '<strong class="font-bold text-slate-100">$1</strong>')
+        .replace(/`([^`]+)`/g, '<code class="bg-[#1e293b]/40 text-slate-200 border border-borderDark/20 px-1.5 py-0.5 rounded font-mono text-[11px]">$1</code>');
+    }
+  }
+}
+</script>
+
+</body>
+</html>

@@ -1,0 +1,37 @@
+.env
+
+# Binaries
+devtop
+devtop-bin
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Profile output
+*.prof
+*.out
+*.cov
+
+# Vendor
+vendor/
+
+# Build output
+dist/
+
+# OS files
+.DS_Store
+Thumbs.db
+# Local devtop data (created by `just devtop init`)
+# Sample docs + tickets are tracked; runtime state is not.
+.devtop/threads/
+.devtop/data/
+.devtop/viewstate.json
+.devtop/config.yml
+
+# Build artifacts (air)
+tmp/

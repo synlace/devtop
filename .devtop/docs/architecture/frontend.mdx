@@ -1,0 +1,30 @@
+---
+title: "Frontend Architecture"
+---
+
+# Frontend Architecture
+
+devtop ships with two UI layers: a lightweight Alpine.js SPA served by Go, and a full React 19 application.
+
+## Alpine.js SPA (Default)
+
+- Single HTML template (`base.html`) served by the Go server
+- Handles all standard routes: docs browsing, ticket list, ticket detail
+- Uses Tailwind CSS via CDN for styling
+- Minimal JS bundle — no build step required
+
+## React + Vite (Optional)
+
+- Located in `frontend/`
+- Built with React 19, TypeScript 6, and Vite 8
+- Integrates CopilotKit for the AI chat panel
+- Proxies API requests to the Go server on :8000
+- Runs on port 5173 in development
+
+## Port Layout
+
+| Service | Port |
+|---------|------|
+| Go Server | 8000 |
+| Vite Dev Server | 5173 |
+| CopilotKit | 4000 |

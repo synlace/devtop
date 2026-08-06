@@ -1,0 +1,44 @@
+---
+title: "Managing Tickets"
+---
+
+# Managing Tickets
+
+## Ticket Structure
+
+Tickets are stored as markdown files in `.devtop/tickets/` with YAML frontmatter:
+
+```yaml
+---
+id: "dk-001"
+status: "open"
+priority: "high"
+assignee: "bob"
+created: "2026-07-29"
+---
+```
+
+## Status Values
+
+| Status | Meaning |
+|--------|---------|
+| `open` | Not yet started |
+| `in-progress` | Actively being worked on |
+| `done` | Completed and verified |
+
+## Priority Values
+
+| Priority | Meaning |
+|----------|---------|
+| `urgent` | Blocking issue, immediate attention |
+| `high` | Important, should be picked up soon |
+| `medium` | Standard priority |
+| `low` | Nice-to-have |
+
+## Agent Tools
+
+- `create_ticket(title, description, priority, assignee)` — Create a new ticket
+- `update_ticket(id, status, priority, assignee)` — Update ticket fields
+- `read_ticket(id)` — View a ticket with comments
+- `add_comment(id, body)` — Add a comment
+- `list_tickets()` — List all tickets

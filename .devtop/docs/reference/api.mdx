@@ -1,0 +1,23 @@
+---
+title: "API Reference"
+---
+
+# API Reference
+
+## HTTP Routes
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | Landing page |
+| `GET` | `/docs/{slug...}` | View a documentation page |
+| `GET` | `/tickets` | Ticket list |
+| `GET` | `/tickets/{id}` | Ticket detail |
+| `GET` | `/api/docs` | List all docs (JSON) |
+| `GET` | `/api/docs/{slug...}` | Get doc content (JSON) |
+| `GET` | `/api/tickets` | List all tickets (JSON) |
+| `GET` | `/api/tickets/{id}` | Get ticket (JSON) |
+| `POST` | `/api/chat` | SSE-streamed chat endpoint |
+
+## Route Pattern
+
+Go 1.22+ routing with `{slug...}` wildcards captures multi-segment paths, mapping directly to file paths under `docs/`.

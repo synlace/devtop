@@ -1,0 +1,366 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func initHTTPTestEnv(t *testing.T) (string, *http.ServeMux) {
+	tempDir := initTestEnvironment(t)
+
+	// Point static serving at a temp dir so SPA tests are deterministic
+	// regardless of whether frontend/dist exists on disk.
+	STATIC_DIR = filepath.Join(tempDir, "dist")
+
+	// DEVTOP_DIR is the parent of the kind subdirs; point it at the temp dir
+	// so engine-config materialization/loading matches main.go.
+	DEVTOP_DIR = tempDir
+
+	// Materialize + parse the engine config like main.go does.
+	if _, err := ensureEngineConfig(); err != nil {
+		t.Fatalf("ensureEngineConfig: %v", err)
+	}
+	if err := loadEngineConfig(); err != nil {
+		t.Fatalf("loadEngineConfig: %v", err)
+	}
+
+	// Set up router identical to main.go
+	mux := http.NewServeMux()
+
+	// CopilotKit proxy (registered like main.go; runtime isn't running in tests)
+	mux.HandleFunc("/api/copilotkit", handleCopilotKitProxy)
+	mux.HandleFunc("/api/copilotkit/", handleCopilotKitProxy)
+
+	// API Handlers
+	mux.HandleFunc("GET /api/docs", handleAPIDocs)
+	mux.HandleFunc("GET /api/docs/{slug...}", handleAPIDocPage)
+	mux.HandleFunc("GET /api/tickets", handleAPITickets)
+	mux.HandleFunc("GET /api/tickets/{id}", handleAPITicketDetail)
+	mux.HandleFunc("GET /api/threads", handleAPIThreads)
+	mux.HandleFunc("POST /api/threads", handleAPICreateThread)
+	mux.HandleFunc("GET /api/threads/{id}", handleAPIGetThread)
+	mux.HandleFunc("DELETE /api/threads/{id}", handleAPIDeleteThread)
+	mux.HandleFunc("POST /api/chat/{thread_id}", handleAPIChat)
+	mux.HandleFunc("GET /api/models", handleAPIModels)
+	mux.HandleFunc("GET /api/config", handleAPIConfig)
+	mux.HandleFunc("GET /api/engine-config", handleAPIEngineConfig)
+	mux.HandleFunc("GET /api/artifacts/{kind}", handleAPIArtifacts)
+	mux.HandleFunc("GET /api/artifacts/{kind}/{id...}", handleAPIArtifactDetail)
+	mux.HandleFunc("GET /api/viewstate", handleAPIGetViewState)
+	mux.HandleFunc("PUT /api/viewstate", handleAPIPutViewState)
+
+	// SPA route
+	mux.HandleFunc("/{path...}", handleSPA)
+
+	return tempDir, mux
+}
+
+func TestSPA_NotBuilt(t *testing.T) {
+	tempDir, mux := initHTTPTestEnv(t)
+	defer os.RemoveAll(tempDir)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected status 404 when frontend not built, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "frontend not built") {
+		t.Errorf("expected 'frontend not built' message, got %q", rec.Body.String())
+	}
+}
+
+func TestSPA_ServesIndex(t *testing.T) {
+	tempDir, mux := initHTTPTestEnv(t)
+	defer os.RemoveAll(tempDir)
+
+	if err := os.MkdirAll(STATIC_DIR, 0755); err != nil {
+		t.Fatal(err)
+	}
+	index := filepath.Join(STATIC_DIR, "index.html")
+	if err := os.WriteFile(index, []byte("<html><body>devtop react app</body></html>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Root serves index.html
+	req := httptest.NewRequest("GET", "/", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "devtop react app") {
+		t.Errorf("expected index.html body, got %q", rec.Body.String())
+	}
+
+	// Unknown non-API path falls back to index.html (SPA routing)
+	req = httptest.NewRequest("GET", "/docs/architecture", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "devtop react app") {
+		t.Errorf("expected SPA fallback to index.html for /docs/architecture, got %d", rec.Code)
+	}
+}
+
+func TestSPA_ServesStaticAsset(t *testing.T) {
+	tempDir, mux := initHTTPTestEnv(t)
+	defer os.RemoveAll(tempDir)
+
+	if err := os.MkdirAll(filepath.Join(STATIC_DIR, "assets"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(STATIC_DIR, "index.html"), []byte("<!doctype html>"), 0644)
+	asset := filepath.Join(STATIC_DIR, "assets", "app.js")
+	_ = os.WriteFile(asset, []byte("console.log('app')"), 0644)
+
+	req := httptest.NewRequest("GET", "/assets/app.js", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status 200 for static asset, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "console.log") {
+		t.Errorf("expected asset contents, got %q", rec.Body.String())
+	}
+}
+
+func TestCopilotKitProxy_Returns502WhenRuntimeDown(t *testing.T) {
+	tempDir, mux := initHTTPTestEnv(t)
+	defer os.RemoveAll(tempDir)
+
+	t.Setenv("COPILOTKIT_RUNTIME_URL", "http://127.0.0.1:1")
+
+	req := httptest.NewRequest("GET", "/api/copilotkit/ai-status", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("expected 502 when runtime is down, got %d", rec.Code)
+	}
+}
+
+func TestAPIRoutes_DocsList(t *testing.T) {
+	tempDir, mux := initHTTPTestEnv(t)
+	defer os.RemoveAll(tempDir)
+
+	req := httptest.NewRequest("GET", "/api/docs", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", rec.Code)
+	}
+
+	var docs []DocSlug
+	if err := json.Unmarshal(rec.Body.Bytes(), &docs); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+
+	if len(docs) < 2 {
+		t.Errorf("expected at least 2 docs, got %d", len(docs))
+	}
+}
+
+func TestAPIRoutes_DocPage(t *testing.T) {
+	tempDir, mux := initHTTPTestEnv(t)
+	defer os.RemoveAll(tempDir)
+
+	req := httptest.NewRequest("GET", "/api/docs/architecture", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", rec.Code)
+	}
+
+	var doc map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+
+	if doc["title"] != "System Architecture" {
+		t.Errorf("expected title 'System Architecture', got '%s'", doc["title"])
+	}
+	if !strings.Contains(doc["content"], "Stack: Go.") {
+		t.Errorf("expected content to contain 'Stack: Go.', got '%s'", doc["content"])
+	}
+}
+
+func TestAPIRoutes_DocPageNotFound(t *testing.T) {
+	tempDir, mux := initHTTPTestEnv(t)
+	defer os.RemoveAll(tempDir)
+
+	req := httptest.NewRequest("GET", "/api/docs/nonexistent", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d", rec.Code)
+	}
+}
+
+func TestAPIRoutes_TicketsList(t *testing.T) {
+	tempDir, mux := initHTTPTestEnv(t)
+	defer os.RemoveAll(tempDir)
+
+	req := httptest.NewRequest("GET", "/api/tickets", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", rec.Code)
+	}
+
+	var tickets []Ticket
+	if err := json.Unmarshal(rec.Body.Bytes(), &tickets); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+
+	if len(tickets) < 2 {
+		t.Errorf("expected at least 2 tickets, got %d", len(tickets))
+	}
+}
+
+func TestAPIRoutes_TicketDetail(t *testing.T) {
+	tempDir, mux := initHTTPTestEnv(t)
+	defer os.RemoveAll(tempDir)
+
+	req := httptest.NewRequest("GET", "/api/tickets/001", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", rec.Code)
+	}
+
+	var ticket Ticket
+	if err := json.Unmarshal(rec.Body.Bytes(), &ticket); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+
+	if ticket.ID != "001" || ticket.Title != "Test ticket" {
+		t.Errorf("ticket mismatch: %+v", ticket)
+	}
+	if len(ticket.Comments) != 1 || ticket.Comments[0].Text != "First comment." {
+		t.Errorf("ticket comments mismatch: %+v", ticket.Comments)
+	}
+}
+
+func TestAPIRoutes_TicketDetailNotFound(t *testing.T) {
+	tempDir, mux := initHTTPTestEnv(t)
+	defer os.RemoveAll(tempDir)
+
+	req := httptest.NewRequest("GET", "/api/tickets/999", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d", rec.Code)
+	}
+}
+
+func TestAPIRoutes_ThreadsListAndCreate(t *testing.T) {
+	tempDir, mux := initHTTPTestEnv(t)
+	defer os.RemoveAll(tempDir)
+
+	// Create Thread
+	payload := map[string]string{
+		"context": "doc-index",
+		"title":   "Conversation about home",
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	reqCreate := httptest.NewRequest("POST", "/api/threads", bytes.NewBuffer(payloadBytes))
+	recCreate := httptest.NewRecorder()
+	mux.ServeHTTP(recCreate, reqCreate)
+
+	if recCreate.Code != http.StatusOK {
+		t.Fatalf("expected status 200 on create, got %d: %s", recCreate.Code, recCreate.Body.String())
+	}
+
+	var newThread map[string]interface{}
+	_ = json.Unmarshal(recCreate.Body.Bytes(), &newThread)
+	threadID, _ := newThread["id"].(string)
+
+	if threadID == "" {
+		t.Fatal("expected non-empty thread id")
+	}
+
+	// List Threads
+	reqList := httptest.NewRequest("GET", "/api/threads", nil)
+	recList := httptest.NewRecorder()
+	mux.ServeHTTP(recList, reqList)
+
+	if recList.Code != http.StatusOK {
+		t.Errorf("expected status 200 on list, got %d", recList.Code)
+	}
+
+	var threads []map[string]interface{}
+	_ = json.Unmarshal(recList.Body.Bytes(), &threads)
+	if len(threads) < 1 {
+		t.Errorf("expected at least 1 thread, got %d", len(threads))
+	}
+
+	// Get specific thread
+	reqGet := httptest.NewRequest("GET", "/api/threads/"+threadID, nil)
+	recGet := httptest.NewRecorder()
+	mux.ServeHTTP(recGet, reqGet)
+
+	if recGet.Code != http.StatusOK {
+		t.Errorf("expected status 200 on get, got %d", recGet.Code)
+	}
+
+	var fetchedThread map[string]interface{}
+	_ = json.Unmarshal(recGet.Body.Bytes(), &fetchedThread)
+	if fetchedThread["id"] != threadID {
+		t.Errorf("expected thread ID '%s', got '%s'", threadID, fetchedThread["id"])
+	}
+
+	// Delete specific thread
+	reqDel := httptest.NewRequest("DELETE", "/api/threads/"+threadID, nil)
+	recDel := httptest.NewRecorder()
+	mux.ServeHTTP(recDel, reqDel)
+
+	if recDel.Code != http.StatusNoContent {
+		t.Errorf("expected status 204 on delete, got %d", recDel.Code)
+	}
+
+	// Verify thread is deleted
+	reqGetAfterDel := httptest.NewRequest("GET", "/api/threads/"+threadID, nil)
+	recGetAfterDel := httptest.NewRecorder()
+	mux.ServeHTTP(recGetAfterDel, reqGetAfterDel)
+
+	if recGetAfterDel.Code != http.StatusNotFound {
+		t.Errorf("expected status 404 after delete, got %d", recGetAfterDel.Code)
+	}
+}
+
+func TestAPIRoutes_Config(t *testing.T) {
+	tempDir, mux := initHTTPTestEnv(t)
+	defer os.RemoveAll(tempDir)
+
+	req := httptest.NewRequest("GET", "/api/config", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", rec.Code)
+	}
+
+	var config Config
+	if err := json.Unmarshal(rec.Body.Bytes(), &config); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+
+	if config.BaseURL == "" || config.Model == "" {
+		t.Errorf("expected non-empty config values: %+v", config)
+	}
+}

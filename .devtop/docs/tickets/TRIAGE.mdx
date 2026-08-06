@@ -1,0 +1,30 @@
+---
+title: "Triage Policy"
+---
+
+# Triage Policy
+
+## Priority Definitions
+
+| Priority | Trigger | Response |
+|----------|---------|----------|
+| **urgent** | Production outage, security issue, data loss | Assign immediately, resolve within 24h |
+| **high** | Blocked workflow, broken feature, regression | Assign within 1 business day |
+| **medium** | Feature request, improvement, non-critical bug | Triage within sprint planning |
+| **low** | Nice-to-have, cosmetic, documentation | Triage when capacity allows |
+
+## Workflow
+
+```
+open → in-progress → done
+  ↑         │
+  └─────────┘ (reopen)
+```
+
+- **open** — Ticket created, not yet started
+- **in-progress** — Actively being worked on by assignee
+- **done** — Completed and verified
+
+## Labels
+
+Labels are stored as tags in ticket filenames or frontmatter. Common labels: `bug`, `enhancement`, `docs`, `tech-debt`, `question`.

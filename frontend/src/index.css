@@ -1,0 +1,150 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-bgDark: #070a13;
+  --color-surfaceDark: #0c101f;
+  --color-borderDark: #1e293b;
+  --color-accentBlue: #3b82f6;
+  --color-accentPurple: #8b5cf6;
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Fira Code', monospace;
+}
+
+/* custom styling and scrollbars */
+* { scrollbar-width: thin; scrollbar-color: #1e293b transparent; }
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 9999px; }
+
+#root {
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  border: none !important;
+  min-height: 100svh;
+}
+
+/* Hold the resize cursor and suppress text selection over every element while
+   the chat handle is being dragged. Re-renders shift content under the pointer,
+   and elements that set their own cursor/user-select (links, buttons) would
+   otherwise flicker the icon back or start a selection during the drag. */
+html[data-resizing],
+html[data-resizing] * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+/* CopilotKit Global Theme Variables for Dark Mode */
+:root {
+  --copilot-kit-primary-color: #3b82f6;
+  --copilot-kit-background-color: #090c15;
+  --copilot-kit-sidebar-background-color: #090c15;
+  --copilot-kit-text-color: #cbd5e1;
+  --copilot-kit-contrast-color: #ffffff;
+  --copilot-kit-border-color: #1e293b;
+  --copilot-kit-response-background-color: #1a2332;
+  --copilot-kit-response-text-color: #cbd5e1;
+  --copilot-kit-message-user-background-color: #3b82f6;
+  --copilot-kit-message-user-text-color: #ffffff;
+  --copilot-kit-font-family: 'Inter', '-apple-system', sans-serif;
+}
+
+/* Make sure the copilot chat overrides match the devtop dark tech aesthetic */
+.copilot-chat-container .copilot-kit-chat {
+  border: none !important;
+  background-color: #090c15 !important;
+}
+
+.copilot-chat-container .copilot-kit-chat-messages {
+  background-color: #090c15 !important;
+}
+
+.copilot-chat-container .copilot-kit-chat-input {
+  background-color: #0c101f !important;
+  border-top: 1px solid #1e293b !important;
+}
+
+/* Smaller font for Copilot chat messages */
+.copilot-chat-container .copilotKitMessage {
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+}
+.copilot-chat-container .copilotKitMarkdown {
+  font-size: 12px !important;
+}
+.copilot-chat-container .copilotKitMarkdown p {
+  font-size: 12px !important;
+  margin-bottom: 0.5em !important;
+}
+
+/* CopilotKit markdown link override — default is "blue" which is invisible on dark bg */
+a.copilotKitMarkdownElement {
+  color: #60a5fa !important;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+a.copilotKitMarkdownElement:hover {
+  color: #93c5fd !important;
+}
+
+/* CopilotKit markdown table borders for dark mode */
+table.copilotKitMarkdownElement {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+}
+th.copilotKitMarkdownElement,
+td.copilotKitMarkdownElement {
+  border: 1px solid #334155;
+  padding: 0.5em 0.75em;
+  text-align: left;
+}
+th.copilotKitMarkdownElement {
+  background-color: #1e293b;
+  color: #e2e8f0;
+  font-weight: 600;
+}
+td.copilotKitMarkdownElement {
+  color: #cbd5e1;
+}
+tr.copilotKitMarkdownElement:nth-child(even) td.copilotKitMarkdownElement {
+  background-color: #0f172a;
+}
+
+/* Dark mode link styling in doc content */
+.prose-custom a {
+  color: #60a5fa !important;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  text-decoration-color: #60a5fa/40;
+  transition: color 0.15s ease;
+}
+.prose-custom a:hover {
+  color: #93c5fd !important;
+}
+
+/* Dark mode table borders in doc content */
+.prose-custom table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+}
+.prose-custom th,
+.prose-custom td {
+  border: 1px solid #334155;
+  padding: 0.5em 0.75em;
+  text-align: left;
+}
+.prose-custom th {
+  background-color: #1e293b;
+  color: #e2e8f0;
+  font-weight: 600;
+}
+.prose-custom td {
+  color: #cbd5e1;
+}
+.prose-custom tr:nth-child(even) td {
+  background-color: #0f172a;
+}

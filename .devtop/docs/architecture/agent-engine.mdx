@@ -1,0 +1,27 @@
+---
+title: "Agent Engine"
+---
+
+# Agent Engine
+
+The AI agent engine is the core of devtop. It processes user requests through a tool-calling loop with depth-limited recursion.
+
+## Design
+
+- **Tool registry** — All agent-accessible operations are registered as typed tools with JSON schemas
+- **LLM streaming** — Responses are streamed via SSE to the chat panel
+- **Depth-limited recursion** — Multi-step tasks are decomposed with a configurable recursion limit
+
+## Auto-Commit
+
+Every write operation is automatically committed to git using conventional commit format:
+
+```
+docs: add architecture overview with mermaid diagram
+tickets: update dk-001 status to in-progress
+tickets: create dk-004 for search feature
+```
+
+## Key Principle
+
+Only the agent writes to disk. The web UI is read-only.

@@ -1,0 +1,99 @@
+# devtop — engine configuration
+#
+# The engine is artifact-kind-agnostic. This file declares the artifact kinds,
+# derivation edges, replan behavior, agent prompts, and the handoff contract
+# for external orchestrators. Materialized into $DEVTOP_DIR/config.yml on
+# first run so a repo owns its copy (edit, commit, and external tools read it).
+#
+# The shipped default is intentionally identical to devtop's classic behavior:
+# docs (tree nav + MDX) and tickets (board). Adding kinds is a config edit plus
+# an engine-supported view — no code change.
+
+artifact_kinds:
+  docs:
+    path: docs
+    extension: .mdx
+    agent_writable: true
+    view: mdx
+    nav:
+      label: Docs
+      icon: file
+      order: 1
+      view: tree
+    schema:
+      title: string
+      description: string
+      tags: [string]
+  tickets:
+    path: tickets
+    extension: .md
+    agent_writable: true
+    view: board
+    nav:
+      label: Tickets
+      icon: board
+      order: 2
+      view: board
+    schema:
+      id: string
+      title: string
+      status: [open, in-progress, done]
+      priority: [urgent, high, medium, low]
+      assignee: string?
+      created: date
+
+# ---------------------------------------------------------------------------
+# PRDs + derivation: the doc -> prd -> ticket pipeline. The engine computes
+# staleness/re-plan generically from the derivation edges.
+# ---------------------------------------------------------------------------
+  prds:
+    path: prds
+    extension: .mdx
+    agent_writable: true
+    requires_approval: true
+    view: list
+    nav:
+      label: PRDs
+      icon: doc
+      order: 3
+      view: list
+    schema:
+      title: string
+      status: [draft, reviewing, approved, archived]
+      requirements: [{ id, description, acceptance }]
+
+derivation:
+  - from: docs
+    to: prds
+    transform: breakdown
+  - from: prds
+    to: tickets
+    transform: derive_tickets
+    gate: "prds.status == approved"
+
+# How changed source artifacts affect derived artifacts. Computed generically
+# from the derivation edges above.
+replan:
+  detect: git_diff
+  stale_badge: true
+  phases:
+    before_approval: rederive_draft
+    after_approval_pending: mark_stale
+    in_flight: delta_only
+    shipped: absorb_to_docs
+
+# The AI half — judgment stays in the agent; config declares prompts + triggers.
+prompts:
+  classify:
+    prompt: prompts/classify.md
+    default: knowledge
+
+# The machine-readable contract external orchestrators (ferret, Agent Manager)
+# parse to know the artifact vocabulary, which states are grabbable, and how
+# results are reported back. devtop never drives the lifecycle.
+handoff:
+  contract: "tickets/*.md + this config"
+  grabbable: []
+  report_back:
+    - comment
+  lifecycle_owner: external

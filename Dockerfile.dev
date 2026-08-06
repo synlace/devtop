@@ -1,0 +1,18 @@
+FROM golang:1.25-alpine
+
+# Install Node.js, NPM, Git, and build tools
+RUN apk add --no-cache nodejs npm git build-base
+
+WORKDIR /app
+
+# Install Air for hot-reloading Go backend
+RUN go install github.com/air-verse/air@v1.52.2
+
+# Expose ports:
+# 8000 for Go Backend
+# 5173 for React Vite Frontend
+EXPOSE 8000 5173
+
+# Entrypoint: Start CopilotKit and Vite servers in the background if the frontend package exists, 
+# then start Air for Go live reloading in the foreground.
+CMD ["sh", "-c", "if [ -f frontend/package.json ]; then (cd frontend && npm install && node copilot-server.js &) && (cd frontend && npm run dev -- --host) & fi; air"]

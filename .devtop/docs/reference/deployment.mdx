@@ -1,0 +1,33 @@
+---
+title: "Deployment"
+---
+
+# Deployment
+
+## Production Docker
+
+```bash
+# Build
+docker build -t devtop:latest .
+
+# Run
+docker run -v $(pwd):/workspace -p 8000:8000 devtop:latest
+```
+
+Uses a multi-stage Go build targeting Alpine for a minimal final image.
+
+## Dev Docker
+
+```bash
+docker build -f Dockerfile.dev -t devtop:dev .
+docker run -v $(pwd):/workspace -p 8000:8000 devtop:dev
+```
+
+Dev Docker includes Air for Go hot-reload and Node for the frontend.
+
+## Production Notes
+
+- Mount the project directory as a volume at `/workspace`
+- The `.devtop/` directory must be writable (the agent writes to disk)
+- SQLite data is ephemeral in the container — mount a persistent volume for `.devtop/data/` if needed
+- Set `LLM_API_KEY` via environment or `.env` file

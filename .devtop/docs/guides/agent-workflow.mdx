@@ -1,0 +1,32 @@
+---
+title: "Agent Workflow"
+---
+
+# Agent Workflow
+
+## How the Agent Interacts
+
+1. User sends a message through the chat panel
+2. Agent interprets the request and selects appropriate tools
+3. Agent reads/writes files as needed
+4. Every write is automatically committed to git
+5. Agent responds via streaming SSE
+
+## Agent Tool Set
+
+- `read_doc(path)` — Read a documentation file
+- `write_doc(path, content)` — Write or update documentation
+- `list_docs()` — List all docs with slugs and titles
+- `list_tickets()` — List all tickets
+- `read_ticket(id)` — Read a single ticket
+- `create_ticket(title, description, priority, assignee)` — Create a ticket
+- `update_ticket(id, status, priority, assignee)` — Update a ticket
+- `add_comment(id, body)` — Add a comment to a ticket
+- `git_commit(message)` — Commit all changes to git
+- `ask_user(question)` — Ask the user for clarification
+
+## Best Practices
+
+- Always review before accepting agent-proposed changes
+- The agent must read before writing — it checks the current state first
+- Commit messages follow conventional commit format automatically

@@ -1,0 +1,19 @@
+# Secrets and local state
+.env
+.devtop/
+
+# VCS
+.git/
+
+# Binaries and build output
+devtop
+devtop-bin
+*.exe
+frontend/dist/
+frontend/node_modules/
+
+# Misc
+tmp/
+*.log
+dummy.txt
+Dockerfile.dev

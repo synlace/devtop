@@ -1,0 +1,33 @@
+---
+title: "MCP Integration"
+---
+
+# MCP Integration
+
+The agent connects to external MCP (Model Context Protocol) servers to extend its toolset.
+
+## Configuration
+
+Configured via the `MCP_SERVERS` environment variable:
+
+```json
+[
+  {
+    "name": "filesystem",
+    "transport": "stdio",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+  }
+]
+```
+
+## Supported Transports
+
+| Transport | Description |
+|-----------|-------------|
+| `stdio` | Subprocess with stdio communication |
+| `streamable-http` | HTTP-based MCP transport |
+
+## Tool Conversion
+
+MCP tool definitions are dynamically converted to OpenAI-compatible function schemas, making them available to the agent alongside built-in tools.

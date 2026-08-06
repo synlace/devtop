@@ -1,0 +1,59 @@
+---
+title: "Installation"
+---
+
+# Installation
+
+## Prerequisites
+
+- **Go 1.25+** — Download from [go.dev](https://go.dev/dl)
+- **Node.js 22+** — Required for the React frontend
+- **Just** (optional) — Command runner for common tasks
+
+## Quick Start
+
+```bash
+# Clone the repo and navigate to the project root
+cd devtop
+
+# Run locally
+go run .
+
+# Or via just
+just devtop
+
+# With custom port
+go run . -port 8080
+```
+
+## Docker
+
+```bash
+# Production build (multi-stage Go -> Alpine)
+docker build -t devtop:latest .
+docker run -v $(pwd):/workspace -p 8000:8000 devtop:latest
+
+# Dev build with hot-reload
+docker build -f Dockerfile.dev -t devtop:dev .
+docker run -v $(pwd):/workspace -p 8000:8000 devtop:dev
+```
+
+## Frontend Development
+
+```bash
+cd frontend
+npm install
+npm run dev     # Vite dev server on :5173
+```
+
+## Available Commands
+
+| Command | Description |
+|---------|-------------|
+| `just devtop` | Run server locally |
+| `just devtop install` | Download Go dependencies |
+| `just devtop init` | Create .devtop/ directory structure |
+| `just devtop docker` | Build & run production Docker |
+| `just devtop dev` | Build & run dev Docker (hot-reload) |
+| `go test ./...` | Run all tests |
+| `cd frontend && npm run dev` | Start Vite frontend dev server |
