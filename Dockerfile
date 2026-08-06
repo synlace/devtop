@@ -5,7 +5,7 @@
 #     -v "$PWD:/workspace" \
 #     -v devtop-ai-config:/etc/devtop \
 #     -p 8000:8000 \
-#     ghcr.io/your-org/devtop:latest
+#     ghcr.io/synlace/devtop:latest
 
 # Stage 1: build the React frontend
 FROM node:22-alpine AS frontend

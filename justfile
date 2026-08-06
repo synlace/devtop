@@ -13,7 +13,7 @@ devtop *args:
     SRC="{{devtop_src}}"
     PROJECT_DIR="$(pwd)"
     DEVTOP_DIR="${DEVTOP_DIR:-$PROJECT_DIR/.devtop}"
-    IMAGE="${DEVTOP_IMAGE:-ghcr.io/your-org/devtop:latest}"
+    IMAGE="${DEVTOP_IMAGE:-ghcr.io/synlace/devtop:latest}"
 
     case "${1:-}" in
         build)

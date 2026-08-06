@@ -77,6 +77,25 @@ func TestSPA_NotBuilt(t *testing.T) {
 	}
 }
 
+func TestAPIEmptyLists(t *testing.T) {
+	tempDir, mux := initHTTPTestEnv(t)
+	defer os.RemoveAll(tempDir)
+
+	// A fresh repo has empty docs/tickets dirs. The list endpoints must
+	// return [] (never null) so the frontend can iterate them.
+	for _, path := range []string{"/api/docs", "/api/tickets"} {
+		req := httptest.NewRequest("GET", path, nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %d", path, rec.Code)
+		}
+		if got := strings.TrimSpace(rec.Body.String()); got != "[]" {
+			t.Errorf("%s: expected [], got %q", path, got)
+		}
+	}
+}
+
 func TestSPA_ServesIndex(t *testing.T) {
 	tempDir, mux := initHTTPTestEnv(t)
 	defer os.RemoveAll(tempDir)

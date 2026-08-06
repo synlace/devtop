@@ -12,7 +12,7 @@ docker run --rm -it \
   -v "$PWD:/workspace" \
   -v devtop-ai-config:/etc/devtop \
   -p 8000:8000 \
-  ghcr.io/your-org/devtop:latest
+  ghcr.io/synlace/devtop:latest
 ```
 
 Open http://127.0.0.1:8000. On first run devtop creates `./.devtop/`

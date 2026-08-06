@@ -80,7 +80,7 @@ func docSlugFromPath(path string) string {
 }
 
 func listDocs() ([]DocSlug, error) {
-	var docs []DocSlug
+	docs := []DocSlug{}
 	err := filepath.WalkDir(DOCS_DIR, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".mdx") {
 			return nil
@@ -132,7 +132,7 @@ func getDoc(slug string) (string, string, error) {
 }
 
 func listTickets() ([]Ticket, error) {
-	var tickets []Ticket
+	tickets := []Ticket{}
 	err := filepath.WalkDir(TICKETS_DIR, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
 			return nil
