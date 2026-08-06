@@ -81,8 +81,14 @@ func TestAPIEmptyLists(t *testing.T) {
 	tempDir, mux := initHTTPTestEnv(t)
 	defer os.RemoveAll(tempDir)
 
-	// A fresh repo has empty docs/tickets dirs. The list endpoints must
-	// return [] (never null) so the frontend can iterate them.
+	// initTestEnvironment seeds sample content — clear it to simulate a fresh,
+	// empty repo. The list endpoints must return [] (never null) so the
+	// frontend can iterate them.
+	_ = os.RemoveAll(DOCS_DIR)
+	_ = os.RemoveAll(TICKETS_DIR)
+	_ = os.MkdirAll(DOCS_DIR, 0755)
+	_ = os.MkdirAll(TICKETS_DIR, 0755)
+
 	for _, path := range []string{"/api/docs", "/api/tickets"} {
 		req := httptest.NewRequest("GET", path, nil)
 		rec := httptest.NewRecorder()
