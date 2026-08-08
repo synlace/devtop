@@ -217,6 +217,14 @@ func TestAPIRoutes_DocPage(t *testing.T) {
 	if !strings.Contains(doc["content"], "Stack: Go.") {
 		t.Errorf("expected content to contain 'Stack: Go.', got '%s'", doc["content"])
 	}
+	// The client renders — the API must return raw Markdown, not HTML, with
+	// the YAML frontmatter stripped.
+	if !strings.HasPrefix(doc["content"], "# Architecture") {
+		t.Errorf("expected content to start with the raw Markdown heading, got %q", doc["content"])
+	}
+	if strings.Contains(doc["content"], "<p>") || strings.Contains(doc["content"], "title:") {
+		t.Errorf("expected raw Markdown body (no rendered HTML/frontmatter), got %q", doc["content"])
+	}
 }
 
 func TestAPIRoutes_DocPageNotFound(t *testing.T) {

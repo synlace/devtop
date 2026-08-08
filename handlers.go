@@ -124,6 +124,8 @@ func handleAPIDocPage(w http.ResponseWriter, r *http.Request) {
 			docs, _ := listDocs()
 			if len(docs) > 0 {
 				title, htmlContent, err = getDoc(docs[0].Slug)
+			} else {
+				title, htmlContent, err = getWelcomeDoc()
 			}
 		}
 		if err != nil {

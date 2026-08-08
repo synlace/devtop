@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -258,6 +259,117 @@ func registerBuiltinTools() {
 		return fmt.Sprintf("Comment added to ticket %s", id)
 	})
 
+	registerTool("read_workspace_file", map[string]interface{}{
+		"type": "function",
+		"function": map[string]interface{}{
+			"name":        "read_workspace_file",
+			"description": "Read a text file from the workspace repository. Path is relative to the workspace root (e.g. 'README.md', 'src/main.go'). Use list_workspace_files to discover paths.",
+			"parameters": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path": map[string]interface{}{"type": "string", "description": "Path relative to the workspace root"},
+				},
+				"required": []string{"path"},
+			},
+		},
+	}, func(args map[string]interface{}) string {
+		rel, _ := args["path"].(string)
+		if rel == "" {
+			return "Error: path is required"
+		}
+		full, err := resolveWorkspacePath(rel)
+		if err != nil {
+			return fmt.Sprintf("Error: %v", err)
+		}
+		fi, err := os.Stat(full)
+		if err != nil {
+			return fmt.Sprintf("Error: file '%s' not found", rel)
+		}
+		if fi.IsDir() {
+			return fmt.Sprintf("Error: '%s' is a directory — use list_workspace_files", rel)
+		}
+		if fi.Size() > MAX_WORKSPACE_READ_BYTES {
+			return fmt.Sprintf("Error: file too large (%d bytes, max %d)", fi.Size(), MAX_WORKSPACE_READ_BYTES)
+		}
+		data, err := os.ReadFile(full)
+		if err != nil {
+			return fmt.Sprintf("Error reading file: %v", err)
+		}
+		if bytes.ContainsRune(data, '\x00') {
+			return fmt.Sprintf("Binary file (%d bytes) — content not shown", len(data))
+		}
+		return string(data)
+	})
+
+	registerTool("list_workspace_files", map[string]interface{}{
+		"type": "function",
+		"function": map[string]interface{}{
+			"name":        "list_workspace_files",
+			"description": "List files and directories in the workspace repository. Path is relative to the workspace root; empty means the root. Skips .git, node_modules, and other generated directories.",
+			"parameters": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path": map[string]interface{}{"type": "string", "description": "Directory path relative to the workspace root (optional)"},
+				},
+			},
+		},
+	}, func(args map[string]interface{}) string {
+		rel, _ := args["path"].(string)
+		dir := workspaceRoot()
+		if rel != "" {
+			resolved, err := resolveWorkspacePath(rel)
+			if err != nil {
+				return fmt.Sprintf("Error: %v", err)
+			}
+			fi, err := os.Stat(resolved)
+			if err != nil {
+				return fmt.Sprintf("Error: '%s' not found", rel)
+			}
+			if !fi.IsDir() {
+				return fmt.Sprintf("Error: '%s' is not a directory", rel)
+			}
+			dir = resolved
+		}
+
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return fmt.Sprintf("Error listing directory: %v", err)
+		}
+
+		type entry struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+			Size int64  `json:"size,omitempty"`
+		}
+		var out []entry
+		for _, e := range entries {
+			if ignoredWorkspaceDirs[e.Name()] {
+				continue
+			}
+			if e.IsDir() {
+				out = append(out, entry{Name: e.Name(), Type: "dir"})
+				continue
+			}
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				out = append(out, entry{Name: e.Name(), Type: "symlink"})
+				continue
+			}
+			out = append(out, entry{Name: e.Name(), Type: "file", Size: info.Size()})
+		}
+		sort.Slice(out, func(i, j int) bool {
+			if out[i].Type != out[j].Type {
+				return out[i].Type < out[j].Type
+			}
+			return out[i].Name < out[j].Name
+		})
+		b, _ := json.MarshalIndent(out, "", "  ")
+		return string(b)
+	})
+
 	registerTool("git_commit", map[string]interface{}{
 		"type": "function",
 		"function": map[string]interface{}{
@@ -299,6 +411,58 @@ func registerTool(name string, schema map[string]interface{}, handler ToolHandle
 	toolRegistryMu.Lock()
 	defer toolRegistryMu.Unlock()
 	toolRegistry[name] = ToolDef{Schema: schema, Handler: handler}
+}
+
+const MAX_WORKSPACE_READ_BYTES = 512 * 1024
+
+var ignoredWorkspaceDirs = map[string]bool{
+	".git":         true,
+	".devtop":      true,
+	"node_modules": true,
+	"dist":         true,
+	"build":        true,
+	"target":       true,
+	"vendor":       true,
+	".idea":        true,
+	".vscode":      true,
+}
+
+func workspaceRoot() string {
+	return filepath.Dir(DEVTOP_DIR)
+}
+
+func pathWithinRoot(root, target string) bool {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	targetAbs, err := filepath.Abs(target)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(rootAbs, targetAbs)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel))
+}
+
+func resolveWorkspacePath(rel string) (string, error) {
+	if filepath.IsAbs(rel) {
+		return "", fmt.Errorf("use a path relative to the workspace root")
+	}
+	root := workspaceRoot()
+	abs := filepath.Join(root, filepath.FromSlash(rel))
+	if !pathWithinRoot(root, abs) {
+		return "", fmt.Errorf("path escapes the workspace")
+	}
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		if !pathWithinRoot(root, real) {
+			return "", fmt.Errorf("path escapes the workspace (symlink)")
+		}
+		return real, nil
+	}
+	return abs, nil
 }
 
 func registerMCPTool(name string, schema map[string]interface{}, handler ToolHandler) {
@@ -379,7 +543,7 @@ type AgentChunk struct {
 
 const SYSTEM_PROMPT = `You are a helpful engineering assistant embedded in a project's documentation and ticket system.
 
-You can read and write docs, manage tickets, and answer questions about the project.
+You can read and write docs, manage tickets, read files in the workspace repository, and answer questions about the project.
 
 When the user asks you to do something, use the appropriate tool. Always read before writing to understand the current state. Be concise but thorough.
 

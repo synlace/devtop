@@ -156,6 +156,27 @@ const DEVTOP_DIR = process.env.DEVTOP_DIR || path.resolve("../.devtop");
 const DOCS_DIR = path.join(DEVTOP_DIR, "docs");
 const TICKETS_DIR = path.join(DEVTOP_DIR, "tickets");
 const THREADS_DIR = path.join(DEVTOP_DIR, "threads");
+const WORKSPACE_ROOT = path.dirname(DEVTOP_DIR);
+
+const MAX_WORKSPACE_READ_BYTES = 512 * 1024;
+const IGNORED_WORKSPACE_DIRS = new Set([".git", ".devtop", "node_modules", "dist", "build", "target", "vendor", ".idea", ".vscode"]);
+
+function isPathInside(root, target) {
+  const rel = path.relative(root, target);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+async function resolveWorkspacePath(relPath) {
+  const full = path.resolve(WORKSPACE_ROOT, relPath);
+  if (!isPathInside(WORKSPACE_ROOT, full)) {
+    throw new Error("path escapes the workspace");
+  }
+  const real = await fs.realpath(full).catch(() => full);
+  if (!isPathInside(WORKSPACE_ROOT, real)) {
+    throw new Error("path escapes the workspace (symlink)");
+  }
+  return real;
+}
 
 console.log("Initializing CopilotKit Runtime with OpenRouter and Zod tools:");
 console.log(`- Model: ${model}`);
@@ -429,6 +450,63 @@ ${updatedBody}`;
         return `Comment added to ticket ${id}`;
       } catch (err) {
         return `Error adding comment: ${err.message}`;
+      }
+    }
+  }),
+  defineTool({
+    name: "read_workspace_file",
+    description: "Read a text file from the workspace repository. Path is relative to the workspace root (e.g. 'README.md', 'src/main.go'). Use list_workspace_files to discover paths.",
+    parameters: z.object({
+      path: z.string().describe("Path relative to the workspace root")
+    }),
+    execute: async ({ path: relPath }) => {
+      try {
+        const full = await resolveWorkspacePath(relPath);
+        const st = await fs.stat(full);
+        if (st.isDirectory()) {
+          return `Error: '${relPath}' is a directory — use list_workspace_files`;
+        }
+        if (st.size > MAX_WORKSPACE_READ_BYTES) {
+          return `Error: file too large (${st.size} bytes, max ${MAX_WORKSPACE_READ_BYTES})`;
+        }
+        const buf = await fs.readFile(full);
+        if (buf.includes(0)) {
+          return `Binary file (${buf.length} bytes) — content not shown`;
+        }
+        return buf.toString("utf-8");
+      } catch (err) {
+        return `Error: ${err.message}`;
+      }
+    }
+  }),
+  defineTool({
+    name: "list_workspace_files",
+    description: "List files and directories in the workspace repository. Path is relative to the workspace root; omit or pass '' for the root. Skips .git, node_modules, and other generated directories.",
+    parameters: z.object({
+      path: z.string().optional().describe("Directory path relative to the workspace root")
+    }),
+    execute: async ({ path: relPath }) => {
+      try {
+        const dir = relPath ? await resolveWorkspacePath(relPath) : WORKSPACE_ROOT;
+        const st = await fs.stat(dir);
+        if (!st.isDirectory()) {
+          return `Error: '${relPath || "."}' is not a directory`;
+        }
+        const entries = await fs.readdir(dir, { withFileTypes: true });
+        const out = [];
+        for (const e of entries) {
+          if (IGNORED_WORKSPACE_DIRS.has(e.name)) continue;
+          if (e.isSymbolicLink()) { out.push({ name: e.name, type: "symlink" }); continue; }
+          if (e.isDirectory()) { out.push({ name: e.name, type: "dir" }); continue; }
+          if (e.isFile()) {
+            const info = await fs.stat(path.join(dir, e.name));
+            out.push({ name: e.name, type: "file", size: info.size });
+          }
+        }
+        out.sort((a, b) => a.type === b.type ? a.name.localeCompare(b.name) : a.type.localeCompare(b.type));
+        return JSON.stringify(out, null, 2);
+      } catch (err) {
+        return `Error: ${err.message}`;
       }
     }
   }),

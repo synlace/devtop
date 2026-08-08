@@ -231,3 +231,90 @@ test('@ai re-entering a thread resumes the chat scroll position', async ({ page 
   expect(afterState).not.toBeNull()
   expect(Math.abs(afterState.scrollTop - before)).toBeLessThan(150)
 })
+
+test('@ai doc navigation resumes the chat scroll position', async ({ page }) => {
+  test.skip(!aiEnabled, 'AI tests opt-in: run with `just test ai`')
+  test.setTimeout(180_000)
+
+  await page.goto('/#/docs/architecture/overview')
+  await hideWebInspector(page)
+
+  // Build a conversation long enough to overflow the chat scroll area.
+  for (const { text, expectText } of [
+    { text: 'Which tickets are currently open?', expectText: 'Fix the login button' },
+    { text: 'List every ticket with its status, priority and assignee.', expectText: 'Fix the login button' },
+    { text: 'Describe the fix needed for the login button ticket in detail.', expectText: /login button/i },
+  ]) {
+    const reply = await ask(page, text)
+    await expect(reply).toContainText(expectText, { timeout: 120_000 })
+  }
+  await page.waitForTimeout(2_000) // let streaming settle
+
+  // Scroll the chat to a mid-conversation position and record it.
+  const chatScroll = await chatScroller(page)
+  expect(chatScroll).not.toBeNull()
+  expect(chatScroll.maxScroll).toBeGreaterThan(0) // must be scrollable
+  const target = Math.max(1, Math.floor(chatScroll.maxScroll * 0.3))
+  const beforeState = await chatScroller(page, target)
+  expect(beforeState.scrollTop).toBeGreaterThan(0)
+  const before = beforeState.scrollTop
+  await page.waitForTimeout(500) // let stick-to-bottom register the escape
+
+  // Navigate to another doc (different context -> different thread), then back.
+  await page.evaluate(() => { location.hash = '#/docs/getting-started/configuration' })
+  await expect(page.getByTestId('copilot-chat-textarea')).toBeVisible()
+  await page.waitForTimeout(1_000)
+  await page.evaluate(() => { location.hash = '#/docs/architecture/overview' })
+  await expect(page.getByTestId('copilot-user-message').first()).toBeVisible()
+
+  // Bug: doc navigation remounts the chat (key changes) and CopilotKit's
+  // stick-to-bottom re-animates to the bottom, losing the user's place. The
+  // fix disables CopilotKit auto-scroll (autoScroll={false}) and restores the
+  // saved position ourselves. A jump to the bottom (maxScroll, thousands of
+  // px) fails decisively.
+  await page.waitForTimeout(2_500) // allow remount + restore to settle
+  const afterState = await chatScroller(page)
+  expect(afterState).not.toBeNull()
+  expect(Math.abs(afterState.scrollTop - before)).toBeLessThan(150)
+})
+
+test('@ai the chat scroll position survives a page refresh', async ({ page }) => {
+  test.skip(!aiEnabled, 'AI tests opt-in: run with `just test ai`')
+  test.setTimeout(180_000)
+
+  await page.goto('/#/docs/architecture/overview')
+  await hideWebInspector(page)
+
+  // Build a conversation long enough to overflow the chat scroll area.
+  for (const { text, expectText } of [
+    { text: 'Which tickets are currently open?', expectText: 'Fix the login button' },
+    { text: 'List every ticket with its status, priority and assignee.', expectText: 'Fix the login button' },
+    { text: 'Describe the fix needed for the login button ticket in detail.', expectText: /login button/i },
+  ]) {
+    const reply = await ask(page, text)
+    await expect(reply).toContainText(expectText, { timeout: 120_000 })
+  }
+  await page.waitForTimeout(2_000) // let streaming settle
+
+  // Scroll to a mid-conversation position and record it.
+  const chatScroll = await chatScroller(page)
+  expect(chatScroll).not.toBeNull()
+  expect(chatScroll.maxScroll).toBeGreaterThan(0)
+  const target = Math.max(1, Math.floor(chatScroll.maxScroll * 0.3))
+  const beforeState = await chatScroller(page, target)
+  const before = beforeState.scrollTop
+  expect(before).toBeGreaterThan(0)
+  // Let the debounced viewstate save (tracked position) land on disk.
+  await page.waitForTimeout(1_000)
+
+  // Bug: page refresh wiped the in-memory scroll position, so the reload
+  // re-animated to the bottom. The fix disables CopilotKit auto-scroll, tracks
+  // the position live, persists it to viewstate, and restores it on mount.
+  await page.reload()
+  await page.getByTestId('copilot-user-message').first().waitFor({ timeout: 120_000 })
+  await page.waitForTimeout(2_500) // allow mount + restore to settle
+
+  const afterState = await chatScroller(page)
+  expect(afterState).not.toBeNull()
+  expect(Math.abs(afterState.scrollTop - before)).toBeLessThan(150)
+})

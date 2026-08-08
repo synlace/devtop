@@ -14,13 +14,13 @@ import (
 )
 
 var (
-	APP_DIR       string
-	STATIC_DIR    string
-	DEVTOP_DIR    string
-	DOCS_DIR      string
-	TICKETS_DIR   string
-	THREADS_DIR   string
-	DATA_DIR      string
+	APP_DIR     string
+	STATIC_DIR  string
+	DEVTOP_DIR  string
+	DOCS_DIR    string
+	TICKETS_DIR string
+	THREADS_DIR string
+	DATA_DIR    string
 )
 
 func loadDotEnv() {
@@ -109,6 +109,11 @@ func main() {
 	// kind) so the generic artifact endpoints work on a fresh repo.
 	if err := ensureKindDirs(); err != nil {
 		fmt.Printf("Warning: could not create artifact kind dirs: %v\n", err)
+	}
+	// Fresh repos get a materialized welcome doc so the docs view has content
+	// (and the AI can read it). Non-destructive: skipped when docs exist.
+	if err := ensureWelcomeDoc(); err != nil {
+		fmt.Printf("Warning: could not create welcome doc: %v\n", err)
 	}
 
 	// Connect MCP servers

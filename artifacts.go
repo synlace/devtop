@@ -142,7 +142,7 @@ func handleAPIArtifactDetail(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]interface{}{
 		"id":          id,
 		"title":       title,
-		"content":     renderMD(string(bodyBytes)),
+		"content":     strings.TrimSpace(string(bodyBytes)),
 		"frontmatter": toJSONable(meta),
 	}
 	w.Header().Set("Content-Type", "application/json")

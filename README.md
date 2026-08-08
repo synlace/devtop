@@ -57,9 +57,18 @@ the Vite dev server at :5173).
 - Go binary (`main.go`): `/api/*` routes + the built React app from
   `frontend/dist` (SPA fallback to `index.html`) + a reverse proxy for
   `/api/copilotkit/*` → the Node runtime.
-- CopilotKit runtime (`frontend/copilot-server.js`): the AI chat, agent tools,
-  thread persistence, and the `ai-status` / `ai-key` endpoints that power the
-  UI key prompt. The key lives in this process; the volume is optional.
+- **Docs are stored as raw Markdown + frontmatter and served as-is** — the API
+  returns the file body, never rendered HTML (`renderMD` is gone from the
+  content endpoints). The source of truth is always the file on disk.
+- Rendering is client-side in the browser via the unified pipeline
+  (`frontend/src/RichMarkdown.tsx`): `react-markdown` + `remark-gfm` (tables,
+  task lists) + `rehype-highlight` (code). Mermaid diagrams are rendered by a
+  lazily-loaded component (`MermaidDiagram.tsx`) so ~2MB of mermaid only loads
+  when a doc actually contains a diagram.
+- CopilotKit runtime (`frontend/copilot-server.js`): the AI chat, agent tools
+  (docs, tickets, and workspace file read/list), thread persistence, and the
+  `ai-status` / `ai-key` endpoints that power the UI key prompt. The key lives
+  in this process; the volume is optional.
 - The old server-rendered (Alpine) frontend and Go templates were removed — the
   React app is the only frontend.
 

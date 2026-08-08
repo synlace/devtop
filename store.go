@@ -128,7 +128,9 @@ func getDoc(slug string) (string, string, error) {
 	if title == "" {
 		title = slug
 	}
-	return title, renderMD(string(bodyBytes)), nil
+	// Serve the raw Markdown body (frontmatter stripped); rendering is the
+	// client's job so the file on disk is always the source of truth.
+	return title, strings.TrimSpace(string(bodyBytes)), nil
 }
 
 func listTickets() ([]Ticket, error) {

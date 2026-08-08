@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef, Fragment, memo } from 'react'
+import RichMarkdown from './RichMarkdown'
 import { 
   FileText, 
   ClipboardList, 
@@ -11,7 +12,12 @@ import {
   MessageSquare,
   Plus,
   Trash2,
-  Key
+  Key,
+  Settings,
+  X,
+  Palette,
+  Database,
+  Info
 } from 'lucide-react'
 import { CopilotKit, CopilotChat } from '@copilotkit/react-core/v2'
 import { useAgentContext } from '@copilotkit/react-core/v2'
@@ -150,11 +156,17 @@ const AI_PROVIDERS = {
 } as const
 type AIProviderKey = keyof typeof AI_PROVIDERS
 
+// Sections in the settings dialog (left rail). AI is the only populated pane
+// today; the others are placeholders until they gain real controls.
+type SettingsPane = 'ai' | 'appearance' | 'data' | 'about'
+type AiStatus = { configured: boolean; remembered: boolean; baseURL?: string; model?: string } | null
+
 function App() {
   // Routing / UI State
   const [activePage, setActivePage] = useState<PageLocation>({ kind: 'docs', id: 'index' })
   const [docTitle, setDocTitle] = useState<string>('Home')
   const [docContent, setDocContent] = useState<string>('')
+  const [docMissing, setDocMissing] = useState<boolean>(false)
   const [docSlugs, setDocSlugs] = useState<DocSlug[]>([])
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
   
@@ -181,7 +193,8 @@ function App() {
   // true once /ai-status answered (runtime reachable); false when it failed
   // (runtime down — e.g. hermetic tests) or while still unknown (null).
   const [aiReachable, setAiReachable] = useState<boolean | null>(null)
-  const [showAiSettings, setShowAiSettings] = useState<boolean>(false)
+  const [showSettings, setShowSettings] = useState<boolean>(false)
+  const [settingsPane, setSettingsPane] = useState<SettingsPane>('ai')
   const [aiKeyInput, setAiKeyInput] = useState<string>('')
   const [aiProvider, setAiProvider] = useState<AIProviderKey>('openrouter')
   const [aiBaseURLInput, setAiBaseURLInput] = useState<string>(AI_PROVIDERS.openrouter.baseURL)
@@ -198,6 +211,19 @@ function App() {
       .catch(() => { if (!cancelled) setAiReachable(false) })
     return () => { cancelled = true }
   }, [])
+
+  // When the runtime is reachable but no AI key is configured, open Settings
+  // focused on the AI/provider pane so setup is front-and-center. Runs once per
+  // mount, so dismissing it (or configuring a key) leaves it closed until the
+  // next app launch.
+  const settingsAutoOpenedRef = useRef(false)
+  useEffect(() => {
+    if (aiReachable === true && aiStatus && !aiStatus.configured && !settingsAutoOpenedRef.current) {
+      settingsAutoOpenedRef.current = true
+      setSettingsPane('ai')
+      setShowSettings(true)
+    }
+  }, [aiReachable, aiStatus])
 
   useEffect(() => {
     let cancelled = false
@@ -238,7 +264,7 @@ function App() {
         setAiStatus(await r.json())
         setAiReachable(true)
         setAiKeyInput('')
-        setShowAiSettings(false)
+        setShowSettings(false)
       }
     } finally {
       setAiSaving(false)
@@ -507,9 +533,10 @@ function App() {
         const data = await r.json()
         setDocTitle(data.title)
         setDocContent(data.content)
+        setDocMissing(false)
       } else {
-        setDocTitle('Not Found')
-        setDocContent('<h1>Document not found</h1>')
+        setDocContent('')
+        setDocMissing(true)
       }
     } catch (e) {
       console.error('Failed to load doc:', e)
@@ -554,7 +581,8 @@ function App() {
         setDocContent(data.content)
       } else {
         setDocTitle('Not Found')
-        setDocContent('<h1>Not found</h1>')
+        setDocContent('')
+        setDocMissing(true)
       }
     } catch (e) {
       console.error('Failed to load artifact:', e)
@@ -578,7 +606,7 @@ function App() {
   }, [])
 
   const saveViewState = useCallback(async () => {
-    const payload = contextThreadState.current
+    const payload = { ...contextThreadState.current, scroll: { ...chatScrollPosByThreadRef.current } }
     console.log('[viewstate] save', JSON.stringify(payload))
     try {
       await fetch('/api/viewstate', {
@@ -598,7 +626,11 @@ function App() {
         const data = await r.json()
         if (data && typeof data === 'object' && !Array.isArray(data)) {
           console.log('[viewstate] load from disk', JSON.stringify(data))
-          contextThreadState.current = data
+          const { scroll, ...contexts } = data as { scroll?: Record<string, number> } & Record<string, { activeThreadId?: string; showThreadList: boolean }>
+          contextThreadState.current = contexts
+          if (scroll && typeof scroll === 'object') {
+            chatScrollPosByThreadRef.current = { ...chatScrollPosByThreadRef.current, ...scroll }
+          }
         }
       }
     } catch (e) {
@@ -641,18 +673,32 @@ function App() {
     }
   }, [activeThreadId, contextKey, fetchThreads])
 
-  // Remember where the chat was scrolled so returning to a thread can resume
-  // there instead of re-animating to the bottom.
-  const chatScrollPosRef = useRef(0)
+  // Remember where the chat was scrolled per-thread so returning to a thread
+  // (via the thread list OR doc navigation) resumes there instead of
+  // re-animating to the bottom.
+  const chatScrollPosByThreadRef = useRef<Record<string, number>>({})
   const chatPanelRef = useRef<HTMLElement | null>(null)
+  const activeThreadIdRef = useRef(activeThreadId)
+  activeThreadIdRef.current = activeThreadId
+  // With `autoScroll={false}` there is no stick-to-bottom spring; the chat
+  // scroll container is a plain div we control. We only restore a saved
+  // position on mount and persist it as the user scrolls. We never auto-follow
+  // streaming content, so no gesture can be fought by an observer; when the
+  // user is above the bottom a "scroll to bottom" button appears instead.
+  const chatScrollerRef = useRef<HTMLElement | null>(null)
+  const scrollSaveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const [atChatBottom, setAtChatBottom] = useState(true)
+  const atChatBottomRef = useRef(true)
 
-  const saveChatScrollPos = useCallback(() => {
+  const saveChatScrollPos = useCallback((threadId?: string) => {
+    const id = threadId ?? activeThreadIdRef.current
+    if (!id) return
     const root = document.querySelector('[data-testid="copilot-chat"]')
     if (!root) return
     for (const el of root.querySelectorAll('*')) {
       const cs = getComputedStyle(el)
       if ((cs.overflowY === 'auto' || cs.overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 1) {
-        chatScrollPosRef.current = el.scrollTop
+        chatScrollPosByThreadRef.current[id] = el.scrollTop
         return
       }
     }
@@ -662,30 +708,117 @@ function App() {
     console.log('[thread] select', { threadId })
     setActiveThreadId(threadId)
     setShowThreadList(false)
-    // The chat stays mounted under the thread list, but CopilotKit's
-    // stick-to-bottom can still re-anchor to the bottom on re-entry. Restore
-    // the saved scroll position for a few frames so the conversation resumes
-    // where the user left off instead of animating down.
-    const restore = () => {
-      requestAnimationFrame(() => {
-        const root = document.querySelector('[data-testid="copilot-chat"]')
-        if (!root) return
-        for (const el of root.querySelectorAll('*')) {
-          const cs = getComputedStyle(el)
-          if ((cs.overflowY === 'auto' || cs.overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 1) {
-            el.scrollTop = chatScrollPosRef.current
-            return
-          }
-        }
-      })
-    }
-    let frames = 0
-    const tick = () => {
-      restore()
-      if (++frames < 10) requestAnimationFrame(tick)
-    }
-    requestAnimationFrame(tick)
   }, [])
+
+  const scrollChatToBottom = useCallback(() => {
+    const el = chatScrollerRef.current
+    if (!el) return
+    const id = activeThreadIdRef.current
+    if (!id) return
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+    setAtChatBottom(true)
+    chatScrollPosByThreadRef.current[id] = el.scrollHeight - el.clientHeight
+  }, [])
+
+  // Own scroll control (the chat uses `autoScroll={false}`, so there is no
+  // stick-to-bottom spring). Restore the saved position whenever the chat
+  // (re)mounts — covering doc navigation, thread-list re-entry to a different
+  // thread, and page refresh — persist it as the user scrolls, and track
+  // whether we are at the bottom (to show the "scroll to bottom" button).
+  useEffect(() => {
+    if (!activeThreadId) return
+    let el: HTMLElement | null = null
+    let raf = 0
+
+    const findScroller = () => {
+      const root = document.querySelector('[data-testid="copilot-chat"]')
+      if (!root) return null
+      for (const node of root.querySelectorAll('*')) {
+        const cs = getComputedStyle(node)
+        if ((cs.overflowY === 'auto' || cs.overflowY === 'scroll') && node.scrollHeight > node.clientHeight + 1) {
+          return node as HTMLElement
+        }
+      }
+      return null
+    }
+
+    const onScroll = () => {
+      if (!el) return
+      chatScrollPosByThreadRef.current[activeThreadId] = el.scrollTop
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+      if (nearBottom !== atChatBottomRef.current) {
+        atChatBottomRef.current = nearBottom
+        setAtChatBottom(nearBottom)
+      }
+      clearTimeout(scrollSaveTimerRef.current)
+      scrollSaveTimerRef.current = setTimeout(() => saveViewState(), 400)
+    }
+
+    const attach = () => {
+      el = findScroller()
+      if (el) {
+        chatScrollerRef.current = el
+        el.addEventListener('scroll', onScroll, { passive: true })
+        // Seed the at-bottom indicator without recording a position: at mount
+        // the container starts at scrollTop 0, and a probe here would overwrite
+        // a hydrated saved position before restore runs.
+        const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+        if (nearBottom !== atChatBottomRef.current) {
+          atChatBottomRef.current = nearBottom
+          setAtChatBottom(nearBottom)
+        }
+        const saved = chatScrollPosByThreadRef.current[activeThreadId]
+        if (saved) {
+          let frames = 0
+          // The last scrollTop we set programmatically. If a subsequent frame
+          // finds ``el.scrollTop` has moved off it, the user is scrolling and we
+          // must stop re-anchoring (otherwise reloading at the bottom pins the
+          // view and fights the user for the whole hydration window).
+          let lastSet: number | null = null
+          const restore = () => {
+            if (!el) return
+            if (lastSet !== null && el.scrollTop !== lastSet) return
+            const max = el.scrollHeight - el.clientHeight
+            if (max > 0) {
+              lastSet = Math.min(saved, max)
+              el.scrollTop = lastSet
+            }
+            // Keep re-applying as hydration/streaming grows the content: a
+            // single shot would clamp to the current fraction and strand the
+            // view near the top on page refresh. Stop once the saved position
+            // is fully reachable, or after ~5s.
+            if (max < saved && ++frames < 300) {
+              requestAnimationFrame(restore)
+            }
+          }
+          requestAnimationFrame(restore)
+        }
+        return true
+      }
+      return false
+    }
+
+    const poll = () => {
+      if (!attach() && ++raf < 600) requestAnimationFrame(poll)
+    }
+    requestAnimationFrame(poll)
+    return () => {
+      cancelAnimationFrame(raf)
+      el?.removeEventListener('scroll', onScroll)
+      chatScrollerRef.current = null
+    }
+  }, [activeThreadId, saveViewState])
+
+  // Best-effort last-write on navigation/refresh so the chat position lands in
+  // viewstate even if a debounced scroll-save hadn't fired yet.
+  useEffect(() => {
+    const flush = () => {
+      saveChatScrollPos()
+      saveViewState()
+    }
+    window.addEventListener('pagehide', flush)
+    return () => window.removeEventListener('pagehide', flush)
+  }, [saveChatScrollPos, saveViewState])
 
   // Load threads when context changes
   const autoCreateThread = useCallback(async (context: string) => {
@@ -717,6 +850,7 @@ useEffect(() => {
     if (isNavigation) {
       console.log('[effect] flushing context', { from: prevContextKey.current, to: contextKey, state: { activeThreadId, showThreadList } })
       // Flush the context we're leaving with its live values
+      saveChatScrollPos()
       contextThreadState.current[prevContextKey.current] = { activeThreadId, showThreadList }
       saveViewState()
     }
@@ -740,7 +874,7 @@ useEffect(() => {
       autoCreateThread(contextKey)
     }
     fetchThreads(contextKey)
-  }, [contextKey, viewStateLoaded, fetchThreads])
+  }, [contextKey, viewStateLoaded, fetchThreads, saveChatScrollPos])
 
   // Save view state to disk whenever thread state changes within the same context
   useEffect(() => {
@@ -835,7 +969,7 @@ useEffect(() => {
           {/* Fullscreen Button in Header bar */}
           <div className="h-[57px] px-4 border-b border-borderDark/40 flex items-center justify-between bg-surfaceDark/20 flex-shrink-0">
             <div className="flex items-center gap-2">
-              {activeThreadId ? (
+              {activeThreadId && !showThreadList ? (
                 <button
                   onClick={() => { saveChatScrollPos(); setShowThreadList(true) }}
                   className="h-7 w-7 rounded-lg border border-borderDark/50 hover:bg-borderDark/40 flex items-center justify-center text-slate-400 hover:text-slate-100 transition-colors"
@@ -858,7 +992,7 @@ useEffect(() => {
               )}
               <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider font-mono">
                 <Sparkles className="w-3.5 h-3.5 text-accentBlue animate-pulse" />
-                {activeThreadId ? 'Conversation' : 'Threads'}
+                {activeThreadId && !showThreadList ? 'Conversation' : 'Threads'}
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -866,7 +1000,7 @@ useEffect(() => {
                 {contextLabel}
               </span>
               <button
-                onClick={() => setShowAiSettings(!showAiSettings)}
+                onClick={() => { setSettingsPane('ai'); setShowSettings(true) }}
                 className={`h-7 w-7 rounded-lg border flex items-center justify-center transition-colors ${
                   aiStatus && !aiStatus.configured
                     ? 'border-amber-500/40 text-amber-400 hover:bg-amber-500/10'
@@ -886,23 +1020,7 @@ useEffect(() => {
             </div>
           </div>
 
-          {/* AI settings (only when configured) */}
-          {showAiSettings && aiStatus?.configured && (
-            <div className="px-3 py-2 border-b border-borderDark/40 bg-surfaceDark/10 flex-shrink-0">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[11px] font-semibold text-slate-300">AI settings</span>
-                <button onClick={clearAiKey} className="text-[10px] text-red-400 hover:text-red-300">
-                  Remove key
-                </button>
-              </div>
-              <div className="text-[10px] text-slate-500">
-                AI assistant configured.
-                {!aiStatus.remembered && ' Key is session-only (not persisted).'}
-              </div>
-            </div>
-          )}
-
-          <div className={`absolute inset-x-0 bottom-0 top-[57px] z-10 flex flex-col bg-[#090c15] ${showThreadList ? '' : 'hidden'}`}>
+          <div className={`absolute inset-x-0 bottom-0 top-[57px] z-30 flex flex-col bg-[#090c15] ${showThreadList ? '' : 'hidden'}`}>
               <div className="p-3 border-b border-borderDark/40">
                 <button
                   onClick={() => createNewThread(contextKey)}
@@ -953,83 +1071,20 @@ useEffect(() => {
               </div>
             </div>
           {showAiWizard ? (
-            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-              <div className="flex-1 overflow-y-auto p-4">
-                <div className="max-w-sm mx-auto">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Key className="w-4 h-4 text-amber-400" />
-                    <h3 className="text-sm font-semibold text-slate-200">Connect an AI provider</h3>
-                  </div>
-                  <p className="text-[11px] text-slate-500 mb-4 leading-relaxed">
-                    devtop uses CopilotKit to read, create, and update docs and tickets. Add an API key to enable the chat assistant.
-                  </p>
-
-                  <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-widest mb-1">Provider</label>
-                  <div className="grid grid-cols-3 gap-1.5 mb-3">
-                    {(Object.keys(AI_PROVIDERS) as AIProviderKey[]).map(p => (
-                      <button
-                        key={p}
-                        onClick={() => onAiProviderChange(p)}
-                        className={`px-2 py-1.5 rounded-lg border text-[11px] font-medium transition-colors ${
-                          aiProvider === p
-                            ? 'bg-accentBlue/15 border-accentBlue/40 text-slate-100'
-                            : 'border-borderDark/50 text-slate-400 hover:bg-borderDark/30'
-                        }`}
-                      >
-                        {AI_PROVIDERS[p].label.split(' ')[0]}
-                      </button>
-                    ))}
-                  </div>
-
-                  <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-widest mb-1">Base URL</label>
-                  <input
-                    type="text"
-                    value={aiBaseURLInput}
-                    onChange={(e) => setAiBaseURLInput(e.target.value)}
-                    placeholder={AI_PROVIDERS.openrouter.baseURL}
-                    aria-label="AI base URL"
-                    className="w-full bg-[#0c101f] border border-borderDark/60 rounded px-2 py-1.5 text-[11px] text-slate-200 placeholder-slate-500 outline-none focus:border-accentBlue/60 mb-2.5 font-mono"
-                  />
-
-                  <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-widest mb-1">Model</label>
-                  <input
-                    type="text"
-                    value={aiModelInput}
-                    onChange={(e) => setAiModelInput(e.target.value)}
-                    placeholder={AI_PROVIDERS.openrouter.model}
-                    aria-label="AI model"
-                    className="w-full bg-[#0c101f] border border-borderDark/60 rounded px-2 py-1.5 text-[11px] text-slate-200 placeholder-slate-500 outline-none focus:border-accentBlue/60 mb-2.5 font-mono"
-                  />
-
-                  <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-widest mb-1">
-                    API key {aiProvider === 'lmstudio' && <span className="normal-case tracking-normal">(any value — local server)</span>}
-                  </label>
-                  <div className="flex gap-1.5 mb-2.5">
-                    <input
-                      type="password"
-                      value={aiKeyInput}
-                      onChange={(e) => setAiKeyInput(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') saveAiKey() }}
-                      placeholder="sk-…"
-                      aria-label="AI API key"
-                      className="flex-1 min-w-0 bg-[#0c101f] border border-borderDark/60 rounded px-2 py-1.5 text-[11px] text-slate-200 placeholder-slate-500 outline-none focus:border-accentBlue/60 font-mono"
-                    />
-                    <button
-                      onClick={saveAiKey}
-                      disabled={!aiKeyInput.trim() || aiSaving}
-                      className="px-3 rounded bg-accentBlue text-white text-[11px] font-medium hover:bg-blue-600 disabled:opacity-40"
-                    >
-                      {aiSaving ? 'Saving…' : 'Save'}
-                    </button>
-                  </div>
-
-                  {aiStatus && !aiStatus.remembered && (
-                    <p className="text-[10px] text-slate-500">
-                      Session-only — add <code className="font-mono">-v devtop-ai-config:/etc/devtop</code> to remember the key across restarts.
-                    </p>
-                  )}
-                </div>
+            <div className="flex-1 flex flex-col items-center justify-center p-6 gap-3 text-center">
+              <Key className="w-9 h-9 text-amber-400" />
+              <div>
+                <p className="text-sm font-semibold text-slate-200">AI assistant not configured</p>
+                <p className="text-[11px] text-slate-500 mt-1 max-w-[240px]">
+                  Add an API key in Settings to let the chat assistant read, create, and update docs and tickets.
+                </p>
               </div>
+              <button
+                onClick={() => { setSettingsPane('ai'); setShowSettings(true) }}
+                className="mt-1 px-3 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-300 text-[11px] font-medium hover:bg-amber-500/20 transition-colors"
+              >
+                Open AI settings
+              </button>
             </div>
           ) : statusLoading ? (
             <div className="flex-1 flex items-center justify-center p-4">
@@ -1039,14 +1094,30 @@ useEffect(() => {
               </div>
             </div>
           ) : activeThreadId ? (
-            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden relative">
               <MemoizedCopilotChat
                 key={activeThreadId}
                 agentId="default"
                 threadId={activeThreadId}
                 labels={CHAT_LABELS}
+                // No auto-scroll: CopilotKit's stick-to-bottom would re-anchor
+                // to the bottom whenever the chat remounts (doc navigation,
+                // thread switch, page refresh). We restore the saved position
+                // ourselves; the button appears when the user is above the
+                // bottom instead of auto-following streaming content.
+                autoScroll={false}
                 className="flex-1 min-h-0"
               />
+              {!atChatBottom && (
+                <button
+                  onClick={scrollChatToBottom}
+                  aria-label="Scroll to bottom"
+                  title="Scroll to bottom"
+                  className="absolute bottom-3 right-3 z-10 w-8 h-8 flex items-center justify-center rounded-full bg-accentBlue text-white shadow-lg hover:bg-blue-600 transition-colors"
+                >
+                  <ChevronDown className="w-4 h-4" />
+                </button>
+              )}
             </div>
           ) : (
             <div className="flex-1 flex items-center justify-center p-4">
@@ -1226,7 +1297,7 @@ useEffect(() => {
         
         {/* ===== LEFT SIDEBAR ===== */}
         <aside className="w-64 bg-[#05070d]/90 border-r border-borderDark/60 flex-shrink-0 flex flex-col z-10">
-          <div className="px-4 py-3 border-b border-borderDark/40 flex items-center gap-2.5">
+          <div className="h-[57px] px-4 border-b border-borderDark/40 flex items-center gap-2.5">
             <div className="h-7 w-7 rounded-lg bg-gradient-to-tr from-accentBlue to-accentPurple flex items-center justify-center font-bold text-white text-sm">
               d
             </div>
@@ -1247,14 +1318,30 @@ useEffect(() => {
             ))}
           </nav>
 
-          <div className="p-3 border-t border-borderDark/40 bg-[#03050a]/40">
-            <div className="flex items-center justify-between">
+          <div className="p-2 border-t border-borderDark/40 bg-[#03050a]/40 space-y-1">
+            <div className="flex items-center justify-between px-1.5 py-1">
               <div className="flex items-center gap-2">
                 <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></div>
                 <span className="text-[11px] text-slate-400 font-medium">Local Server</span>
               </div>
               <code className="text-[10px] text-slate-500 font-mono bg-borderDark/30 px-1.5 py-0.5 rounded border border-borderDark/20">:8000</code>
             </div>
+            <button
+              onClick={() => { setShowSettings(true); setSettingsPane('ai') }}
+              className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg border text-[11px] font-medium transition-colors ${
+                aiStatus && !aiStatus.configured
+                  ? 'border-amber-500/40 text-amber-300 hover:bg-amber-500/10'
+                  : 'border-borderDark/40 text-slate-400 hover:text-slate-100 hover:bg-borderDark/20'
+              }`}
+              title="Settings"
+            >
+              {aiStatus && !aiStatus.configured ? (
+                <Key className="w-3.5 h-3.5 flex-shrink-0" />
+              ) : (
+                <Settings className="w-3.5 h-3.5 flex-shrink-0" />
+              )}
+              <span className="truncate">Settings</span>
+            </button>
           </div>
         </aside>
 
@@ -1282,10 +1369,30 @@ useEffect(() => {
             {/* 1. DOC / ARTIFACT DETAIL VIEW */}
             {isDocumentView && (
               <div className="max-w-3xl mx-auto prose prose-invert fade-in">
-                <div 
-                  className="text-slate-300 space-y-4 prose-custom"
-                  dangerouslySetInnerHTML={{ __html: docContent }} 
-                />
+                {docMissing && docSlugs.length === 0 ? (
+                  <div className="p-10 text-center bg-surfaceDark/40 border border-borderDark/40 rounded-xl shadow-2xl">
+                    <FileText className="w-8 h-8 mx-auto mb-2 text-slate-600" />
+                    <h1 className="text-xl font-bold text-slate-100">No docs yet</h1>
+                    <p className="text-sm text-slate-400 mt-2">Ask the chat to document this project, or add a file:</p>
+                    <code className="inline-block text-xs text-slate-500 mt-3 px-3 py-1.5 bg-borderDark/20 rounded-lg">.devtop/docs/index.mdx</code>
+                  </div>
+                ) : docMissing ? (
+                  <div className="p-10 text-center">
+                    <FileText className="w-8 h-8 mx-auto mb-2 text-slate-600" />
+                    <h1 className="text-xl font-bold text-slate-100">Document not found</h1>
+                    <a
+                      href="#/docs"
+                      onClick={(e) => { e.preventDefault(); navigateTo('/docs') }}
+                      className="inline-block mt-3 text-sm text-cyan-400 hover:text-cyan-300"
+                    >
+                      Back to docs
+                    </a>
+                  </div>
+                ) : (
+                  <div className="text-slate-300 space-y-4 prose-custom">
+                    <RichMarkdown source={docContent} />
+                  </div>
+                )}
               </div>
             )}
 
@@ -1446,8 +1553,8 @@ useEffect(() => {
                   </div>
                 </div>
 
-                <div className="bg-surfaceDark/30 border border-borderDark/40 rounded-xl p-6 mb-8 text-sm text-slate-300 leading-relaxed">
-                  <div dangerouslySetInnerHTML={{ __html: activeTicket.description || '' }} />
+                <div className="bg-surfaceDark/30 border border-borderDark/40 rounded-xl p-6 mb-8 prose-custom">
+                  <RichMarkdown source={activeTicket.raw_description || ''} />
                 </div>
 
                 <div>
@@ -1484,6 +1591,26 @@ useEffect(() => {
         ) : (
           chatPanel
         )}
+
+        {/* ===== SETTINGS DIALOG ===== */}
+        <SettingsModal
+          open={showSettings}
+          pane={settingsPane}
+          onPaneChange={setSettingsPane}
+          onClose={() => setShowSettings(false)}
+          aiStatus={aiStatus}
+          aiProvider={aiProvider}
+          aiBaseURLInput={aiBaseURLInput}
+          aiModelInput={aiModelInput}
+          aiKeyInput={aiKeyInput}
+          aiSaving={aiSaving}
+          onAiProviderChange={onAiProviderChange}
+          onAiBaseURLChange={setAiBaseURLInput}
+          onAiModelChange={setAiModelInput}
+          onAiKeyChange={setAiKeyInput}
+          onSave={saveAiKey}
+          onClear={clearAiKey}
+        />
       </div>
   )
 }
@@ -1501,7 +1628,7 @@ function PageContextProvider({ activePage, docTitle, docContent, activeTicket, t
       return `Title: ${docTitle}\n\nContent:\n${docContent}`
     }
     if (activePage.kind === 'tickets' && activePage.id && activeTicket) {
-      return `Ticket dk-${activeTicket.id}: ${activeTicket.title}\nStatus: ${activeTicket.status}\nPriority: ${activeTicket.priority}\nAssignee: ${activeTicket.assignee || 'Unassigned'}\n\nDescription:\n${activeTicket.description}`
+      return `Ticket dk-${activeTicket.id}: ${activeTicket.title}\nStatus: ${activeTicket.status}\nPriority: ${activeTicket.priority}\nAssignee: ${activeTicket.assignee || 'Unassigned'}\n\nDescription:\n${activeTicket.raw_description}`
     }
     if (activePage.kind === 'tickets') {
       return `Viewing Ticket Board — ${tickets.length} tickets total`
@@ -1515,6 +1642,212 @@ function PageContextProvider({ activePage, docTitle, docContent, activeTicket, t
   })
 
   return null
+}
+
+// ---------------------------------------------------------------------------
+// Settings dialog — a blurred, app-level overlay with a left rail of sections
+// and a detail pane to the right (Option B). It is intentionally context-free:
+// it does not own a thread, a chat, or any per-context viewstate.
+// ---------------------------------------------------------------------------
+const SETTINGS_SECTIONS: { key: SettingsPane; label: string; icon: typeof Settings }[] = [
+  { key: 'ai', label: 'AI', icon: Key },
+  { key: 'appearance', label: 'Appearance', icon: Palette },
+  { key: 'data', label: 'Data', icon: Database },
+  { key: 'about', label: 'About', icon: Info },
+]
+
+function SettingsModal(props: {
+  open: boolean
+  pane: SettingsPane
+  onPaneChange: (p: SettingsPane) => void
+  onClose: () => void
+  aiStatus: AiStatus
+  aiProvider: AIProviderKey
+  aiBaseURLInput: string
+  aiModelInput: string
+  aiKeyInput: string
+  aiSaving: boolean
+  onAiProviderChange: (p: AIProviderKey) => void
+  onAiBaseURLChange: (v: string) => void
+  onAiModelChange: (v: string) => void
+  onAiKeyChange: (v: string) => void
+  onSave: () => void
+  onClear: () => void
+}) {
+  const { open, pane, onPaneChange, onClose, aiStatus } = props
+  const keyInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
+  // Focus the API-key field when the AI pane opens, so setup is one keystroke.
+  useEffect(() => {
+    if (open && pane === 'ai') {
+      const t = setTimeout(() => keyInputRef.current?.focus(), 60)
+      return () => clearTimeout(t)
+    }
+  }, [open, pane])
+
+  if (!open) return null
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      {/* Frosted backdrop covers nav + doc + chat uniformly */}
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-md" onClick={onClose} aria-hidden="true" />
+
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
+        className="relative flex flex-col w-[min(860px,92vw)] h-[min(620px,80vh)] bg-[#0a0e18] border border-borderDark/80 rounded-2xl shadow-2xl overflow-hidden"
+      >
+        <div className="h-[57px] px-5 border-b border-borderDark/40 flex items-center justify-between bg-surfaceDark/20 flex-shrink-0">
+          <span className="text-sm font-semibold text-slate-100">Settings</span>
+          <button
+            onClick={onClose}
+            aria-label="Close settings"
+            title="Close (Esc)"
+            className="h-7 w-7 rounded-lg border border-borderDark/50 hover:bg-borderDark/40 flex items-center justify-center text-slate-400 hover:text-slate-100 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="flex flex-1 min-h-0">
+          <nav className="w-44 flex-shrink-0 border-r border-borderDark/40 p-2 flex flex-col gap-1">
+            {SETTINGS_SECTIONS.map(s => {
+              const Icon = s.icon
+              return (
+                <button
+                  key={s.key}
+                  onClick={() => onPaneChange(s.key)}
+                  className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors ${
+                    pane === s.key
+                      ? 'bg-accentBlue/15 text-slate-100 border border-accentBlue/30'
+                      : 'text-slate-400 hover:text-slate-100 hover:bg-borderDark/20 border border-transparent'
+                  }`}
+                >
+                  <Icon className="w-4 h-4 flex-shrink-0" />
+                  {s.label}
+                </button>
+              )
+            })}
+          </nav>
+
+          <div className="flex-1 min-w-0 overflow-y-auto p-6">
+            {pane === 'ai' && (
+              <div className="max-w-lg mx-auto">
+                <div className="flex items-center gap-2 mb-1">
+                  <Key className="w-4 h-4 text-accentBlue" />
+                  <h3 className="text-sm font-semibold text-slate-100">AI provider</h3>
+                </div>
+                <p className="text-[11px] text-slate-500 mb-5 leading-relaxed">
+                  devtop uses CopilotKit to read, create, and update docs and tickets. Connect a provider to enable the chat assistant.
+                </p>
+
+                {aiStatus?.configured ? (
+                  <div className="mb-5 flex items-center justify-between rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3">
+                    <div className="text-[11px]">
+                      <p className="font-medium text-emerald-300">AI assistant configured</p>
+                      <p className="text-slate-500 mt-0.5">
+                        {[aiStatus.model, aiStatus.baseURL].filter(Boolean).join(' · ') || '—'}
+                      </p>
+                    </div>
+                    <button onClick={props.onClear} className="text-[10px] text-red-400 hover:text-red-300 flex-shrink-0">
+                      Remove key
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mb-5 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-[11px] text-slate-400">
+                    No AI key configured yet — add one below.
+                  </div>
+                )}
+
+                <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-widest mb-1">Provider</label>
+                <div className="grid grid-cols-3 gap-1.5 mb-3">
+                  {(Object.keys(AI_PROVIDERS) as AIProviderKey[]).map(p => (
+                    <button
+                      key={p}
+                      onClick={() => props.onAiProviderChange(p)}
+                      className={`px-2 py-1.5 rounded-lg border text-[11px] font-medium transition-colors ${
+                        props.aiProvider === p
+                          ? 'bg-accentBlue/15 border-accentBlue/40 text-slate-100'
+                          : 'border-borderDark/50 text-slate-400 hover:bg-borderDark/30'
+                      }`}
+                    >
+                      {AI_PROVIDERS[p].label.split(' ')[0]}
+                    </button>
+                  ))}
+                </div>
+
+                <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-widest mb-1">Base URL</label>
+                <input
+                  type="text"
+                  value={props.aiBaseURLInput}
+                  onChange={(e) => props.onAiBaseURLChange(e.target.value)}
+                  placeholder={AI_PROVIDERS.openrouter.baseURL}
+                  aria-label="AI base URL"
+                  className="w-full bg-[#0c101f] border border-borderDark/60 rounded px-2 py-1.5 text-[11px] text-slate-200 placeholder-slate-500 outline-none focus:border-accentBlue/60 mb-2.5 font-mono"
+                />
+
+                <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-widest mb-1">Model</label>
+                <input
+                  type="text"
+                  value={props.aiModelInput}
+                  onChange={(e) => props.onAiModelChange(e.target.value)}
+                  placeholder={AI_PROVIDERS.openrouter.model}
+                  aria-label="AI model"
+                  className="w-full bg-[#0c101f] border border-borderDark/60 rounded px-2 py-1.5 text-[11px] text-slate-200 placeholder-slate-500 outline-none focus:border-accentBlue/60 mb-2.5 font-mono"
+                />
+
+                <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-widest mb-1">
+                  API key {props.aiProvider === 'lmstudio' && <span className="normal-case tracking-normal">(any value — local server)</span>}
+                </label>
+                <div className="flex gap-1.5 mb-2.5">
+                  <input
+                    ref={keyInputRef}
+                    type="password"
+                    value={props.aiKeyInput}
+                    onChange={(e) => props.onAiKeyChange(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') props.onSave() }}
+                    placeholder="sk-…"
+                    aria-label="AI API key"
+                    className="flex-1 min-w-0 bg-[#0c101f] border border-borderDark/60 rounded px-2 py-1.5 text-[11px] text-slate-200 placeholder-slate-500 outline-none focus:border-accentBlue/60 font-mono"
+                  />
+                  <button
+                    onClick={props.onSave}
+                    disabled={!props.aiKeyInput.trim() || props.aiSaving}
+                    className="px-3 rounded bg-accentBlue text-white text-[11px] font-medium hover:bg-blue-600 disabled:opacity-40"
+                  >
+                    {props.aiSaving ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+
+                {aiStatus && !aiStatus.remembered && (
+                  <p className="text-[10px] text-slate-500">
+                    Session-only — add <code className="font-mono">-v devtop-ai-config:/etc/devtop</code> to remember the key across restarts.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {(pane === 'appearance' || pane === 'data' || pane === 'about') && (
+              <div className="max-w-lg mx-auto">
+                <h3 className="text-sm font-semibold text-slate-100">{SETTINGS_SECTIONS.find(s => s.key === pane)!.label}</h3>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  This section doesn't have any settings yet. It's a placeholder until it does.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 export default App

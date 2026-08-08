@@ -78,8 +78,11 @@ func TestAPIArtifacts_Detail(t *testing.T) {
 	if out.ID != "onboarding" || out.Title != "Onboarding Flow" {
 		t.Errorf("unexpected item: %+v", out)
 	}
-	if !strings.Contains(out.Content, "<h1>Onboarding</h1>") {
-		t.Errorf("content not rendered as HTML: %q", out.Content)
+	if !strings.Contains(out.Content, "# Onboarding") {
+		t.Errorf("content is not raw Markdown: %q", out.Content)
+	}
+	if strings.Contains(out.Content, "<h1>") {
+		t.Errorf("expected raw Markdown body, got rendered HTML: %q", out.Content)
 	}
 	if out.Frontmatter["status"] != "draft" {
 		t.Errorf("frontmatter missing status: %+v", out.Frontmatter)
