@@ -7,27 +7,32 @@ title: "Deployment"
 ## Production Docker
 
 ```bash
-# Build
+# Build (multi-stage: Node frontend -> Go binary -> Alpine runtime)
 docker build -t devtop:latest .
 
-# Run
-docker run -v $(pwd):/workspace -p 8000:8000 devtop:latest
+# Run against the current directory
+docker run --rm -it \
+  -v $(pwd):/workspace \
+  -v devtop-ai-config:/etc/devtop \
+  -p 8000:8000 \
+  devtop:latest
 ```
 
-Uses a multi-stage Go build targeting Alpine for a minimal final image.
+`just devtop docker` builds and runs against the current dir; `just devtop build image run push` cover the other image workflows.
 
 ## Dev Docker
 
 ```bash
 docker build -f Dockerfile.dev -t devtop:dev .
-docker run -v $(pwd):/workspace -p 8000:8000 devtop:dev
+docker run -v $(pwd):/workspace -p 8000:8000 -p 5173:5173 devtop:dev
 ```
 
-Dev Docker includes Air for Go hot-reload and Node for the frontend.
+Dev Docker includes Air for Go hot-reload and Node for the frontend/CopilotKit runtime.
 
 ## Production Notes
 
-- Mount the project directory as a volume at `/workspace`
-- The `.devtop/` directory must be writable (the agent writes to disk)
-- SQLite data is ephemeral in the container — mount a persistent volume for `.devtop/data/` if needed
-- Set `LLM_API_KEY` via environment or `.env` file
+- Mount the project directory as a volume at `/workspace` — `DEVTOP_DIR` defaults to `/workspace/.devtop` so the mounted repo's docs/tickets/threads are served (an explicit `DEVTOP_DIR` override wins).
+- Mount a named volume at `/etc/devtop` (`devtop-ai-config`) to persist the AI key across restarts. The chat panel writes it as a 0600 `.env` file (`/etc/devtop/.env`), sourced by `entrypoint.sh` for both the Go server and the CopilotKit runtime.
+- Set `AI_API_KEY` / `AI_BASE_URL` / `AI_MODEL` via the volume `.env`, environment variables (`docker run -e`, `--env-file`), or the chat panel UI. Precedence: volume `.env` (prod) > env vars > hardcoded defaults.
+- The `.devtop/` directory must be writable (the agent writes to disk).
+- No database is involved — `.devtop/` is data.

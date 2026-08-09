@@ -16,11 +16,15 @@ title: "Installation"
 # Clone the repo and navigate to the project root
 cd devtop
 
-# Run locally
-go run .
+# Install Go + frontend dependencies
+just devtop install
 
-# Or via just
-just devtop
+# Run the built app + API locally
+just devtop build
+just devtop serve
+
+# Or via go run directly
+go run .
 
 # With custom port
 go run . -port 8080
@@ -29,13 +33,19 @@ go run . -port 8080
 ## Docker
 
 ```bash
-# Production build (multi-stage Go -> Alpine)
-docker build -t devtop:latest .
-docker run -v $(pwd):/workspace -p 8000:8000 devtop:latest
+# Production build (multi-stage: Node -> Go -> Alpine)
+just devtop image        # docker build -t devtop:latest .
+
+# Run against the current directory with the AI-config volume
+just devtop docker
+# Equivalent:
+# docker run --rm -it \
+#   -v $(pwd):/workspace -v devtop-ai-config:/etc/devtop \
+#   -p 8000:8000 devtop:latest
 
 # Dev build with hot-reload
 docker build -f Dockerfile.dev -t devtop:dev .
-docker run -v $(pwd):/workspace -p 8000:8000 devtop:dev
+docker run -v $(pwd):/workspace -p 8000:8000 -p 5173:5173 devtop:dev
 ```
 
 ## Frontend Development
@@ -50,10 +60,15 @@ npm run dev     # Vite dev server on :5173
 
 | Command | Description |
 |---------|-------------|
-| `just devtop` | Run server locally |
-| `just devtop install` | Download Go dependencies |
+| `just devtop install` | Download Go + frontend dependencies |
+| `just devtop build` | Build the React app and `devtop-bin` |
+| `just devtop serve` | Run the built app + API on :8000 |
+| `just devtop dev` | Dev loop: Go :8000, CopilotKit :4000, Vite :5173 |
 | `just devtop init` | Create .devtop/ directory structure |
-| `just devtop docker` | Build & run production Docker |
-| `just devtop dev` | Build & run dev Docker (hot-reload) |
-| `go test ./...` | Run all tests |
+| `just devtop image` | Build `devtop:latest` image |
+| `just devtop docker` | Build image and run against the current dir |
+| `just devtop run` | Run existing image against the current dir |
+| `just devtop push` | Build + push the image to the registry |
+| `just devtop clean` | Remove build artifacts and .devtop/ |
+| `go test ./...` | Run all Go tests |
 | `cd frontend && npm run dev` | Start Vite frontend dev server |

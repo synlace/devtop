@@ -8,8 +8,8 @@ title: "Agent Workflow"
 
 1. User sends a message through the chat panel
 2. Agent interprets the request and selects appropriate tools
-3. Agent reads/writes files as needed
-4. Every write is automatically committed to git
+3. Agent reads before writing, then writes files as needed
+4. Every write is automatically committed to git (`git_commit` tool)
 5. Agent responds via streaming SSE
 
 ## Agent Tool Set
@@ -17,6 +17,8 @@ title: "Agent Workflow"
 - `read_doc(path)` — Read a documentation file
 - `write_doc(path, content)` — Write or update documentation
 - `list_docs()` — List all docs with slugs and titles
+- `read_workspace_file(path)` — Read a file from the workspace (outside `.devtop/`)
+- `list_workspace_files()` — List files in the workspace root
 - `list_tickets()` — List all tickets
 - `read_ticket(id)` — Read a single ticket
 - `create_ticket(title, description, priority, assignee)` — Create a ticket
@@ -30,3 +32,4 @@ title: "Agent Workflow"
 - Always review before accepting agent-proposed changes
 - The agent must read before writing — it checks the current state first
 - Commit messages follow conventional commit format automatically
+- The agent prompt is loaded from the repo's `AGENTS.md` (fallback: built-in `SYSTEM_PROMPT`), so you can tailor behavior per-repo

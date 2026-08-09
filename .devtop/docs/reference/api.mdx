@@ -8,16 +8,37 @@ title: "API Reference"
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/` | Landing page |
-| `GET` | `/docs/{slug...}` | View a documentation page |
-| `GET` | `/tickets` | Ticket list |
-| `GET` | `/tickets/{id}` | Ticket detail |
+| `GET` | `/` | Landing page (React SPA) |
+| `GET` | `/{path...}` | SPA fallback — servers files from `frontend/dist`, falls back to `index.html` |
 | `GET` | `/api/docs` | List all docs (JSON) |
-| `GET` | `/api/docs/{slug...}` | Get doc content (JSON) |
+| `GET` | `/api/docs/{slug...}` | Get doc content (JSON: title + raw Markdown body) |
 | `GET` | `/api/tickets` | List all tickets (JSON) |
-| `GET` | `/api/tickets/{id}` | Get ticket (JSON) |
-| `POST` | `/api/chat` | SSE-streamed chat endpoint |
+| `GET` | `/api/tickets/{id}` | Get ticket (JSON, with parsed comments) |
+| `GET` | `/api/threads` | List threads (optional `?context=` filter) |
+| `POST` | `/api/threads` | Create a thread |
+| `GET` | `/api/threads/{id}` | Get a thread |
+| `DELETE` | `/api/threads/{id}` | Delete a thread |
+| `POST` | `/api/chat/{thread_id}` | SSE-streamed chat endpoint |
+| `GET` | `/api/models` | Available models + config (JSON) |
+| `GET` | `/api/config` | Runtime config (base URL, model, MCP server count, etc.) |
+| `GET` | `/api/engine-config` | Materialized engine config (`config.yml`) |
+| `GET` | `/api/artifacts/{kind}` | List artifacts of a kind (docs, tickets, prds) |
+| `GET` | `/api/artifacts/{kind}/{id...}` | Single artifact detail |
+| `GET` | `/api/revisions/docs/{slug...}` | Git revision list of a doc (newest first; JSON array of `{sha, short, message, author, date, is_current}`) |
+| `GET` | `/api/revisions/docs/{slug...}?at=<sha>` | Doc content at a commit (JSON: `{title, content, deleted}`) |
+| `GET` | `/api/revisions/docs/{slug...}?a=<from>&b=<to>` | Raw unified diff between two commits for a doc (JSON: `{diff}`; consumed verbatim by git-diff-view) |
+| `GET` | `/api/revisions/tickets/{id}` | Same three shapes, for a ticket file |
+| `GET` | `/api/viewstate` | Read view state |
+| `PUT` | `/api/viewstate` | Persist view state |
+| `GET` / `POST` | `/api/copilotkit*` | Reverse proxy to the CopilotKit Node runtime |
 
 ## Route Pattern
 
-Go 1.22+ routing with `{slug...}` wildcards captures multi-segment paths, mapping directly to file paths under `docs/`.
+Go 1.22+ routing with `{slug...}` wildcards captures multi-segment paths, mapping directly to file paths under `docs/` (e.g. `GET /api/docs/architecture/agent-engine`). `/api/copilotkit/*` is forwarded to the Node runtime via a reverse proxy so the browser only ever talks to the Go server on one port.
+
+## Revision History (Git)
+
+The revision endpoints are backed by the workspace git repo (`history.go`). The repo root is the parent of the devtop data directory (the standard `<workspace>/.devtop` layout) — it never climbs beyond that, so an unrelated ancestor repo is never mistaken for the workspace. History is unavailable (HTTP 409) when the workspace is not inside a git repository.
+
+- `?at=` validates the commit with `git rev-parse --verify` before reading; a bad commit is a 400, not a false "deleted".
+- `?a=&b=` returns `git diff`'s raw unified output untouched — the frontend feeds it to `@git-diff-view/react`, which parses git's `diff --git`/`---`/`+++`/hunk format itself. The agent also exposes `read_doc_at` and `list_doc_revisions` tools with the same semantics.

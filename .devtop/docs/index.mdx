@@ -4,19 +4,20 @@ title: "Project Overview"
 
 # devtop — Docs + Tickets with AI
 
-A lightweight, file-backed documentation and ticket system with an embedded AI agent. All data is stored as plain MDX/MD files in your project's `.devtop/` directory.
+A lightweight, file-backed documentation and ticket system with an embedded AI agent. All data is stored as plain MDX/MD files in your project's `.devtop/` directory — no database.
 
 ## Quick Start
 
 ```bash
-# Run locally
-go run .
+# Run the built app + API
+just devtop build
+just devtop serve
 
-# Or via just
-just devtop
+# Dev loop with hot-reload (Go :8000, Vite :5173, CopilotKit :4000)
+just devtop dev
 
-# With custom port
-go run . -port 8080
+# Or in Docker, against the current directory
+just devtop docker
 ```
 
 ## Why devtop?
@@ -39,51 +40,63 @@ graph LR
 
 ```
 .devtop/
-├── docs/                       # MDX documentation files
-│   ├── index.mdx               # This file — project overview
-│   ├── getting-started/        # Installation & configuration
+├── config.yml                 # Engine config: artifact kinds, derivation, replan
+├── viewstate.json             # UI view state
+├── docs/                      # MDX documentation files
+│   ├── index.mdx              # This file — project overview
+│   ├── getting-started/       # Installation & configuration
+│   │   ├── index.mdx
 │   │   ├── installation.mdx
 │   │   └── configuration.mdx
-│   ├── architecture/           # System design & internals
-│   │   ├── overview.mdx
+│   ├── architecture/          # System design & internals
+│   │   ├── index.mdx
 │   │   ├── agent-engine.mdx
 │   │   ├── data-layer.mdx
 │   │   └── frontend.mdx
-│   ├── guides/                 # How-to guides
+│   ├── guides/                # How-to guides
+│   │   ├── index.mdx
 │   │   ├── writing-docs.mdx
 │   │   ├── managing-tickets.mdx
 │   │   └── agent-workflow.mdx
-│   ├── reference/              # Technical reference
+│   ├── reference/             # Technical reference
+│   │   ├── index.mdx
 │   │   ├── api.mdx
 │   │   ├── mcp-integration.mdx
 │   │   └── deployment.mdx
-│   └── tickets/                # Workflow & conventions
+│   └── tickets/               # Workflow & conventions
+│       ├── index.mdx
 │       └── TRIAGE.mdx
-├── tickets/        # Markdown ticket files with YAML frontmatter
-├── threads/        # Chat thread storage (JSON)
-└── data/           # Cached models and metadata
+├── tickets/                   # Markdown ticket files with YAML frontmatter
+├── prds/                      # PRD artifacts (derived from docs, approval-gated)
+├── threads/                   # Chat thread storage (JSON)
+└── data/                      # Cached models and metadata
 ```
 
 ## Core Stack
 
-- **Go** 1.25 — backend server (`net/http` routing, SQLite via `glebarez/go-sqlite`)
-- **React 19 + TypeScript 6** — frontend UI (Vite, CopilotKit chat)
-- **Alpine.js SPA** — lightweight HTML template served by Go (fallback UI)
-- **SQLite** — document/ticket/thread cache synced to filesystem
+- **Go 1.25** — backend server (`net/http` routing, file watcher, engine config)
+- **React 19 + TypeScript 6** — frontend UI (Vite, CopilotKit chat), the only frontend
+- **CopilotKit 1.64** — Node runtime for AI chat + agent tools (proxied at `/api/copilotkit/*`)
+- **File system** — the data store; no database
 - **AI/LLM** — OpenAI-compatible API (OpenRouter, LM Studio, etc.)
 
 ## Agent Model
 
-Only the agent writes to disk. The web UI is read-only. Every change is automatically committed to git with a descriptive message.
+Only the agent writes to disk. The web UI is read-only. Every change is automatically committed to git with a descriptive message after each write.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `just devtop` | Run server locally |
-| `just devtop install` | Download Go dependencies |
+| `just devtop install` | Download Go + frontend dependencies |
+| `just devtop build` | Build the React app and `devtop-bin` |
+| `just devtop serve` | Run the built app + API on :8000 |
+| `just devtop dev` | Dev loop: Go :8000, CopilotKit :4000, Vite :5173 (HMR) |
 | `just devtop init` | Create .devtop/ directory structure |
-| `just devtop docker` | Build & run production Docker |
-| `just devtop dev` | Build & run dev Docker (hot-reload) |
-| `go test ./...` | Run all tests |
-| `cd frontend && npm run dev` | Start Vite frontend dev server |
+| `just devtop image` | Build `devtop:latest` image |
+| `just devtop docker` | Build image and run against the current dir |
+| `just devtop run` | Run existing image against the current dir |
+| `just devtop push` | Build + push the image to the registry |
+| `just devtop clean` | Remove build artifacts and .devtop/ |
+| `go test ./...` | Run Go tests |
+| `just test ui` | Hermetic Playwright specs (no model calls) |

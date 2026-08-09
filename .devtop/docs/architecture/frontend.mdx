@@ -4,27 +4,37 @@ title: "Frontend Architecture"
 
 # Frontend Architecture
 
-devtop ships with two UI layers: a lightweight Alpine.js SPA served by Go, and a full React 19 application.
+devtop ships a single React 19 frontend in `frontend/`, built with TypeScript 6 and Vite 8, integrating CopilotKit for the AI chat panel.
 
-## Alpine.js SPA (Default)
+## Production (single port)
 
-- Single HTML template (`base.html`) served by the Go server
-- Handles all standard routes: docs browsing, ticket list, ticket detail
-- Uses Tailwind CSS via CDN for styling
-- Minimal JS bundle — no build step required
+The Go server serves the built React app from `frontend/dist` (any non-API path falls back to `index.html`) and proxies `/api/copilotkit/*` to the Node CopilotKit runtime. Everything runs on one port: `:8000`.
 
-## React + Vite (Optional)
+## Development
 
-- Located in `frontend/`
-- Built with React 19, TypeScript 6, and Vite 8
-- Integrates CopilotKit for the AI chat panel
-- Proxies API requests to the Go server on :8000
-- Runs on port 5173 in development
+`just devtop dev` runs on the host with no Docker:
+
+- **Vite dev server** on `:5173` (frontend edits hot-reload), proxying API calls to Go
+- **Go server** on `:8000` (API only in dev)
+- **CopilotKit runtime** (`frontend/copilot-server.js`) on `:4000`, reached through the Go proxy
 
 ## Port Layout
 
 | Service | Port |
 |---------|------|
-| Go Server | 8000 |
-| Vite Dev Server | 5173 |
-| CopilotKit | 4000 |
+| Go Server (API + SPA + proxy) | 8000 |
+| Vite Dev Server (dev only) | 5173 |
+| CopilotKit runtime (dev only; proxied in prod) | 4000 |
+
+## Rendering
+
+Docs are rendered client-side by `RichMarkdown.tsx`: `react-markdown` + `remark-gfm` (tables, task lists) + `rehype-highlight` (code). Mermaid diagrams use a lazily-loaded `MermaidDiagram.tsx` component, so the ~2MB Mermaid bundle only loads when a doc contains a diagram.
+
+## Revision History
+
+A bare clock button (`History` lucide icon) in the header, left of the breadcrumbs, toggles a per-context **history rail** of the current doc's git revisions. Clicking a revision fetches its content (`?at=`), dims it (`prose-history`), and shows a "what this commit changed" panel above it rendered by `@git-diff-view/react` from the backend's raw unified diff. "View current →" and ‹ › steppers navigate back; the rail's open state persists with the per-context viewstate.
+
+## Notes
+
+- The old server-rendered (Alpine) SPA, `base.html`, and Go templates were removed — React is the only frontend.
+- Tailwind CSS is bundled via `@tailwindcss/vite` (no CDN).

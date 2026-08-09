@@ -22,8 +22,9 @@ Keep the file portable across both: `KEY=value` per line, `#` comments, no
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | `8000` | HTTP server port |
-| `DB_PATH` | `.devtop/data/devtop.db` | SQLite database file |
+| `PORT` | `8000` | HTTP server port (via `-port`; `just devtop serve` exports it) |
+| `DEVTOP_DIR` | `./.devtop` | Data directory — docs, tickets, threads, data |
+| `APP_DIR` | executable dir | Directory containing `frontend/dist` (overrides auto-detection) |
 
 ## AI / LLM
 
@@ -34,6 +35,7 @@ Keep the file portable across both: `KEY=value` per line, `#` comments, no
 | `AI_MODEL` | `deepseek/deepseek-v4-flash-0731` | Model identifier |
 | `DEVTOP_AI_REMEMBER` | `1` | `0` disables persisting the AI config to the volume |
 | `DEVTOP_AI_ENV_FILE` | `/etc/devtop/.env` | Persisted AI config file on the volume |
+| `COPILOTKIT_RUNTIME_URL` | `http://127.0.0.1:4000` | Upstream URL of the CopilotKit Node runtime |
 | `MCP_SERVERS` | — | JSON array of MCP server configs |
 
 ## MCP Server Config
@@ -51,4 +53,4 @@ The `MCP_SERVERS` variable accepts a JSON array:
 ]
 ```
 
-Supported transports: `stdio`, `streamable-http`.
+Supported transports: `stdio`, `streamable-http`. For `streamable-http`, use a `url` field instead of `command`/`args`.

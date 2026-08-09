@@ -4,26 +4,36 @@ title: "Data Layer"
 
 # Data Layer
 
-## Dual Storage Model
+## File-System Storage
 
-The filesystem is the source of truth. SQLite acts as a read cache synced from files on startup and via a file watcher.
+The filesystem is the source of truth. There is no database — docs, tickets, and threads are plain files under `.devtop/`, read and written directly:
 
-### Sync Process
+- `.devtop/docs/**/*.mdx` — documentation (YAML frontmatter + Markdown body)
+- `.devtop/tickets/*.md` — ticket files (YAML frontmatter)
+- `.devtop/threads/*.json` — chat thread storage
+- `.devtop/config.yml` — engine/artifact-kind configuration (materialized on first run)
+- `.devtop/viewstate.json` — UI view state
 
-1. On startup, all `.mdx` and `.md` files under `.devtop/docs/` and `.devtop/tickets/` are parsed
-2. YAML frontmatter is extracted and stored in SQLite
-3. A file watcher (`fsnotify`) re-syncs on file changes
-4. All agent writes go to the filesystem first, then update the cache
+### Reading
+
+`store.go` walks these directories, parses YAML frontmatter (via `adrg/frontmatter`), and serves raw Markdown. Rendering is client-side — the API returns the file body, never rendered HTML.
+
+### Writing
+
+`sync.go` writes docs, tickets, and threads to the filesystem. Every agent write is followed by a `git_commit()` call so changes are versioned.
 
 ## Key Modules
 
 | File | Responsibility |
 |------|---------------|
-| `db.go` | SQLite database layer (documents, tickets, threads CRUD) |
-| `sync.go` | Filesystem ↔ DB sync (MDX parsing, YAML frontmatter, rendering) |
+| `store.go` | File-system CRUD (docs, tickets, threads) + frontmatter parsing |
+| `sync.go` | File writes (docs, tickets, threads) |
+| `history.go` | Git revision history of docs/tickets: revision lists, content-at-commit, raw unified diffs |
 | `models.go` | AI model cache (fetch from API, cache to disk) |
+| `engine_config.go` | `config.yml` loading, kind directory creation |
+| `welcome.go` | Fresh-repo welcome doc materialization |
 
-## MDX Format
+## Frontmatter Format
 
 Documentation files use MDX — YAML frontmatter with a markdown body. This makes them compatible with Starlight, Next.js, Docusaurus, and other MDX-supporting tools.
 
@@ -36,3 +46,5 @@ title: "My Document"
 
 Content here...
 ```
+
+Tickets use a similar frontmatter block with `id`, `status`, `priority`, `assignee`, and `created` fields, followed by a Markdown body whose `**date — author: text**` lines are parsed as comments.

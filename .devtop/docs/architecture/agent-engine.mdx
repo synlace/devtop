@@ -10,7 +10,11 @@ The AI agent engine is the core of devtop. It processes user requests through a 
 
 - **Tool registry** — All agent-accessible operations are registered as typed tools with JSON schemas
 - **LLM streaming** — Responses are streamed via SSE to the chat panel
-- **Depth-limited recursion** — Multi-step tasks are decomposed with a configurable recursion limit
+- **Depth-limited recursion** — Multi-step tasks are decomposed with a configurable recursion limit (`MAX_AGENT_DEPTH = 10`)
+
+## Agent System Prompt
+
+The agent prompt is loaded from the workspace's `AGENTS.md` (falling back to an embedded `SYSTEM_PROMPT`). It instructs the agent to read before writing and to call `git_commit()` after every write, create, update, or comment operation.
 
 ## Auto-Commit
 
@@ -25,3 +29,20 @@ tickets: create dk-004 for search feature
 ## Key Principle
 
 Only the agent writes to disk. The web UI is read-only.
+
+## Agent Tool Set
+
+- `read_doc(path)` — Read a documentation file
+- `read_doc_at(path, commit)` — Read a doc as it existed at a git commit (full/short sha or HEAD)
+- `list_doc_revisions(path)` — List the commits that changed a doc, newest first
+- `write_doc(path, content)` — Write or update documentation
+- `list_docs()` — List all docs with slugs and titles
+- `read_workspace_file(path)` — Read a file from the workspace (outside `.devtop/`)
+- `list_workspace_files()` — List files in the workspace root
+- `list_tickets()` — List all tickets
+- `read_ticket(id)` — Read a single ticket
+- `create_ticket(title, description, priority, assignee)` — Create a ticket
+- `update_ticket(id, status, priority, assignee)` — Update a ticket
+- `add_comment(id, body)` — Add a comment to a ticket
+- `git_commit(message)` — Commit all changes to git
+- `ask_user(question)` — Ask the user for clarification
