@@ -24,22 +24,49 @@ app.get("/health", (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// AI key management.
+// AI config management.
 //
 // The key is entered through the UI only — never on the command line. It is
-// held in this process's memory. When a writable key volume is mounted (a
+// held in this process's memory. When a writable config volume is mounted (a
 // named volume at /etc/devtop, detected via /proc/self/mountinfo) and
-// DEVTOP_AI_REMEMBER is not "0", it is also persisted as a 0600 file so it
+// DEVTOP_AI_REMEMBER is not "0", it is also persisted as a 0600 .env file so it
 // survives restarts. Without a volume it stays session-only and is never
 // written to disk. The Go server proxies /api/copilotkit/* to this runtime in
 // prod; in dev the Vite proxy does the same.
+//
+// The same .env format is used in dev (repo-root .env, loaded above) and in
+// prod (the volume's /etc/devtop/.env, sourced by entrypoint.sh and rewritten
+// here on save). Precedence: persisted volume file > env vars > hardcoded
+// default.
 // ---------------------------------------------------------------------------
-const aiKeyFile = process.env.DEVTOP_AI_KEY_FILE || "/etc/devtop/ai-key";
-const aiProviderFile = process.env.DEVTOP_AI_PROVIDER_FILE || "/etc/devtop/ai-provider.json";
+const aiEnvFile = process.env.DEVTOP_AI_ENV_FILE || "/etc/devtop/.env";
 const aiRememberDisabled = process.env.DEVTOP_AI_REMEMBER === "0";
 
 let baseURL = process.env.AI_BASE_URL || "https://openrouter.ai/api/v1";
-let model = process.env.AI_MODEL || "openai/gpt-4o-mini";
+let model = process.env.AI_MODEL || "deepseek/deepseek-v4-flash-0731";
+
+function parseEnvFile(content) {
+  const vars = {};
+  for (const rawLine of String(content).split("\n")) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq === -1) continue;
+    const key = line.slice(0, eq).trim();
+    let value = line.slice(eq + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    if (key) vars[key] = value;
+  }
+  return vars;
+}
+
+function serializeEnvFile(vars) {
+  return Object.entries(vars)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("\n") + "\n";
+}
 
 function isWritableMount(dir) {
   if (!dir.startsWith("/")) return false;
@@ -51,7 +78,7 @@ function isWritableMount(dir) {
   }
 }
 
-let aiRemembered = !aiRememberDisabled && isWritableMount(path.dirname(aiKeyFile));
+let aiRemembered = !aiRememberDisabled && isWritableMount(path.dirname(aiEnvFile));
 let aiKey = process.env.AI_API_KEY || "";
 
 let currentRuntime = null;
@@ -91,21 +118,7 @@ async function applyAiConfig(config) {
   process.env.OPENAI_API_KEY = aiKey;
   process.env.OPENAI_BASE_URL = baseURL;
 
-  if (aiRemembered) {
-    try {
-      await fs.mkdir(path.dirname(aiKeyFile), { recursive: true });
-      if (isConfigured()) {
-        await fs.writeFile(aiKeyFile, aiKey, { mode: 0o600 });
-        await fs.writeFile(aiProviderFile, JSON.stringify({ baseURL, model }, null, 2), { mode: 0o600 });
-      } else {
-        await fs.rm(aiKeyFile, { force: true });
-        await fs.rm(aiProviderFile, { force: true });
-      }
-    } catch {
-      // Volume not writable after all — fall back to session-only.
-      aiRemembered = false;
-    }
-  }
+  await persistAiEnv();
 
   try {
     if (currentRuntime && typeof currentRuntime.disconnect === "function") {
@@ -123,6 +136,31 @@ async function applyAiConfig(config) {
   } else {
     currentRuntime = null;
     currentMw = null;
+  }
+}
+
+// Persist the current key + provider config into the volume's .env file
+// (0600), preserving any unrelated entries. Removing the key deletes only
+// AI_API_KEY; base URL and model are kept for the next key.
+async function persistAiEnv() {
+  if (!aiRemembered) return;
+  try {
+    await fs.mkdir(path.dirname(aiEnvFile), { recursive: true });
+    let vars = {};
+    try {
+      vars = parseEnvFile(await fs.readFile(aiEnvFile, "utf-8"));
+    } catch {}
+    if (isConfigured()) {
+      vars.AI_API_KEY = aiKey;
+    } else {
+      delete vars.AI_API_KEY;
+    }
+    if (baseURL) vars.AI_BASE_URL = baseURL;
+    if (model) vars.AI_MODEL = model;
+    await fs.writeFile(aiEnvFile, serializeEnvFile(vars), { mode: 0o600 });
+  } catch {
+    // Volume not writable after all — fall back to session-only.
+    aiRemembered = false;
   }
 }
 
@@ -536,20 +574,15 @@ app.use((req, res, next) => {
   return res.status(502).send("AI not configured");
 });
 
-// Load persisted key + provider config from the volume (if any) and build the
-// initial runtime.
+// Load the persisted .env config from the volume (if any) and build the
+// initial runtime. This overrides env vars / hardcoded defaults so a saved
+// UI config wins across restarts.
 if (aiRemembered) {
   try {
-    const stored = await fs.readFile(aiKeyFile, "utf-8");
-    if (stored && stored.trim()) aiKey = stored.trim();
-  } catch {}
-  try {
-    const storedProvider = await fs.readFile(aiProviderFile, "utf-8");
-    if (storedProvider && storedProvider.trim()) {
-      const cfg = JSON.parse(storedProvider);
-      if (cfg.baseURL) baseURL = cfg.baseURL;
-      if (cfg.model) model = cfg.model;
-    }
+    const vars = parseEnvFile(await fs.readFile(aiEnvFile, "utf-8"));
+    if (vars.AI_API_KEY) aiKey = vars.AI_API_KEY;
+    if (vars.AI_BASE_URL) baseURL = vars.AI_BASE_URL;
+    if (vars.AI_MODEL) model = vars.AI_MODEL;
   } catch {}
 }
 await applyAiConfig({});

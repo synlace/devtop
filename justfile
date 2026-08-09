@@ -5,6 +5,7 @@ default:
     @just --list
     @echo ""
     @echo "  devtop subcommands: build | serve | dev | image | docker | run | push | init | install | clean"
+    @echo "  tip: run 'just devtop install' first (installs Go + frontend deps)"
 
 devtop *args:
     #!/usr/bin/env bash
@@ -15,8 +16,27 @@ devtop *args:
     DEVTOP_DIR="${DEVTOP_DIR:-$PROJECT_DIR/.devtop}"
     IMAGE="${DEVTOP_IMAGE:-ghcr.io/synlace/devtop:latest}"
 
+    require_frontend_deps() {
+        if [ ! -d "$SRC/frontend/node_modules" ]; then
+            echo "✘ Frontend dependencies missing — run: just devtop install"
+            exit 1
+        fi
+    }
+
+    # Export the repo-root .env (if any) so both the Go server and the Node
+    # runtime inherit identical config, matching prod where entrypoint.sh
+    # sources the volume's .env.
+    load_env() {
+        if [ -f "$SRC/.env" ]; then
+            set -a
+            . "$SRC/.env"
+            set +a
+        fi
+    }
+
     case "${1:-}" in
         build)
+            require_frontend_deps
             cd "$SRC/frontend"
             npm run build
             cd "$SRC"
@@ -26,13 +46,16 @@ devtop *args:
         serve)
             mkdir -p "$DEVTOP_DIR/docs" "$DEVTOP_DIR/tickets" "$DEVTOP_DIR/threads" "$DEVTOP_DIR/data"
             cd "$SRC"
+            load_env
             export DEVTOP_DIR="$DEVTOP_DIR"
             export PORT="${PORT:-8000}"
             go run . -port "$PORT"
             ;;
         dev)
+            require_frontend_deps
             mkdir -p "$DEVTOP_DIR/docs" "$DEVTOP_DIR/tickets" "$DEVTOP_DIR/threads" "$DEVTOP_DIR/data"
             cd "$SRC"
+            load_env
             export DEVTOP_DIR="$DEVTOP_DIR"
             PORT="${PORT:-8000}"
             echo "  devtop dev loop: Go API :$PORT · CopilotKit :4000 · Vite :5173"
@@ -86,6 +109,9 @@ devtop *args:
             cd "$SRC"
             go mod download
             echo "✔ Downloaded devtop Go dependencies"
+            cd "$SRC/frontend"
+            npm install
+            echo "✔ Installed devtop frontend dependencies"
             ;;
         clean)
             rm -rf "$SRC/frontend/dist" "$SRC/devtop-bin"
@@ -95,6 +121,7 @@ devtop *args:
         *)
             echo "Unknown devtop subcommand: ${1:-}"
             echo "Usage: just devtop build|serve|dev|image|docker|run|push|init|install|clean"
+            echo "Hint: run 'just devtop install' first (Go + frontend deps)"
             exit 1
             ;;
     esac

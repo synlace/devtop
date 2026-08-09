@@ -6,7 +6,7 @@ import { test, expect } from '@playwright/test'
 // mocks the status endpoint to simulate a reachable, unconfigured runtime.
 async function mockUnconfiguredRuntime(page: import('@playwright/test').Page) {
   await page.route('**/api/copilotkit/ai-status', route =>
-    route.fulfill({ json: { configured: false, remembered: false, baseURL: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini' } })
+    route.fulfill({ json: { configured: false, remembered: false, baseURL: 'https://openrouter.ai/api/v1', model: 'deepseek/deepseek-v4-flash-0731' } })
   )
 }
 
@@ -29,7 +29,7 @@ test('opens the settings dialog focused on the AI provider when unconfigured', a
   const dialog = await openDialog(page)
   await expect(dialog.getByText('AI provider')).toBeVisible()
   await expect(dialog.getByLabel('AI base URL')).toHaveValue('https://openrouter.ai/api/v1')
-  await expect(dialog.getByLabel('AI model')).toHaveValue('openai/gpt-4o-mini')
+  await expect(dialog.getByLabel('AI model')).toHaveValue('deepseek/deepseek-v4-flash-0731')
 
   // CopilotChat is not mounted — the chat panel shows the compact not-configured CTA.
   const chat = page.locator('aside').filter({ has: page.getByTitle('Toggle Fullscreen') })
@@ -56,8 +56,8 @@ test('saving a key sends provider config and closes the dialog', async ({ page }
     const body = route.request().postDataJSON()
     expect(body.key).toBe('sk-test-123')
     expect(body.baseURL).toBe('https://openrouter.ai/api/v1')
-    expect(body.model).toBe('openai/gpt-4o-mini')
-    await route.fulfill({ json: { configured: true, remembered: false, baseURL: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini' } })
+    expect(body.model).toBe('deepseek/deepseek-v4-flash-0731')
+    await route.fulfill({ json: { configured: true, remembered: false, baseURL: 'https://openrouter.ai/api/v1', model: 'deepseek/deepseek-v4-flash-0731' } })
   })
   await page.goto('/')
   await hideInspector(page)

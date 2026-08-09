@@ -150,7 +150,7 @@ const BUILTIN_ENGINE_CONFIG: EngineConfig = {
 // Provider presets shown in the AI config wizard. LM Studio is keyless (the
 // runtime still wants a non-empty key, so "lm-studio" is sent as a sentinel).
 const AI_PROVIDERS = {
-  openrouter: { label: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini' },
+  openrouter: { label: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', model: 'deepseek/deepseek-v4-flash-0731' },
   lmstudio: { label: 'LM Studio (local)', baseURL: 'http://localhost:1234/v1', model: 'lmstudio-community/llama-3.2-3b-instruct' },
   custom: { label: 'Custom (OpenAI-compatible)', baseURL: '', model: '' },
 } as const

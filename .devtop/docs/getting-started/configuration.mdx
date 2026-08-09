@@ -4,7 +4,19 @@ title: "Configuration"
 
 # Configuration
 
-Environment variables are loaded from `.env` in the project root. See `.env.example` for defaults.
+devtop uses a single `.env` format in dev and prod:
+
+- **Dev:** variables are loaded from `.env` in the project root (repo-root,
+  gitignored; `.env.example` is the committed template).
+- **Prod:** the chat panel persists the AI config to `/etc/devtop/.env` on the
+  `devtop-ai-config` volume (0600); `entrypoint.sh` sources it for both the Go
+  server and the CopilotKit runtime.
+
+Precedence: persisted volume `.env` (prod) > env vars (`docker run -e`,
+`--env-file`) > hardcoded defaults.
+
+Keep the file portable across both: `KEY=value` per line, `#` comments, no
+`export` prefix, no quotes, no `$` expansion.
 
 ## Core Settings
 
@@ -17,9 +29,11 @@ Environment variables are loaded from `.env` in the project root. See `.env.exam
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LLM_API_KEY` | — | OpenAI-compatible API key (OpenRouter, LM Studio, etc.) |
-| `LLM_BASE_URL` | `https://openrouter.ai/api/v1` | API base URL |
-| `LLM_MODEL` | `openai/gpt-4o` | Model identifier |
+| `AI_API_KEY` | — | OpenAI-compatible API key (OpenRouter, LM Studio, etc.) |
+| `AI_BASE_URL` | `https://openrouter.ai/api/v1` | API base URL |
+| `AI_MODEL` | `deepseek/deepseek-v4-flash-0731` | Model identifier |
+| `DEVTOP_AI_REMEMBER` | `1` | `0` disables persisting the AI config to the volume |
+| `DEVTOP_AI_ENV_FILE` | `/etc/devtop/.env` | Persisted AI config file on the volume |
 | `MCP_SERVERS` | — | JSON array of MCP server configs |
 
 ## MCP Server Config

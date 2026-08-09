@@ -25,8 +25,9 @@ never appears in shell history or `docker inspect`:
 
 - Open the chat panel → **AI assistant is not configured** → paste your
   OpenRouter key → **Save**.
-- With the `devtop-ai-config` volume mounted, the key is persisted as a 0600
-  file and remembered across restarts.
+- With the `devtop-ai-config` volume mounted, the key, base URL, and model are
+  persisted as a 0600 `.env` file (`/etc/devtop/.env`) and remembered across
+  restarts. The same `.env` format is used in dev (repo-root `.env`).
 - Without the volume it is **session-only** (held in the runtime's memory, gone
   on restart). The panel explains how to add the volume.
 - Use the key button in the chat header (or the settings panel) to remove the

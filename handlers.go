@@ -34,7 +34,7 @@ func getAPIConfig() Config {
 	}
 	model := os.Getenv("AI_MODEL")
 	if model == "" {
-		model = "openai/gpt-4o-mini"
+		model = "deepseek/deepseek-v4-flash-0731"
 	}
 	apiKey := os.Getenv("AI_API_KEY")
 
