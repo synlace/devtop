@@ -1,0 +1,171 @@
+---
+title: "Agents"
+---
+
+# Agents
+
+## Summary
+
+Agents are optional, file-backed definitions of the embedded chat agent.
+An agent declares which tools it may call, which paths it may write, and
+which skills to load.
+devtop reads agents; it never prescribes them.
+
+## Vocabulary
+
+Use these terms consistently:
+
+| Term | Meaning |
+|------|---------|
+| Artifact kind | A configured class of files, declared in `artifact_kinds` |
+| Agent | A file-backed definition of a chat persona |
+| Skill | A reusable instruction bundle |
+| Allowlist | The set of tool names an agent may call |
+| Scope | A glob that limits which paths a tool may touch |
+
+An agent is a file under the `agents` artifact kind.
+Its slug is the file name without the `.mdx` extension.
+
+## Ownership
+
+FACT
+devtop ships example agents under `templates/agents/`.
+It never materializes them into a repository.
+
+FACT
+The repository decides which agents exist.
+An empty `agents/` directory changes nothing.
+
+FACT
+With no active agent, the classic behavior applies:
+the workspace `AGENTS.md`, or the embedded `SYSTEM_PROMPT`,
+with an unrestricted tool set.
+
+## Runtime selection
+
+FACT
+The active agent is the slug named by `agent_runtime.default` in `config.yml`.
+
+FACT
+An empty `agent_runtime.default` means the classic behavior.
+
+OPEN QUESTION
+There is no UI selector for the active agent.
+A change to `agent_runtime.default` is a config edit.
+
+## Prompt composition
+
+The system prompt is composed in this order:
+
+1. The agent body.
+2. The workspace instructions: `AGENTS.md`, or the embedded `SYSTEM_PROMPT`.
+3. Each bound skill body under a `## Skill:` heading.
+
+FACT
+The composition is implemented in `buildAgentPrompt` in `agent_runtime.go`.
+
+## Tool allowlist
+
+FACT
+The `tools` field restricts which registered tools the agent may call.
+A group name expands to several tools.
+An individual tool name is added as-is.
+
+| Group | Tools |
+|-------|-------|
+| `base` | `git_commit`, `ask_user`, `list_docs` |
+| `docs` | `read_doc`, `read_doc_at`, `list_doc_revisions`, `write_doc` |
+| `tickets` | `list_tickets`, `read_ticket`, `create_ticket`, `update_ticket`, `add_comment` |
+| `workspace` | `read_workspace_file`, `list_workspace_files` |
+
+FACT
+A tool outside the allowlist returns an error to the agent.
+
+DECISION
+An absent `tools` field allows all registered tools.
+This keeps a simple agent usable without an allowlist.
+
+## Permission model
+
+FACT
+Permission scopes are globs relative to the workspace `.devtop/` directory.
+Examples: `docs/**`, `tickets/**`.
+
+DECISION
+Writes fail closed.
+An agent with no matching write scope cannot write.
+A write tool must map to a path inside a declared write scope.
+
+DECISION
+Reads are enforced only when a read scope is declared.
+An agent without read scopes may read freely.
+
+FACT
+Enforcement happens before tool dispatch.
+A denied call returns an error string to the model.
+
+FACT
+Write scopes apply to `write_doc`, `write_artifact`, `create_ticket`,
+`update_ticket`, and `add_comment`.
+The target paths follow the placement rules in `sync.go`.
+
+## Generic artifact writes
+
+FACT
+`write_artifact(kind, id, content)` writes an artifact of any
+`agent_writable` kind.
+
+DECISION
+Board kinds are refused by `write_artifact`.
+They have typed write flows.
+
+FACT
+The permission model scopes `write_artifact` with kind paths, the same way
+it scopes `write_doc`.
+A `prds/**` write scope makes a PRD draft reachable.
+
+## Skills
+
+FACT
+Skills listed in the `skills` field load with the agent.
+Their bodies enter the composed system prompt.
+
+FACT
+`triggers` in a skill is declared but not enforced in this milestone.
+
+## Current gaps
+
+OPEN QUESTION
+A `prds/**` read scope is not enforced.
+PRD reads go through `read_workspace_file`.
+That tool has no read-scope check.
+
+PROPOSAL
+Add a `read_artifact(kind, id)` tool.
+It would make read scopes enforceable for every kind.
+
+## Boundaries
+
+CONSTRAINT
+Lifecycle ownership stays external.
+Agents do not change the handoff contract in `config.yml`.
+
+CONSTRAINT
+Only the agent writes to disk.
+The web UI is read-only.
+
+## Decisions
+
+DECISION
+Agents are repo-owned and devtop-consumed.
+devtop ships templates only; it does not install defaults.
+
+DECISION
+One agent per derivation edge is a direction, not an implementation.
+The implemented enforcement unit is the artifact-kind scope.
+
+## Related
+
+- `skills.mdx` for the skill format.
+- `agent-engine.mdx` for the tool loop.
+- `config.yml` for the kind declarations.

@@ -1,0 +1,163 @@
+---
+title: "Pipeline"
+---
+
+# Pipeline
+
+## Summary
+
+The pipeline is a cross-kind view of derivation.
+It binds artifacts through the `derivation` edges in `config.yml`:
+document → PRD → tickets.
+It renders one card per root artifact, with its derived PRD and tickets.
+The view never initiates work. A user action does.
+
+## Model
+
+FACT
+The pipeline renders the `derivation` edges declared in `config.yml`.
+It is the first view that spans kinds, unlike `tree`, `board`, and `list`.
+
+FACT
+The view is declared by the top-level `pipeline.nav` entry.
+Without it, the pipeline exists in the API but not in the UI.
+
+FACT
+Each edge declares a transform and the agent bound to it.
+See `agent_runtime` and `agents.mdx`.
+
+```yaml
+derivation:
+  - from: docs
+    to: prds
+    transform: breakdown
+    agent: prd-builder
+  - from: prds
+    to: tickets
+    transform: derive_tickets
+    agent: ticket-deriver
+    gate: "prds.status == approved"
+```
+
+## Data and association
+
+FACT
+A root artifact is an artifact of a kind that is only a `from` in the edges.
+In the default config, documents are the roots.
+
+FACT
+A document maps to its PRD by the same id.
+A doc `architecture.mdx` maps to `prds/architecture/index.mdx`.
+
+FACT
+A ticket maps to its PRD through the `source` frontmatter field.
+The value is the PRD id with the kind prefix, for example `prds/architecture`.
+
+FACT
+The TL;DR shown per card comes from the document's `summary` frontmatter.
+`description` is the fallback. An empty value renders a hint.
+
+## Behaviour
+
+The flow has these parts:
+
+1. The view loads `GET /api/pipeline` and renders the cards.
+2. The user clicks `Derive PRD`.
+3. The server checks the edge gate.
+4. The server runs the bound agent.
+5. The agent writes the draft and commits.
+6. The user reviews and approves the PRD.
+7. The user clicks `Create tickets`.
+8. The server checks the same gate and runs the ticket agent.
+
+### Derive
+
+FACT
+`POST /api/derive` accepts `from`, `to`, and `slug`.
+The edge must be declared, and the slug must not contain `..`.
+
+DECISION
+The gate is enforced by the server before any model runs.
+`prds.status == approved` is compared against the PRD frontmatter.
+A failed gate returns `409` without calling the model.
+
+FACT
+The derive handler runs the agent bound to the edge.
+When the repo has no such agent, the classic unrestricted runtime is used.
+
+FACT
+A `docs → prds` derivation writes the draft with `write_artifact`.
+A `prds → tickets` derivation creates tickets with `create_ticket`,
+passing the PRD slug in the `source` field.
+
+FACT
+The agent response streams over SSE, like the chat endpoint.
+
+FAILURE
+A missing AI key returns `502` after the gate passes.
+
+### Approve
+
+DECISION
+PRD status transitions require one step at a time.
+
+FACT
+Allowed transitions: `draft → reviewing`, `reviewing → approved`,
+`reviewing → draft`, `approved → draft`.
+`POST /api/pipeline/prds/{slug}/status` rejects other transitions with `409`.
+
+FACT
+An approve is a frontmatter write plus a commit. No LLM is involved.
+
+### Staleness
+
+FACT
+The stale flag compares file modification times.
+A derived artifact older than its source is stale.
+
+RISK
+The draft is a heuristic, not a git diff.
+`replan.detect` declares `git_diff`; the pipeline does not yet use it.
+
+OPEN QUESTION
+Should staleness compare git revisions instead of file mtimes?
+
+## Constraints
+
+CONSTRAINT
+devtop initiates nothing by itself.
+Derive and status actions run only on a user click or an explicit request.
+
+CONSTRAINT
+The lifecycle stays external.
+The pipeline view does not change the `handoff` contract.
+
+CONSTRAINT
+The bound agent runs under the normal runtime checks.
+Allowlist and permission scopes still apply to its tool calls.
+
+## Decisions
+
+DECISION
+The gate lives in the handler, not only in the agent prompt.
+A state condition is deterministic, so it is enforced deterministically.
+
+DECISION
+Derivation runs through the agent runtime.
+A click binds to `transform` and `agent` from the config edge.
+
+## Current gaps
+
+OPEN QUESTION
+The re-derive delta flow (`in_flight → delta_only`) is not implemented.
+Re-derive calls the same derive endpoint as the initial derivation.
+
+OPEN QUESTION
+Ticket association relies on the `source` field.
+Tickets created before this field existed have no PRD link.
+
+## Related
+
+- `agents.mdx` for the runtime that executes derivation.
+- `agent-engine.mdx` for the tool loop.
+- `config.yml` for the edges and the view entry.

@@ -4,45 +4,191 @@ title: "Agent Engine"
 
 # Agent Engine
 
-The AI agent engine is the core of devtop. It processes user requests through a tool-calling loop with depth-limited recursion.
+## Summary
 
-## Design
+The agent engine processes user requests in the devtop application.
+It runs a tool-calling loop with limited recursion.
+It streams responses to the chat panel.
+It is the only part of the system that writes to disk.
 
-- **Tool registry** — All agent-accessible operations are registered as typed tools with JSON schemas
-- **LLM streaming** — Responses are streamed via SSE to the chat panel
-- **Depth-limited recursion** — Multi-step tasks are decomposed with a configurable recursion limit (`MAX_AGENT_DEPTH = 10`)
+## Context
 
-## Agent System Prompt
+devtop stores documentation, tickets, and threads as plain files under `.devtop/`.
+The web UI renders these files and sends chat messages to the agent.
+All agent-accessible operations are registered as tools with JSON schemas.
+The engine configuration in `config.yml` declares artifact kinds, derivation edges,
+and replan behaviour. The config also declares a handoff contract for external
+orchestrators such as ferret and Agent Manager.
 
-The agent prompt is loaded from the workspace's `AGENTS.md` (falling back to an embedded `SYSTEM_PROMPT`). It instructs the agent to read before writing and to call `git_commit()` after every write, create, update, or comment operation.
+CONSTRAINT
+The engine never drives the artifact lifecycle. The config sets
+`lifecycle_owner: external` and reports results only as ticket comments.
 
-## Auto-Commit
+## Actors
 
-Every write operation is automatically committed to git using conventional commit format:
+- User. The user sends chat messages from the web UI.
+- Agent. The agent receives messages and calls tools.
+- LLM provider. The agent uses an OpenAI-compatible API.
+- Git. Git records every write that the agent makes.
+- External orchestrator. An external tool that reads and updates tickets through the repo.
 
-```
-docs: add architecture overview with mermaid diagram
-tickets: update dk-001 status to in-progress
-tickets: create dk-004 for search feature
-```
+## Current behaviour
 
-## Key Principle
+The flow has these steps:
 
-Only the agent writes to disk. The web UI is read-only.
+1. The user sends a chat request to the API.
+2. The handler builds the message list and calls `runAgent`. See `handlers.go:361`.
+3. The handler streams `AgentChunk` events over SSE. See `handlers.go:331`.
+4. The agent loads its prompt.
+5. The agent calls tools until the response has no tool calls.
+6. The agent sends follow-up messages after each tool result.
 
-## Agent Tool Set
+FACT
+The prompt comes from `AGENTS.md` at the workspace root. If that file is
+missing, the embedded `SYSTEM_PROMPT` constant is used instead. See `agent.go:628`.
 
-- `read_doc(path)` — Read a documentation file
-- `read_doc_at(path, commit)` — Read a doc as it existed at a git commit (full/short sha or HEAD)
-- `list_doc_revisions(path)` — List the commits that changed a doc, newest first
-- `write_doc(path, content)` — Write or update documentation
-- `list_docs()` — List all docs with slugs and titles
-- `read_workspace_file(path)` — Read a file from the workspace (outside `.devtop/`)
-- `list_workspace_files()` — List files in the workspace root
-- `list_tickets()` — List all tickets
-- `read_ticket(id)` — Read a single ticket
-- `create_ticket(title, description, priority, assignee)` — Create a ticket
-- `update_ticket(id, status, priority, assignee)` — Update a ticket
-- `add_comment(id, body)` — Add a comment to a ticket
-- `git_commit(message)` — Commit all changes to git
-- `ask_user(question)` — Ask the user for clarification
+FACT
+With an active agent, the prompt is composed from the agent body, the
+workspace instructions, and the bound skill bodies. See `agents.mdx`.
+
+FACT
+Tool schemas and tool results travel in conversation messages. Recursion builds
+the follow-up message list and calls `runAgentWithDepth` with depth plus one.
+See `agent.go:759`.
+
+## Agent runtime
+
+FACT
+devtop reads optional, repo-owned agents from the `agents` artifact kind.
+The active agent is named by `agent_runtime.default` in `config.yml`.
+
+FACT
+A runtime-aware dispatch checks the allowlist and the permission scopes
+before a tool runs. See `dispatchToolResolved` in `agent_runtime.go`.
+
+FACT
+A denied tool call returns an error string to the model.
+
+FACT
+With no active agent, dispatch is unrestricted and the classic prompt applies.
+
+## Recursion limit
+
+The loop stops when the recursion depth reaches ten.
+
+FACT
+`MAX_AGENT_DEPTH` is ten. At the limit, the engine emits a text chunk that
+says the maximum agent call depth was reached, then returns an error.
+See `agent.go:650` and `agent.go:34`.
+
+RISK
+At the depth limit, the agent work stops silently from the user's view.
+The handler discards the returned error. See `handlers.go:361`.
+
+OPEN QUESTION
+Does the UI show the depth-limit message to the user, or does it show a generic error?
+
+FAILURE
+A stream read error from the LLM provider ends the loop. The follow-up
+goroutine discards that error. See `agent.go:809`.
+
+OPEN QUESTION
+What happens to an in-flight chat when the LLM provider times out?
+
+## Tool set
+
+The table lists the built-in tools. Behaviour and parameters come from `agent.go`.
+
+FACT
+An active agent may restrict this set through its `tools` allowlist.
+Group names such as `docs` and `tickets` expand to several tools.
+See `agents.mdx`.
+
+| Tool | Purpose |
+|------|---------|
+| `read_doc(path)` | Read a file from `docs/` |
+| `read_doc_at(path, commit)` | Read a file as it was at a git revision |
+| `list_doc_revisions(path)` | List commits that changed a file, newest first |
+| `write_doc(path, content)` | Create or replace a file in `docs/` |
+| `write_artifact(kind, id, content)` | Create or replace an artifact of an `agent_writable` kind |
+| `list_docs()` | List files with slugs and titles |
+| `read_workspace_file(path)` | Read a file from the workspace root |
+| `list_workspace_files(path)` | List files and directories in the workspace |
+| `list_tickets()` | List tickets |
+| `read_ticket(id)` | Read one ticket |
+| `create_ticket(title, description, priority, assignee)` | Create a ticket |
+| `update_ticket(id, status, priority, assignee)` | Update a ticket |
+| `add_comment(id, body)` | Add a comment to a ticket |
+| `git_commit(message)` | Commit all changes to git |
+| `ask_user(question)` | Ask the user a question |
+
+### Document writes
+
+DECISION
+`write_doc` refuses to create a duplicate. When another file already uses the
+requested title, the tool returns an error and points to the existing slug.
+This prevents silent content forks. See `agent.go:153`.
+
+### Workspace reads
+
+CONSTRAINT
+`read_workspace_file` and `list_workspace_files` may not leave the workspace root.
+Absolute paths are rejected. Symlinks outside the root are rejected.
+See `agent.go:528`.
+
+FACT
+The workspace reader limits file size to 512 KB and refuses binary files that
+contain a null byte. See `agent.go:494` and `agent.go:377`.
+
+### User questions
+
+FACT
+`ask_user` does not block the loop. It returns the marker `__ASK_USER__:` followed
+by the question text. See `agent.go:484`.
+
+OPEN QUESTION
+Which client handles the `__ASK_USER__` marker?
+
+## Auto-commit
+
+DECISION
+Every write, create, update, or comment operation must end with a call to
+`git_commit()`. The system prompt states this rule. See `agent.go:616`.
+
+FACT
+`git_commit` stages the `.devtop/` directory and commits with the message that
+the agent supplies. It passes `--allow-empty`. When there is nothing to commit,
+the tool reports that no change was detected. See `agent.go:567`.
+
+RISK
+The agent controls the commit message. A bad or empty message can reach the
+repository history.
+
+PROPOSAL
+Validate commit messages against the conventional commit format before the
+`git_commit` tool accepts them.
+
+## Write protection
+
+FACT
+Only the agent writes to disk. The web UI is read-only. This rule appears in
+the agent prompt and in the project overview document.
+
+## Decisions
+
+DECISION
+The agent uses a depth-limited recursion loop instead of a fixed task planner.
+Rationale: multi-step tasks decompose naturally, and the limit prevents
+infinite loops.
+
+OPEN QUESTION
+Does `config.yml` need an `agent_depth` setting so each workspace can change the limit?
+
+## Glossary
+
+| Term | Meaning |
+|------|---------|
+| Agent | The AI assistant embedded in devtop |
+| Tool | A registered operation the agent can call |
+| Tool call | One invocation of a tool with arguments |
+| Thread | A stored chat session |

@@ -1,0 +1,74 @@
+---
+title: "Skills"
+---
+
+# Skills
+
+## Summary
+
+A skill is a reusable instruction bundle.
+An agent lists the skills it binds.
+A skill body enters the agent's composed system prompt.
+
+## Format
+
+A skill is a file under the `skills` artifact kind.
+Its slug is the file name without the `.mdx` extension.
+
+The frontmatter has three fields:
+
+| Field | Meaning |
+|-------|---------|
+| `title` | Display name |
+| `description` | One-line description of the skill |
+| `triggers` | Tool names the skill naturally applies to |
+
+The markdown body is the instruction text.
+
+```mdx
+---
+title: "STe-100"
+description: "Forces ASD-STE100 prose"
+triggers: ["write_doc"]
+---
+Rules:
+- Use short sentences.
+- Use active voice.
+```
+
+## Activation
+
+DECISION
+Skill activation is agent-level binding.
+The agent's `skills` field lists the skills to load.
+
+FACT
+When that agent runs, each bound skill body is appended to the system prompt
+under a `## Skill:` heading.
+
+FACT
+The `triggers` field is declared but not enforced in this milestone.
+
+OPEN QUESTION
+Should `triggers` activate a skill for one tool call, without rewriting
+the whole prompt?
+
+## Sharing
+
+FACT
+A skill can be referenced by any number of agents.
+This avoids duplicating instructions across agent definitions.
+
+PROPOSAL
+Give skills their own tool definitions, merged into the agent allowlist.
+This milestone binds instructions only.
+
+## Examples
+
+`templates/skills/ste100.mdx` forces simplified technical English.
+
+`templates/skills/acceptance-criteria.mdx` guides ticket derivation.
+
+## Related
+
+- `agents.mdx` for the runtime that consumes skills.
