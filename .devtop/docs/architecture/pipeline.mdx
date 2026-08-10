@@ -32,6 +32,7 @@ derivation:
     to: prds
     transform: breakdown
     agent: prd-builder
+    classifier: classify-doc
   - from: prds
     to: tickets
     transform: derive_tickets
@@ -56,6 +57,47 @@ The value is the PRD id with the kind prefix, for example `prds/architecture`.
 FACT
 The TL;DR shown per card comes from the document's `summary` frontmatter.
 `description` is the fallback. An empty value renders a hint.
+
+## Eligibility
+
+Not every document is material for a PRD.
+Eligibility is a per-target verdict stored in the document frontmatter:
+
+```yaml
+derive_prospects:
+  prds: eligible | not-eligible
+prospect_by: model | user
+```
+
+FACT
+`prospect_by: model` means the `classify-doc` agent suggested the verdict.
+`prospect_by: user` means a human sealed it.
+The user verdict is the source of truth.
+
+FACT
+An absent `derive_prospects` entry means unassessed.
+A `not-eligible` entry means assessed and refused.
+
+FACT
+The classifier agent is bound per edge with `classifier` in the edge config.
+It never overwrites a `prospect_by: user` verdict.
+
+FACT
+`POST /api/pipeline/prospect` accepts `kind`, `slug`, and `verdict`.
+It writes the user verdict and commits.
+
+FACT
+`POST /api/pipeline/prospect/classify` runs the bound classifier agent.
+It streams over SSE and returns `409` when a user verdict exists.
+
+FACT
+The pipeline view groups documents by their verdict:
+eligible, unassessed, and not eligible.
+Derive actions appear in the eligible section only.
+
+DECISION
+The classify agent runs through the normal agent runtime.
+Allowlist and permission scopes apply to its tool calls.
 
 ## Behaviour
 
@@ -84,6 +126,11 @@ A failed gate returns `409` without calling the model.
 FACT
 The derive handler runs the agent bound to the edge.
 When the repo has no such agent, the classic unrestricted runtime is used.
+
+FACT
+A classifier-bound edge refuses derivation until the source prospect is
+`eligible` for the edge target.
+A refused derive returns `409` before any model runs.
 
 FACT
 A `docs → prds` derivation writes the draft with `write_artifact`.
