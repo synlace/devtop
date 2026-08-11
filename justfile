@@ -67,7 +67,7 @@ devtop *args:
             GO_PID=$!
             # copilot-server.js falls back to process.env.PORT; pin it to 4000 so
             # the recipe-level PORT does not leak into the CopilotKit runtime.
-            (cd "$SRC/frontend" && PORT=4000 node copilot-server.js) &
+            (cd "$SRC/frontend" && PORT=4000 DEVTOP_GO_URL="http://127.0.0.1:$PORT" node copilot-server.js) &
             NODE_PID=$!
             trap 'kill -TERM -"$GO_PID" 2>/dev/null || true; kill "$NODE_PID" 2>/dev/null || true' EXIT INT TERM
             cd "$SRC/frontend"

@@ -2335,7 +2335,12 @@ useEffect(() => {
 
         {/* ===== COPILOT CHAT PANEL ===== */}
         {chatReady ? (
-          <CopilotKit runtimeUrl="/api/copilotkit" threadId={activeThreadId} renderToolCalls={[WildcardToolCallRender, ...toolCallRenderers]}>
+          <CopilotKit
+            runtimeUrl="/api/copilotkit"
+            threadId={activeThreadId}
+            headers={activeRepo ? { 'X-Devtop-Repo': activeRepo } : undefined}
+            renderToolCalls={[WildcardToolCallRender, ...toolCallRenderers]}
+          >
             <PageContextProvider activePage={activePage} docTitle={docTitle} docContent={docContent} activeTicket={activeTicket} tickets={tickets} contextLabel={contextLabel} />
             {chatPanel}
           </CopilotKit>

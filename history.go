@@ -89,6 +89,9 @@ func docPathForSlug(slug string) (string, error) {
 
 func docPathForSlugP(p RepoPaths, slug string) (string, error) {
 	slug = strings.TrimSuffix(slug, ".mdx")
+	if _, err := guardPath(p.Docs, slug); err != nil {
+		return "", err
+	}
 	q := filepath.Join(p.Docs, slug+".mdx")
 	if _, err := os.Stat(q); os.IsNotExist(err) {
 		q = filepath.Join(p.Docs, slug, "index.mdx")

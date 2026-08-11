@@ -540,6 +540,28 @@ func handleAPIRepos(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleAPIRepoDetail serves one repo's paths and status. The chat runtime
+// uses it to scope its tools to the active repo's filesystem.
+func handleAPIRepoDetail(w http.ResponseWriter, r *http.Request) {
+	repo, err := registry.Resolve(r.PathValue("name"))
+	if err != nil {
+		writeJSONError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	status := repo.Status()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"name":     repo.Name,
+		"root":     repo.Root,
+		"git_root": gitRootFrom(repo.paths.DevTop),
+		"status":   status.Status,
+		"devtop":   repo.paths.DevTop,
+		"docs":     repo.paths.Docs,
+		"tickets":  repo.paths.Tickets,
+		"threads":  repo.paths.Threads,
+	})
+}
+
 // writeJSONError responds with a JSON {"error": ...} body so the frontend can
 // surface the message verbatim (e.g. duplicate repo registration).
 func writeJSONError(w http.ResponseWriter, status int, msg string) {

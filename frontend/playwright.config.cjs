@@ -91,6 +91,7 @@ module.exports = {
             env: {
               DEVTOP_DIR: fixtureDir,
               DEVTOP_GIT_DISABLED: '1',
+              DEVTOP_GO_URL: `http://127.0.0.1:${backendPort}`,
             },
             url: `http://127.0.0.1:${copilotPort}/health`,
             reuseExistingServer: false,

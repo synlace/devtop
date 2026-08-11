@@ -49,6 +49,13 @@ func loadDotEnv() {
 }
 
 func main() {
+	// Sandboxed tool execution: the parent re-executes this binary as
+	// `devtop-bin tool-run` under Landlock; run the tool and exit before any
+	// server state is built.
+	if os.Getenv("DEVTOP_TOOL_SANDBOX_RUN") == "1" && len(os.Args) > 1 && os.Args[1] == "tool-run" {
+		os.Exit(runToolSubprocess())
+	}
+
 	port := flag.Int("port", 8000, "Port to listen on")
 	host := flag.String("host", "127.0.0.1", "Address to listen on (0.0.0.0 in containers)")
 	flag.Parse()
@@ -184,8 +191,10 @@ func main() {
 	// Repo scope: registry, init, and the folder browser for Add repo.
 	mux.HandleFunc("GET /api/repos", handleAPIRepos)
 	mux.HandleFunc("POST /api/repos", handleAPIRepos)
+	mux.HandleFunc("GET /api/repos/{name}", handleAPIRepoDetail)
 	mux.HandleFunc("DELETE /api/repos/{name}", handleAPIRepoDelete)
 	mux.HandleFunc("POST /api/repos/init", handleAPIRepoInit)
+	mux.HandleFunc("POST /api/internal/tool", handleAPIInternalTool)
 	mux.HandleFunc("/api/fs/list", handleAPIFSList)
 
 	// SPA routes — serve the built React app; any non-API path falls back to

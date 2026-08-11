@@ -194,27 +194,6 @@ const DEVTOP_DIR = process.env.DEVTOP_DIR || path.resolve("../.devtop");
 const DOCS_DIR = path.join(DEVTOP_DIR, "docs");
 const TICKETS_DIR = path.join(DEVTOP_DIR, "tickets");
 const THREADS_DIR = path.join(DEVTOP_DIR, "threads");
-const WORKSPACE_ROOT = path.dirname(DEVTOP_DIR);
-
-const MAX_WORKSPACE_READ_BYTES = 512 * 1024;
-const IGNORED_WORKSPACE_DIRS = new Set([".git", ".devtop", "node_modules", "dist", "build", "target", "vendor", ".idea", ".vscode"]);
-
-function isPathInside(root, target) {
-  const rel = path.relative(root, target);
-  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
-}
-
-async function resolveWorkspacePath(relPath) {
-  const full = path.resolve(WORKSPACE_ROOT, relPath);
-  if (!isPathInside(WORKSPACE_ROOT, full)) {
-    throw new Error("path escapes the workspace");
-  }
-  const real = await fs.realpath(full).catch(() => full);
-  if (!isPathInside(WORKSPACE_ROOT, real)) {
-    throw new Error("path escapes the workspace (symlink)");
-  }
-  return real;
-}
 
 console.log("Initializing CopilotKit Runtime with OpenRouter and Zod tools:");
 console.log(`- Model: ${model}`);
@@ -226,62 +205,66 @@ await fs.mkdir(DOCS_DIR, { recursive: true });
 await fs.mkdir(TICKETS_DIR, { recursive: true });
 await fs.mkdir(THREADS_DIR, { recursive: true });
 
-// Helper to run git commit
-async function gitCommit(message) {
-  try {
-    const relPath = path.relative(path.dirname(DEVTOP_DIR), DEVTOP_DIR);
-    await execAsync(`git add ${relPath}`, { cwd: path.dirname(DEVTOP_DIR) });
-    const { stdout } = await execAsync(`git commit -m "${message}" --allow-empty`, { cwd: path.dirname(DEVTOP_DIR) });
-    return "Committed: " + stdout.split("\n")[0];
-  } catch (err) {
-    if (err.message.includes("nothing to commit")) {
-      return "Nothing to commit — no changes detected.";
+// The frontend sends the active repo on every request (X-Devtop-Repo, set by
+// the React provider and forwarded by the Go proxy — or Vite in dev). Tools
+// are scoped to that repo; all file access is delegated to the Go server's
+// /api/internal/tool endpoint so there is exactly one enforcement point for
+// path containment (plus a Landlock sandbox on Linux).
+const goURL = process.env.DEVTOP_GO_URL || "http://127.0.0.1:8000";
+let currentRepoName = "";
+const repoCache = new Map();
+
+// repoPaths resolves the active repo's filesystem layout from the Go server.
+async function repoPaths(name) {
+  if (!name || !name.trim()) return null;
+  name = name.trim();
+  if (!repoCache.has(name)) {
+    try {
+      const r = await fetch(`${goURL}/api/repos/${encodeURIComponent(name)}`);
+      if (!r.ok) return null;
+      repoCache.set(name, await r.json());
+    } catch {
+      return null;
     }
-    return `Git commit error: ${err.message}`;
   }
+  return repoCache.get(name);
 }
 
-// Helper to find next ticket ID
-async function getNextTicketID() {
+// delegateTool runs a tool server-side, scoped to the active repo. The tool
+// result string is passed straight back to the model.
+async function delegateTool(toolName, args) {
   try {
-    const files = await fs.readdir(TICKETS_DIR);
-    const mdFiles = files.filter(f => f.endsWith(".md"));
-    if (mdFiles.length === 0) return "001";
-    let maxID = 0;
-    for (const f of mdFiles) {
-      const id = parseInt(f.replace(".md", ""), 10);
-      if (!isNaN(id) && id > maxID) {
-        maxID = id;
-      }
-    }
-    return String(maxID + 1).padStart(3, "0");
+    const r = await fetch(`${goURL}/api/internal/tool`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Devtop-Repo": currentRepoName || "",
+      },
+      body: JSON.stringify({ name: toolName, args: args || {} }),
+    });
+    if (!r.ok) return `Error: tool dispatch failed (${r.status})`;
+    const data = await r.json();
+    return data.result ?? "Error: empty tool result";
   } catch {
-    return "001";
+    return "Error: cannot reach the devtop server";
   }
 }
 
-// Helper to parse standard frontmatter
-function parseFrontmatter(fileContent) {
-  const match = fileContent.match(/^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/);
-  if (!match) return { meta: {}, body: fileContent };
-  
-  const yaml = match[1];
-  const body = match[2];
-  const meta = {};
-  
-  yaml.split("\n").forEach(line => {
-    const parts = line.split(":");
-    if (parts.length >= 2) {
-      const key = parts[0].trim();
-      const val = parts.slice(1).join(":").trim().replace(/^"(.*)"$/, "$1");
-      meta[key] = val;
-    }
-  });
-  
-  return { meta, body };
-}
+// Capture the active repo per request so in-flight tool calls are scoped to
+// the chat's repo. Single-user server: a request goroutine-style race between
+// two concurrent chats in different repos is accepted, matching the Go side's
+// toolCtx design.
+const captureRepo = (req, res, next) => {
+  const h = req.headers["x-devtop-repo"];
+  currentRepoName = typeof h === "string" ? h.trim() : "";
+  next();
+};
+app.use(captureRepo);
 
-// Define CopilotKit Backend Tools / Actions using Zod validation schema
+// Define CopilotKit Backend Tools / Actions using Zod validation schema.
+// All file access is delegated to the Go server so containment lives in one
+// place; only git_commit runs here (scoped to the repo's git root) to keep
+// the DEVTOP_GIT_DISABLED e2e escape hatch local.
 const tools = [
   defineTool({
     name: "read_doc",
@@ -289,15 +272,7 @@ const tools = [
     parameters: z.object({
       path: z.string().describe("Path relative to docs/ (e.g. 'architecture.mdx')")
     }),
-    execute: async ({ path: docPath }) => {
-      try {
-        const fullPath = path.join(DOCS_DIR, docPath);
-        const data = await fs.readFile(fullPath, "utf-8");
-        return data;
-      } catch (err) {
-        return `Error: doc '${docPath}' not found`;
-      }
-    }
+    execute: async (args) => delegateTool("read_doc", args)
   }),
   defineTool({
     name: "write_doc",
@@ -306,74 +281,36 @@ const tools = [
       path: z.string().describe("Path relative to docs/ (e.g. 'architecture.mdx')"),
       content: z.string().describe("Full MDX content (YAML frontmatter + markdown body)")
     }),
-    execute: async ({ path: docPath, content }) => {
-      try {
-        const fullPath = path.join(DOCS_DIR, docPath);
-        await fs.mkdir(path.dirname(fullPath), { recursive: true });
-        await fs.writeFile(fullPath, content, "utf-8");
-        return `Written to docs/${docPath}`;
-      } catch (err) {
-        return `Error writing doc: ${err.message}`;
-      }
-    }
+    execute: async (args) => delegateTool("write_doc", args)
+  }),
+  defineTool({
+    name: "read_doc_at",
+    description: "Read a documentation file as it existed at a given git commit. Commit may be a full or short sha, or HEAD. Returns the doc at that revision, or notes the file was deleted there.",
+    parameters: z.object({
+      path: z.string().describe("Path relative to docs/"),
+      commit: z.string().describe("Git commit sha or HEAD")
+    }),
+    execute: async (args) => delegateTool("read_doc_at", args)
+  }),
+  defineTool({
+    name: "list_doc_revisions",
+    description: "List the git history of a documentation file: each commit that changed it, newest first, with sha, message, author, and date. The most recent is marked current.",
+    parameters: z.object({
+      path: z.string().describe("Path relative to docs/")
+    }),
+    execute: async (args) => delegateTool("list_doc_revisions", args)
   }),
   defineTool({
     name: "list_docs",
-    description: "List all available documentation files with their slugs/paths and titles.",
+    description: "List all available documentation files with their slugs/titles.",
     parameters: z.object({}),
-    execute: async () => {
-      try {
-        async function getFiles(dir) {
-          const subdirs = await fs.readdir(dir, { withFileTypes: true });
-          const files = await Promise.all(subdirs.map(async (subdir) => {
-            const res = path.resolve(dir, subdir.name);
-            return subdir.isDirectory() ? getFiles(res) : res;
-          }));
-          return files.flat();
-        }
-        const allFiles = await getFiles(DOCS_DIR);
-        const mdxFiles = allFiles.filter(f => f.endsWith(".mdx") || f.endsWith(".md"));
-        const list = [];
-        for (const f of mdxFiles) {
-          const content = await fs.readFile(f, "utf-8");
-          const { meta } = parseFrontmatter(content);
-          const relPath = path.relative(DOCS_DIR, f);
-          list.push({
-            slug: relPath.replace(/\.mdx?$/, ""),
-            title: meta.title || relPath
-          });
-        }
-        return JSON.stringify(list, null, 2);
-      } catch (err) {
-        return `Error listing docs: ${err.message}`;
-      }
-    }
+    execute: async () => delegateTool("list_docs", {})
   }),
   defineTool({
     name: "list_tickets",
     description: "List all tickets with their status, priority, and assignee.",
     parameters: z.object({}),
-    execute: async () => {
-      try {
-        const files = await fs.readdir(TICKETS_DIR);
-        const mdFiles = files.filter(f => f.endsWith(".md"));
-        const list = [];
-        for (const f of mdFiles) {
-          const content = await fs.readFile(path.join(TICKETS_DIR, f), "utf-8");
-          const { meta } = parseFrontmatter(content);
-          list.push({
-            id: meta.id || f.replace(".md", ""),
-            title: meta.title || "Untitled",
-            status: meta.status || "open",
-            priority: meta.priority || "medium",
-            assignee: meta.assignee || ""
-          });
-        }
-        return JSON.stringify(list, null, 2);
-      } catch (err) {
-        return `Error listing tickets: ${err.message}`;
-      }
-    }
+    execute: async () => delegateTool("list_tickets", {})
   }),
   defineTool({
     name: "read_ticket",
@@ -381,15 +318,7 @@ const tools = [
     parameters: z.object({
       id: z.string().describe("Ticket ID (e.g. '001')")
     }),
-    execute: async ({ id }) => {
-      try {
-        const fullPath = path.join(TICKETS_DIR, `${id}.md`);
-        const data = await fs.readFile(fullPath, "utf-8");
-        return data;
-      } catch (err) {
-        return `Error: ticket '${id}' not found`;
-      }
-    }
+    execute: async (args) => delegateTool("read_ticket", args)
   }),
   defineTool({
     name: "create_ticket",
@@ -400,26 +329,12 @@ const tools = [
       priority: z.enum(["urgent", "high", "medium", "low"]).describe("Priority level"),
       assignee: z.string().optional().describe("Assignee username (optional)")
     }),
-    execute: async ({ title, description, priority, assignee = "" }) => {
-      try {
-        const id = await getNextTicketID();
-        const created = new Date().toISOString().split("T")[0];
-        const fm = `---
-id: "${id}"
-title: "${title}"
-status: "open"
-priority: "${priority}"
-assignee: "${assignee}"
-created: "${created}"
----
-
-${description}`;
-        await fs.writeFile(path.join(TICKETS_DIR, `${id}.md`), fm, "utf-8");
-        return `Created ticket ${id}: ${title}`;
-      } catch (err) {
-        return `Error creating ticket: ${err.message}`;
-      }
-    }
+    execute: async (args) => delegateTool("create_ticket", {
+      title: args.title || "",
+      description: args.description || "",
+      priority: args.priority || "medium",
+      assignee: args.assignee || ""
+    })
   }),
   defineTool({
     name: "update_ticket",
@@ -430,32 +345,7 @@ ${description}`;
       priority: z.enum(["urgent", "high", "medium", "low"]).optional().describe("New priority"),
       assignee: z.string().optional().describe("New assignee")
     }),
-    execute: async ({ id, status, priority, assignee }) => {
-      try {
-        const fullPath = path.join(TICKETS_DIR, `${id}.md`);
-        const fileContent = await fs.readFile(fullPath, "utf-8");
-        const { meta, body } = parseFrontmatter(fileContent);
-        
-        if (status !== undefined) meta.status = status;
-        if (priority !== undefined) meta.priority = priority;
-        if (assignee !== undefined) meta.assignee = assignee;
-
-        const fm = `---
-id: "${meta.id || id}"
-title: "${meta.title || 'Untitled'}"
-status: "${meta.status || 'open'}"
-priority: "${meta.priority || 'medium'}"
-assignee: "${meta.assignee || ''}"
-created: "${meta.created || ''}"
----
-
-${body}`;
-        await fs.writeFile(fullPath, fm, "utf-8");
-        return `Updated ticket ${id}`;
-      } catch (err) {
-        return `Error updating ticket: ${err.message}`;
-      }
-    }
+    execute: async (args) => delegateTool("update_ticket", args)
   }),
   defineTool({
     name: "add_comment",
@@ -464,32 +354,7 @@ ${body}`;
       id: z.string().describe("Ticket ID (e.g. '001')"),
       body: z.string().describe("Comment text")
     }),
-    execute: async ({ id, body }) => {
-      try {
-        const fullPath = path.join(TICKETS_DIR, `${id}.md`);
-        const fileContent = await fs.readFile(fullPath, "utf-8");
-        const { meta, body: ticketBody } = parseFrontmatter(fileContent);
-        
-        const nowStr = new Date().toISOString().replace("T", " ").substring(0, 16);
-        const commentLine = `\n**${nowStr}** — ${body}\n`;
-        const updatedBody = ticketBody.trim() + commentLine;
-
-        const fm = `---
-id: "${meta.id || id}"
-title: "${meta.title || 'Untitled'}"
-status: "${meta.status || 'open'}"
-priority: "${meta.priority || 'medium'}"
-assignee: "${meta.assignee || ''}"
-created: "${meta.created || ''}"
----
-
-${updatedBody}`;
-        await fs.writeFile(fullPath, fm, "utf-8");
-        return `Comment added to ticket ${id}`;
-      } catch (err) {
-        return `Error adding comment: ${err.message}`;
-      }
-    }
+    execute: async (args) => delegateTool("add_comment", args)
   }),
   defineTool({
     name: "read_workspace_file",
@@ -497,25 +362,7 @@ ${updatedBody}`;
     parameters: z.object({
       path: z.string().describe("Path relative to the workspace root")
     }),
-    execute: async ({ path: relPath }) => {
-      try {
-        const full = await resolveWorkspacePath(relPath);
-        const st = await fs.stat(full);
-        if (st.isDirectory()) {
-          return `Error: '${relPath}' is a directory — use list_workspace_files`;
-        }
-        if (st.size > MAX_WORKSPACE_READ_BYTES) {
-          return `Error: file too large (${st.size} bytes, max ${MAX_WORKSPACE_READ_BYTES})`;
-        }
-        const buf = await fs.readFile(full);
-        if (buf.includes(0)) {
-          return `Binary file (${buf.length} bytes) — content not shown`;
-        }
-        return buf.toString("utf-8");
-      } catch (err) {
-        return `Error: ${err.message}`;
-      }
-    }
+    execute: async (args) => delegateTool("read_workspace_file", args)
   }),
   defineTool({
     name: "list_workspace_files",
@@ -523,30 +370,7 @@ ${updatedBody}`;
     parameters: z.object({
       path: z.string().optional().describe("Directory path relative to the workspace root")
     }),
-    execute: async ({ path: relPath }) => {
-      try {
-        const dir = relPath ? await resolveWorkspacePath(relPath) : WORKSPACE_ROOT;
-        const st = await fs.stat(dir);
-        if (!st.isDirectory()) {
-          return `Error: '${relPath || "."}' is not a directory`;
-        }
-        const entries = await fs.readdir(dir, { withFileTypes: true });
-        const out = [];
-        for (const e of entries) {
-          if (IGNORED_WORKSPACE_DIRS.has(e.name)) continue;
-          if (e.isSymbolicLink()) { out.push({ name: e.name, type: "symlink" }); continue; }
-          if (e.isDirectory()) { out.push({ name: e.name, type: "dir" }); continue; }
-          if (e.isFile()) {
-            const info = await fs.stat(path.join(dir, e.name));
-            out.push({ name: e.name, type: "file", size: info.size });
-          }
-        }
-        out.sort((a, b) => a.type === b.type ? a.name.localeCompare(b.name) : a.type.localeCompare(b.type));
-        return JSON.stringify(out, null, 2);
-      } catch (err) {
-        return `Error: ${err.message}`;
-      }
-    }
+    execute: async (args) => delegateTool("list_workspace_files", args)
   }),
   defineTool({
     name: "git_commit",
@@ -558,11 +382,22 @@ ${updatedBody}`;
       if (gitDisabled) {
         return "Git commits are disabled in this environment (DEVTOP_GIT_DISABLED=1).";
       }
-      return await gitCommit(message);
+      try {
+        const p = await repoPaths(currentRepoName);
+        const cwd = (p && (p.git_root || p.root)) || path.dirname(DEVTOP_DIR);
+        const relFromRoot = path.relative(cwd, DEVTOP_DIR);
+        await execAsync(`git add ${relFromRoot || "."}`, { cwd });
+        const { stdout } = await execAsync(`git commit -m "${message}" --allow-empty`, { cwd });
+        return "Committed: " + stdout.split("\n")[0];
+      } catch (err) {
+        if (err.message.includes("nothing to commit")) {
+          return "Nothing to commit — no changes detected.";
+        }
+        return `Git commit error: ${err.message}`;
+      }
     }
   })
 ];
-
 // The runtime is created dynamically from the current key (see applyAiKey).
 // Requests reach it through a swap-in middleware so a key change can replace
 // the handler without restarting the process.

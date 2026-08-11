@@ -22,6 +22,9 @@ func docTitleFromContent(content string) string {
 
 func writeDocToFileSystemP(p RepoPaths, slug, content string) error {
 	slug = strings.TrimSuffix(slug, ".mdx")
+	if _, err := guardPath(p.Docs, slug); err != nil {
+		return err
+	}
 
 	// Overwrite in place: resolve the existing file with the same rules the
 	// read paths use (docPathForSlug/getDoc), so a doc that lives at
@@ -44,6 +47,9 @@ func writeDocToFileSystemP(p RepoPaths, slug, content string) error {
 }
 
 func writeTicketToFileSystemP(p RepoPaths, t Ticket) error {
+	if _, err := guardPath(p.Tickets, t.ID+".md"); err != nil {
+		return err
+	}
 	filePath := filepath.Join(p.Tickets, t.ID+".md")
 	fm := fmt.Sprintf(`---
 id: "%s"
@@ -60,6 +66,9 @@ source: "%s"
 }
 
 func writeThreadToFileSystemP(p RepoPaths, id string, threadData map[string]interface{}) error {
+	if _, err := guardPath(p.Threads, id+".json"); err != nil {
+		return err
+	}
 	filePath := filepath.Join(p.Threads, id+".json")
 	bytes, err := json.MarshalIndent(threadData, "", "  ")
 	if err != nil {
@@ -69,6 +78,9 @@ func writeThreadToFileSystemP(p RepoPaths, id string, threadData map[string]inte
 }
 
 func deleteThreadFileP(p RepoPaths, id string) error {
+	if _, err := guardPath(p.Threads, id+".json"); err != nil {
+		return err
+	}
 	filePath := filepath.Join(p.Threads, id+".json")
 	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
 		return err

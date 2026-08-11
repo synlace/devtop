@@ -197,6 +197,9 @@ func registerBuiltinTools() {
 		if !ok {
 			return "Error: cannot determine target path for write_artifact"
 		}
+		if _, err := guardPath(p.DevTop, rel); err != nil {
+			return fmt.Sprintf("Error: %v", err)
+		}
 		path := filepath.Join(p.DevTop, rel)
 		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 			return fmt.Sprintf("Error: %v", err)
@@ -577,23 +580,44 @@ func resolveWorkspacePath(rel string) (string, error) {
 	return resolveWorkspacePathIn(workspaceRoot(), rel)
 }
 
-// resolveWorkspacePathIn resolves a tool path relative to the given root,
-// guarding traversal (including via symlinks).
-func resolveWorkspacePathIn(root, rel string) (string, error) {
+// guardPath resolves a tool-supplied relative path against root, rejecting
+// absolute paths, traversal, and symlink escapes. The deepest existing
+// ancestor is resolved first so symlinked parents of a not-yet-created file
+// are caught too.
+func guardPath(root, rel string) (string, error) {
 	if filepath.IsAbs(rel) {
-		return "", fmt.Errorf("use a path relative to the workspace root")
+		return "", fmt.Errorf("use a path relative to the root")
 	}
 	abs := filepath.Join(root, filepath.FromSlash(rel))
 	if !pathWithinRoot(root, abs) {
-		return "", fmt.Errorf("path escapes the workspace")
+		return "", fmt.Errorf("path escapes the root")
 	}
-	if real, err := filepath.EvalSymlinks(abs); err == nil {
-		if !pathWithinRoot(root, real) {
-			return "", fmt.Errorf("path escapes the workspace (symlink)")
+	probe := abs
+	var rest []string
+	for {
+		if real, err := filepath.EvalSymlinks(probe); err == nil {
+			full := real
+			for i := len(rest) - 1; i >= 0; i-- {
+				full = filepath.Join(full, rest[i])
+			}
+			if !pathWithinRoot(root, full) {
+				return "", fmt.Errorf("path escapes the root (symlink)")
+			}
+			return full, nil
 		}
-		return real, nil
+		parent := filepath.Dir(probe)
+		if parent == probe {
+			return abs, nil
+		}
+		rest = append(rest, filepath.Base(probe))
+		probe = parent
 	}
-	return abs, nil
+}
+
+// resolveWorkspacePathIn resolves a tool path relative to the given root,
+// guarding traversal (including via symlinks).
+func resolveWorkspacePathIn(root, rel string) (string, error) {
+	return guardPath(root, rel)
 }
 
 func registerMCPTool(name string, schema map[string]interface{}, handler ToolHandler) {

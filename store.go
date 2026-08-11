@@ -107,6 +107,9 @@ func listDocsP(p RepoPaths) ([]DocSlug, error) {
 
 func getDocP(p RepoPaths, slug string) (string, string, error) {
 	slug = strings.TrimSuffix(slug, ".mdx")
+	if _, err := guardPath(p.Docs, slug); err != nil {
+		return "", "", err
+	}
 	var filePath string
 	if strings.Contains(slug, "/") {
 		filePath = filepath.Join(p.Docs, slug+".mdx")
