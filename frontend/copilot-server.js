@@ -191,8 +191,6 @@ const gitDisabled = process.env.DEVTOP_GIT_DISABLED === "1";
 process.env.OPENAI_BASE_URL = baseURL;
 
 const DEVTOP_DIR = process.env.DEVTOP_DIR || path.resolve("../.devtop");
-const DOCS_DIR = path.join(DEVTOP_DIR, "docs");
-const TICKETS_DIR = path.join(DEVTOP_DIR, "tickets");
 const THREADS_DIR = path.join(DEVTOP_DIR, "threads");
 
 console.log("Initializing CopilotKit Runtime with OpenRouter and Zod tools:");
@@ -200,10 +198,9 @@ console.log(`- Model: ${model}`);
 console.log(`- Base URL: ${baseURL}`);
 console.log(`- Data directory: ${DEVTOP_DIR}`);
 
-// Ensure directories exist
-await fs.mkdir(DOCS_DIR, { recursive: true });
-await fs.mkdir(TICKETS_DIR, { recursive: true });
-await fs.mkdir(THREADS_DIR, { recursive: true });
+// The runners create their directories lazily on first write. Nothing under
+// DEVTOP_DIR is touched at boot: a fresh, zero-repo instance must not grow a
+// workspace .devtop until a repo is added and initialized.
 
 // The frontend sends the active repo on every request (X-Devtop-Repo, set by
 // the React provider and forwarded by the Go proxy — or Vite in dev). Tools

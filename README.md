@@ -32,6 +32,10 @@ Notes:
   `-v "$HOME/.config/devtop:/etc/devtop"`).
 - With no volume, the registry is held in the container's ephemeral config
   dir and is lost on `docker rm`.
+- A host bind source that does not exist yet is created by Docker as **root**.
+  Pre-create it so the container can write owned by your user:
+  `mkdir -p "$HOME/.config/devtop"`. If it already exists owned by root,
+  fix it once: `chown -R "$(id -u):$(id -g)" "$HOME/.config/devtop"`.
 
 ### Multiple repositories
 
@@ -51,6 +55,12 @@ persist in `/etc/devtop/repos.json`, so `docker rm`/`docker run` keeps your
 repos. A fresh launch in a plain folder (no repo, no `.git`) boots with zero
 repos and nothing written: the first-run page offers **Add repo…**, and
 `.devtop/` is scaffolded only when a repo is initialized.
+
+> **One-time cleanup for existing installs.** Older versions created
+> `.devtop/` in the workspace on every boot. A stale `.devtop` (even a
+> partially-created one) is treated as a populated workspace, so the fresh
+> folder-of-repos launch would seed it again. Delete the old directory once:
+> `rm -rf ~/git/.devtop` — where `~/git` is the folder you mount.
 
 ### AI assistant key
 

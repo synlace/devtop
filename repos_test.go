@@ -637,3 +637,86 @@ func TestInitRegistryFallsBackByWorkspaceShape(t *testing.T) {
 		t.Fatalf("git workspace synthesized %d repos, want the single fallback", len(list))
 	}
 }
+
+func TestZeroRepoInstanceWritesNothingToWorkspace(t *testing.T) {
+	oldDir := DEVTOP_DIR
+	defer func() { DEVTOP_DIR = oldDir }()
+
+	// A plain, non-git folder of repos mounts with zero repos. The UI boot
+	// path (models fetch, viewstate read/write, repo list) must not create
+	// anything under the workspace until a repo is added.
+	ws := t.TempDir()
+	DEVTOP_DIR = filepath.Join(ws, ".devtop")
+	cleanRegistry(t)
+	t.Setenv("DEVTOP_REPOS", "")
+	t.Setenv("AI_API_KEY", "")
+	t.Setenv("AI_BASE_URL", "")
+
+	if err := initRegistry(); err != nil {
+		t.Fatal(err)
+	}
+	if got := registry.List(); len(got) != 0 {
+		t.Fatalf("plain folder synthesized %d repos, want 0", len(got))
+	}
+	if !zeroRepoInstance() {
+		t.Fatal("expected zero-repo instance")
+	}
+
+	// GET /api/models: no fetch, no cache write.
+	req := httptest.NewRequest("GET", "/api/models", nil)
+	rr := httptest.NewRecorder()
+	handleAPIModels(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("models status %d: %s", rr.Code, rr.Body.String())
+	}
+	var modelsResp struct {
+		Models []ModelInfo `json:"models"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &modelsResp); err != nil {
+		t.Fatal(err)
+	}
+	if len(modelsResp.Models) != 0 {
+		t.Fatalf("expected empty models on zero-repo boot, got %+v", modelsResp.Models)
+	}
+
+	// GET then PUT viewstate: in-memory only.
+	req = httptest.NewRequest("GET", "/api/viewstate", nil)
+	rr = httptest.NewRecorder()
+	handleAPIGetViewState(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("viewstate get status %d: %s", rr.Code, rr.Body.String())
+	}
+	req = httptest.NewRequest("PUT", "/api/viewstate", bytes.NewReader([]byte(`{"selectedTab":"chat"}`)))
+	rr = httptest.NewRecorder()
+	handleAPIPutViewState(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("viewstate put status %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Nothing may exist under the workspace after the boot path.
+	if _, err := os.Stat(DEVTOP_DIR); !os.IsNotExist(err) {
+		t.Fatalf("zero-repo boot created %s", DEVTOP_DIR)
+	}
+	entries, err := os.ReadDir(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("workspace not left empty after boot: %v", entries)
+	}
+
+	// GET /api/repos returns the empty array, not null.
+	req = httptest.NewRequest("GET", "/api/repos", nil)
+	rr = httptest.NewRecorder()
+	handleAPIRepos(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("repos status %d", rr.Code)
+	}
+	var list []RepoStatus
+	if err := json.Unmarshal(rr.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if list == nil || len(list) != 0 {
+		t.Fatalf("expected empty repo list, got %+v", list)
+	}
+}

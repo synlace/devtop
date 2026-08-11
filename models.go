@@ -27,8 +27,11 @@ type ModelCache struct {
 	CachedAt string      `json:"cached_at"`
 }
 
-func loadCachedModels() []ModelInfo {
-	cachePath := filepath.Join(DATA_DIR, "models.json")
+func loadCachedModelsIn(dataDir string) []ModelInfo {
+	if dataDir == "" {
+		return nil
+	}
+	cachePath := filepath.Join(dataDir, "models.json")
 	if _, err := os.Stat(cachePath); err != nil {
 		return nil
 	}
@@ -45,9 +48,12 @@ func loadCachedModels() []ModelInfo {
 	return cache.Models
 }
 
-func cacheModels(models []ModelInfo) {
-	cachePath := filepath.Join(DATA_DIR, "models.json")
-	_ = os.MkdirAll(DATA_DIR, 0755)
+func cacheModelsIn(dataDir string, models []ModelInfo) {
+	if dataDir == "" {
+		return
+	}
+	cachePath := filepath.Join(dataDir, "models.json")
+	_ = os.MkdirAll(dataDir, 0755)
 
 	randBytes := make([]byte, 4)
 	_, _ = rand.Read(randBytes)
@@ -61,8 +67,8 @@ func cacheModels(models []ModelInfo) {
 	_ = os.WriteFile(cachePath, bytes, 0644)
 }
 
-func fetchModels(baseURL, apiKey string) ([]ModelInfo, error) {
-	cached := loadCachedModels()
+func fetchModels(baseURL, apiKey, dataDir string) ([]ModelInfo, error) {
+	cached := loadCachedModelsIn(dataDir)
 	if len(cached) > 0 {
 		return cached, nil
 	}
@@ -128,6 +134,6 @@ func fetchModels(baseURL, apiKey string) ([]ModelInfo, error) {
 		})
 	}
 
-	cacheModels(models)
+	cacheModelsIn(dataDir, models)
 	return models, nil
 }

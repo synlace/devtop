@@ -536,19 +536,51 @@ func registryHasSynthetic() bool {
 	return len(list) == 1 && list[0].Single
 }
 
+// hasRealRepos reports whether any registered (non-synthetic) repo exists.
+func hasRealRepos() bool {
+	for _, r := range registry.List() {
+		if !r.Single {
+			return true
+		}
+	}
+	return false
+}
+
+// zeroRepoInstance reports whether this instance booted with no repos at all
+// (a fresh folder-of-repos mount). Resolve("") fabricates a synthetic fallback
+// for handler compatibility, but nothing should be written to the workspace
+// until a repo is added.
+func zeroRepoInstance() bool {
+	return !hasRealRepos() && !workspaceIsRepo()
+}
+
 // workspaceIsRepo reports whether the workspace root is itself repo-shaped: a
-// git checkout, a directory that already has a .devtop, or an already-existing
-// .devtop data dir. A fresh folder-of-repos mount (nothing created yet) is not
-// repo-shaped and boots with zero repos.
+// git checkout, or a genuinely-initialized .devtop (config.yml or seeded
+// docs). A fresh folder-of-repos mount — or a bare, half-created .devtop left
+// by an earlier misbehaving boot — is not repo-shaped and boots with zero
+// repos.
 func workspaceIsRepo() bool {
 	root := filepath.Dir(DEVTOP_DIR)
+	// Classic invocation: DEVTOP_DIR is the workspace's .devtop, so the git
+	// checkout (or an initialized .devtop) sits one level up.
 	if _, err := os.Stat(filepath.Join(root, ".git")); err == nil {
 		return true
 	}
-	if _, err := os.Stat(filepath.Join(root, ".devtop")); err == nil {
+	devTop := filepath.Join(root, ".devtop")
+	if fi, err := os.Stat(devTop); err == nil && fi.IsDir() {
+		if _, err := os.Stat(filepath.Join(devTop, "config.yml")); err == nil {
+			return true
+		}
+		if entries, err := os.ReadDir(filepath.Join(devTop, "docs")); err == nil && len(entries) > 0 {
+			return true
+		}
+	}
+	// Testing/embedding invocation: DEVTOP_DIR points straight at the data
+	// root, which may itself be a git checkout or hold live docs.
+	if _, err := os.Stat(filepath.Join(DEVTOP_DIR, ".git")); err == nil {
 		return true
 	}
-	if fi, err := os.Stat(DEVTOP_DIR); err == nil && fi.IsDir() {
+	if entries, err := os.ReadDir(filepath.Join(DEVTOP_DIR, "docs")); err == nil && len(entries) > 0 {
 		return true
 	}
 	return false

@@ -469,7 +469,17 @@ func handleAPIChat(w http.ResponseWriter, r *http.Request) {
 
 func handleAPIModels(w http.ResponseWriter, r *http.Request) {
 	cfg := getAPIConfig()
-	models, _ := fetchModels(cfg.BaseURL, cfg.APIKey)
+	// Cache under the active repo's data dir. A zero-repo instance keeps the
+	// cache in memory: it skips the fetch entirely and writes nothing to the
+	// workspace until a repo is added.
+	models := []ModelInfo{}
+	if !zeroRepoInstance() {
+		var dataDir string
+		if repo, ok := repoFromRequest(w, r); ok {
+			dataDir = repo.paths.Data
+		}
+		models, _ = fetchModels(cfg.BaseURL, cfg.APIKey, dataDir)
+	}
 	resp := map[string]interface{}{
 		"models": models,
 		"config": cfg,
@@ -602,6 +612,11 @@ func handleAPIGetViewState(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if zeroRepoInstance() {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("{}"))
+		return
+	}
 	vsPath := filepath.Join(repo.paths.DevTop, "viewstate.json")
 	data, err := os.ReadFile(vsPath)
 	if err != nil {
@@ -621,6 +636,12 @@ func handleAPIPutViewState(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), 400)
+		return
+	}
+	// A zero-repo instance keeps viewstate in memory: nothing is written to
+	// the workspace until a repo is added.
+	if zeroRepoInstance() {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	vsPath := filepath.Join(repo.paths.DevTop, "viewstate.json")
