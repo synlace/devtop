@@ -492,8 +492,13 @@ func handleAPIDerive(w http.ResponseWriter, r *http.Request) {
 
 	rt, err := buildAgentRuntimeFor(repo, edge.Agent)
 	if err != nil {
-		// No repo-owned agent: run with the classic unrestricted runtime.
-		rt = nil
+		// No fallback: the deriving agent must be deployed in .devtop/agents/.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "deriving agent not deployed: " + err.Error() + " (run init)",
+		})
+		return
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")

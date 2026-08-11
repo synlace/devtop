@@ -8,15 +8,14 @@ import (
 	"strings"
 )
 
-// Agent and skill model. Agents and skills are repo-owned, devtop-consumed
-// artifacts under the kinds declared in config.yml (default .devtop/agents/
-// and .devtop/skills/). devtop reads them when present; when absent, the
-// classic behavior applies: the workspace AGENTS.md (or the embedded
-// SYSTEM_PROMPT) and an unrestricted tool set.
+// Agent and skill model. Agents and skills are repo-owned artifacts under the
+// kinds declared in config.yml (default .devtop/agents/ and .devtop/skills/),
+// materialized from the bundled templates at init. The runtime reads only
+// these files — there is no built-in fallback prompt or tool set.
 
 // Agent runtime configuration (top-level `agent_runtime` in config.yml).
-// Default names the agent the embedded chat agent uses; empty means the
-// classic behavior.
+// Default names the agent the embedded chat agent uses; the agent file must
+// exist in .devtop/agents/ — there is no fallback.
 
 // AgentDef is the frontmatter of one .devtop/agents/<slug>.mdx file.
 type AgentDef struct {
@@ -260,8 +259,8 @@ func findSkillDefIn(p RepoPaths, slug string) (SkillDef, bool, error) {
 	return SkillDef{}, false, nil
 }
 
-// activeRuntime resolves the configured default agent, or nil for the classic
-// behavior (no agent runtime: unrestricted tools, AGENTS.md/SYSTEM_PROMPT).
+// activeRuntime resolves the configured default agent, or nil when it is not
+// deployed (the .devtop/agents file is missing).
 func activeRuntime() *agentRuntime {
 	slug := strings.TrimSpace(engineConfig.AgentRuntime.Default)
 	if slug == "" {
@@ -288,15 +287,14 @@ func activeRuntimeFor(repo *Repo) *agentRuntime {
 	return rt
 }
 
-// buildAgentPrompt composes the system prompt: agent body, then workspace
-// instructions, then the bodies of the bound skills.
+// buildAgentPrompt composes the system prompt: the agent body, then the
+// bodies of the bound skills. No global fallback text is prepended — the
+// agent's own body carries its instructions.
 func buildAgentPrompt(rt *agentRuntime) string {
-	base := loadAgentsPrompt()
 	parts := []string{}
 	if body := strings.TrimSpace(rt.Def.Body); body != "" {
 		parts = append(parts, body)
 	}
-	parts = append(parts, "## Workspace instructions\n\n"+base)
 	for _, s := range rt.skills {
 		if b := strings.TrimSpace(s.Body); b != "" {
 			title := s.Title
@@ -309,12 +307,13 @@ func buildAgentPrompt(rt *agentRuntime) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// resolveActivePrompt is loadAgentsPrompt() gone through the active agent.
+// resolveActivePrompt returns the configured default agent's prompt, or ""
+// when no default agent is deployed. There is no fallback.
 func resolveActivePrompt() string {
 	if rt := activeRuntime(); rt != nil {
 		return rt.prompt
 	}
-	return loadAgentsPrompt()
+	return ""
 }
 
 // writeToolPathers map write tools to the DEVTOP-relative path they target.

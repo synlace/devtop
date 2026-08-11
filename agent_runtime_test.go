@@ -298,7 +298,6 @@ You are the author agent.`)
 	}
 	for _, want := range []string{
 		"You are the author agent.",
-		"## Workspace instructions",
 		"## Skill: STe-100",
 		"Use short sentences.",
 	} {
@@ -360,15 +359,20 @@ Body.`)
 	return buildAgentRuntime(slug)
 }
 
-func TestResolveActivePrompt_FallsBackWhenAgentMissing(t *testing.T) {
-	setupAgentEnv(t, "missing-agent")
+func TestResolveActivePrompt_NoFallback(t *testing.T) {
+	setupAgentEnv(t, "docs")
 
-	prompt := resolveActivePrompt()
-	if prompt == "" {
-		t.Fatal("expected non-empty fallback prompt")
+	// No agent file deployed: the prompt is empty, never a built-in fallback.
+	if prompt := resolveActivePrompt(); prompt != "" {
+		t.Fatalf("expected no prompt without a deployed agent, got %q", prompt)
 	}
-	if strings.Contains(prompt, "## Workspace instructions") {
-		t.Error("fallback prompt should not contain agent-framed sections")
+
+	writeAgentDef(t, "docs", `---
+title: "Docs"
+---
+You are the docs agent.`)
+	if prompt := resolveActivePrompt(); !strings.Contains(prompt, "You are the docs agent.") {
+		t.Fatalf("expected the deployed agent's prompt, got %q", prompt)
 	}
 }
 

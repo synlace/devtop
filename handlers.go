@@ -403,6 +403,14 @@ func handleAPIChat(w http.ResponseWriter, r *http.Request) {
 
 	outChan := make(chan AgentChunk, 100)
 	rt := activeRuntimeFor(repo)
+	if rt == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "no agent configured: initialize the repo to scaffold .devtop/agents",
+		})
+		return
+	}
 	go func() {
 		_ = runAgentInRepo(context.Background(), repo, agentMsgs, cfg.APIKey, cfg.BaseURL, cfg.Model, rt, outChan)
 	}()

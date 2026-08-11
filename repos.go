@@ -485,31 +485,13 @@ func handleAPIRepoDelete(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"removed": removed.Name})
 }
 
-// Init scaffolds the repo's .devtop directory: storage dirs, a materialized
-// config.yml, config-declared kind dirs, and a welcome doc. It is the UI's
-// "Initialize" action for an uninitialized repo.
+// Init scaffolds the repo's .devtop directory from the embedded templates:
+// storage dirs, config.yml, config-declared kind dirs, the default agents and
+// skills, and a welcome doc. It is the UI's "Initialize" action for an
+// uninitialized repo, and the only write point — the runtime reads .devtop/
+// afterwards. Non-destructive: existing files are never overwritten.
 func (r *Repo) Init() error {
-	for _, d := range []string{r.paths.DevTop, r.paths.Docs, r.paths.Tickets, r.paths.Threads, r.paths.Data} {
-		if err := os.MkdirAll(d, 0755); err != nil {
-			return err
-		}
-	}
-	if _, err := ensureEngineConfigIn(r.paths.DevTop); err != nil {
-		return err
-	}
-	cfg, err := r.Config()
-	if err != nil {
-		return err
-	}
-	for name, kind := range cfg.ArtifactKinds {
-		if kind.Path == "" {
-			continue
-		}
-		if err := os.MkdirAll(filepath.Join(r.paths.DevTop, kind.Path), 0755); err != nil {
-			return fmt.Errorf("create kind dir for %s: %w", name, err)
-		}
-	}
-	return ensureWelcomeDocIn(r.paths)
+	return scaffoldRepo(r.paths)
 }
 
 // repoFromRequest resolves the active repo for a request: the `repo` query

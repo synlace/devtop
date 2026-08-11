@@ -112,8 +112,8 @@ func TestLoadEngineConfig_ParsesDefault(t *testing.T) {
 	if skills.Path != "skills" || skills.AgentWritable || skills.Nav != nil {
 		t.Errorf("skills kind misconfigured: %+v", skills)
 	}
-	if engineConfig.AgentRuntime.Default != "" {
-		t.Errorf("agent_runtime.default = %q, want empty", engineConfig.AgentRuntime.Default)
+	if engineConfig.AgentRuntime.Default != "docs" {
+		t.Errorf("agent_runtime.default = %q, want the scaffolded docs agent", engineConfig.AgentRuntime.Default)
 	}
 	if len(engineConfig.Derivation) != 2 {
 		t.Errorf("expected 2 derivation edges, got %d", len(engineConfig.Derivation))

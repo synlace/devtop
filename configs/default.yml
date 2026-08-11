@@ -65,9 +65,10 @@ artifact_kinds:
       requirements: [{ id, description, acceptance }]
 
 # ---------------------------------------------------------------------------
-# Agents and skills: repo-owned, devtop-consumed. Files in .devtop/agents/
-# and .devtop/skills/ are NOT prescribed — the repo copies what it wants from
-# templates/. An empty agents/ directory changes nothing.
+# Agents and skills: repo-owned, devtop-consumed. init materializes the
+# bundled templates (templates/agents, templates/skills) into .devtop/agents/
+# and .devtop/skills/ once; those files, not the templates, are the source of
+# truth afterwards. Remove or edit them to change the workflow.
 # ---------------------------------------------------------------------------
   agents:
     path: agents
@@ -131,10 +132,10 @@ prompts:
     default: knowledge
 
 # The embedded chat agent runtime. `default` names a file in .devtop/agents/
-# (slug). Empty means the classic behavior: the workspace AGENTS.md, or the
-# embedded SYSTEM_PROMPT, with an unrestricted tool set.
+# (slug) — the docs agent is scaffolded at init. There is no fallback: if the
+# agent file is missing, the chat reports it instead of running with defaults.
 agent_runtime:
-  default: ""
+  default: docs
 
 # The machine-readable contract external orchestrators (ferret, Agent Manager)
 # parse to know the artifact vocabulary, which states are grabbable, and how

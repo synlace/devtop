@@ -109,27 +109,10 @@ func main() {
 	// a folder-of-repos mount with zero repos) the default workspace stays
 	// untouched until a repo is explicitly initialized.
 	if registryHasSynthetic() {
-		// Ensure directories exist
-		_ = os.MkdirAll(DOCS_DIR, 0755)
-		_ = os.MkdirAll(TICKETS_DIR, 0755)
-		_ = os.MkdirAll(THREADS_DIR, 0755)
-		_ = os.MkdirAll(DATA_DIR, 0755)
-
-		// Materialize the bundled engine config on first run, then parse it.
-		// A repo that commits its own config.yml overrides the default.
-		if _, err := ensureEngineConfig(); err != nil {
-			fmt.Printf("Warning: could not materialize engine config: %v\n", err)
-		}
-		// Create directories for every config-declared kind (prds, any future
-		// kind) so the generic artifact endpoints work on a fresh repo.
-		if err := ensureKindDirs(); err != nil {
-			fmt.Printf("Warning: could not create artifact kind dirs: %v\n", err)
-		}
-		// Fresh repos get a materialized welcome doc so the docs view has
-		// content (and the AI can read it). Non-destructive: skipped when
-		// docs exist.
-		if err := ensureWelcomeDoc(); err != nil {
-			fmt.Printf("Warning: could not create welcome doc: %v\n", err)
+		// Complete scaffold: storage dirs, config.yml, kind dirs, the
+		// default agents and skills, and the welcome doc. Non-destructive.
+		if err := scaffoldRepo(defaultPaths()); err != nil {
+			fmt.Printf("Warning: could not scaffold the default workspace: %v\n", err)
 		}
 	}
 	// Parse the engine config in both modes (falls back to the bundled

@@ -785,40 +785,22 @@ type AgentChunk struct {
 	Index     int    `json:"index,omitempty"`
 }
 
-const SYSTEM_PROMPT = `You are a helpful engineering assistant embedded in a project's documentation and ticket system.
-
-You can read and write docs, manage tickets, read files in the workspace repository, and answer questions about the project.
-
-When the user asks you to do something, use the appropriate tool. Always read before writing to understand the current state. Be concise but thorough.
-
-When listing tickets, present them in a readable format with their ID, title, status, and priority.
-
-If you need clarification or confirmation from the user, use the ask_user tool.
-
-IMPORTANT: After every write, create, update, or comment operation, you MUST call git_commit() to record the change. The commit message should be descriptive, e.g. "docs: add architecture overview" or "tickets: update dk-001 status to in-progress".`
-
-func loadAgentsPrompt() string {
-	agentsFile := filepath.Join(APP_DIR, "AGENTS.md")
-	if data, err := os.ReadFile(agentsFile); err == nil {
-		return strings.TrimSpace(string(data))
-	}
-	return SYSTEM_PROMPT
-}
-
 func runAgent(ctx context.Context, messages []AgentMessage, apiKey, baseURL, model string, rt *agentRuntime, outChan chan<- AgentChunk) error {
 	return runAgentInRepo(ctx, nil, messages, apiKey, baseURL, model, rt, outChan)
 }
 
 // runAgentInRepo runs the agent scoped to a repo (nil = legacy globals). Tool
 // dispatches inside the agent loop are scoped to the repo, so docs, tickets,
-// workspace files and git commits always land in the owning repository.
+// workspace files and git commits always land in the owning repository. The
+// runtime must be non-nil: prompts come exclusively from a repo-owned agent —
+// there is no built-in fallback.
 func runAgentInRepo(ctx context.Context, repo *Repo, messages []AgentMessage, apiKey, baseURL, model string, rt *agentRuntime, outChan chan<- AgentChunk) error {
-	prompt := loadAgentsPrompt()
-	if rt != nil {
-		if rt.prompt == "" {
-			rt.prompt = buildAgentPrompt(rt)
-		}
-		prompt = rt.prompt
+	if rt == nil {
+		return fmt.Errorf("no agent configured: initialize the repo to scaffold .devtop/agents")
+	}
+	prompt := rt.prompt
+	if prompt == "" {
+		prompt = buildAgentPrompt(rt)
 	}
 	return runAgentWithDepth(ctx, repo, messages, apiKey, baseURL, model, prompt, rt, outChan, 0)
 }

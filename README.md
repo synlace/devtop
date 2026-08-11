@@ -99,6 +99,30 @@ just devtop clean   # remove build artifacts and ./.devtop
 Vite; Go changes need a restart (the Go API serves only `/api/*`, so dev uses
 the Vite dev server at :5173).
 
+## Agents and skills — `.devtop/` is the source of truth
+
+`init` materializes the complete scaffold once (UI **Initialize** on a repo, or
+the classic-mode boot seed): dirs, `config.yml`, the default
+`agents/*.mdx`, `skills/*.mdx`, and `docs/index.mdx`, all from the embedded
+templates in `templates/`. Files already present are never overwritten — after
+init the repo owns `.devtop/` and it is the only thing devtop reads.
+
+The default workflow ships as four agents:
+
+- `docs` — the chat agent (`agent_runtime.default: docs`): derives
+  documentation from chat and the codebase.
+- `classify-doc` — judges whether a doc is eligible for PRD derivation.
+- `prd-builder` — derives a PRD (`prds/`) from an eligible doc.
+- `ticket-deriver` — derives tickets from an approved PRD.
+
+Plus default skills (`ste100`, `acceptance-criteria`, `prd-review`) and
+copy-me examples in `templates/examples/`.
+
+There are no built-in fallbacks: if an agent file is missing, derivation and
+chat report the missing agent ("run init") instead of silently using defaults.
+Edit or remove `.devtop/agents/*.mdx` to change the workflow; `init` re-adds
+only files that do not exist.
+
 ## How it's wired
 
 - Go binary (`main.go`): `/api/*` routes + the built React app from

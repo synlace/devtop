@@ -295,8 +295,13 @@ func handleAPIProspectClassify(w http.ResponseWriter, r *http.Request) {
 
 	rt, err := buildAgentRuntimeFor(repo, edge.Classifier)
 	if err != nil {
-		// No repo-owned classifier: run with the classic unrestricted runtime.
-		rt = nil
+		// No fallback: the classifier must be deployed in .devtop/agents/.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "classifier agent not deployed: " + err.Error() + " (run init)",
+		})
+		return
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
