@@ -9,14 +9,47 @@ runtime — everything on a single port.
 ```console
 # from any repository:
 docker run --rm -it \
+  -u "$(id -u):$(id -g)" \
   -v "$PWD:/workspace" \
   -v devtop-ai-config:/etc/devtop \
   -p 8000:8000 \
   ghcr.io/synlace/devtop:latest
 ```
 
-Open http://127.0.0.1:8000. On first run devtop creates `./.devtop/`
-(docs, tickets, threads) in your repo.
+Open http://127.0.0.1:8000. Classic single-repo mode seeds `./.devtop/`
+(docs, tickets, threads) in your repo on first run.
+
+Notes:
+
+- `-u "$(id -u):$(id -g)"` runs the container as your user, so files it
+  creates in the mounted repo are owned by you, not root.
+- The `devtop-ai-config` volume holds the instance's state: the AI key
+  (`/etc/devtop/.env`) **and the registered-repo list**
+  (`/etc/devtop/repos.json`). If the volume was created by an older
+  root-running container, fix its ownership once:
+  `docker run --rm -v devtop-ai-config:/etc/devtop alpine chown -R "$(id -u):$(id -g)" /etc/devtop`
+  (or use a host bind instead of a named volume:
+  `-v "$HOME/.config/devtop:/etc/devtop"`).
+- With no volume, the registry is held in the container's ephemeral config
+  dir and is lost on `docker rm`.
+
+### Multiple repositories
+
+```console
+# one instance, several repos (run from a parent folder):
+docker run --rm -it \
+  -u "$(id -u):$(id -g)" \
+  -v "$PWD:/workspace" \
+  -v "$HOME/.config/devtop:/etc/devtop" \
+  -p 8000:8000 \
+  ghcr.io/synlace/devtop:latest
+```
+
+The header chip lists every registered repo — pick one, or **Manage repos… →
+Add repo…** to browse `/workspace` and register roots. Registered roots
+persist in `/etc/devtop/repos.json`, so `docker rm`/`docker run` keeps your
+repos. Repos are initialized on demand (Init button or first use); the
+folder-of-repos mount itself is never auto-seeded in multi-repo mode.
 
 ### AI assistant key
 

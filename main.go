@@ -98,35 +98,44 @@ func main() {
 	THREADS_DIR = filepath.Join(DEVTOP_DIR, "threads")
 	DATA_DIR = filepath.Join(DEVTOP_DIR, "data")
 
-	// Ensure directories exist
-	_ = os.MkdirAll(DOCS_DIR, 0755)
-	_ = os.MkdirAll(TICKETS_DIR, 0755)
-	_ = os.MkdirAll(THREADS_DIR, 0755)
-	_ = os.MkdirAll(DATA_DIR, 0755)
-
-	// Materialize the bundled engine config on first run, then parse it.
-	// A repo that commits its own config.yml overrides the default.
-	if _, err := ensureEngineConfig(); err != nil {
-		fmt.Printf("Warning: could not materialize engine config: %v\n", err)
-	}
-	if err := loadEngineConfig(); err != nil {
-		fmt.Printf("Warning: invalid engine config: %v\n", err)
-	}
-	// Create directories for every config-declared kind (prds, any future
-	// kind) so the generic artifact endpoints work on a fresh repo.
-	if err := ensureKindDirs(); err != nil {
-		fmt.Printf("Warning: could not create artifact kind dirs: %v\n", err)
-	}
-	// Fresh repos get a materialized welcome doc so the docs view has content
-	// (and the AI can read it). Non-destructive: skipped when docs exist.
-	if err := ensureWelcomeDoc(); err != nil {
-		fmt.Printf("Warning: could not create welcome doc: %v\n", err)
-	}
-
 	// Repo registry: DEVTOP_REPOS=<root1>:<root2> serves multiple repos from
 	// one instance. Unset means the classic single-repo mode (no repo param).
 	if err := initRegistry(); err != nil {
 		fmt.Printf("Warning: could not build repo registry: %v\n", err)
+	}
+
+	// The classic single-repo workspace is seeded at boot so the docs view
+	// has content on first run. In multi-repo mode the default workspace
+	// stays untouched until a repo is explicitly initialized: a folder-of-
+	// repos mount must not silently grow a .devtop owned by this instance.
+	if !registryHasRealRepos() {
+		// Ensure directories exist
+		_ = os.MkdirAll(DOCS_DIR, 0755)
+		_ = os.MkdirAll(TICKETS_DIR, 0755)
+		_ = os.MkdirAll(THREADS_DIR, 0755)
+		_ = os.MkdirAll(DATA_DIR, 0755)
+
+		// Materialize the bundled engine config on first run, then parse it.
+		// A repo that commits its own config.yml overrides the default.
+		if _, err := ensureEngineConfig(); err != nil {
+			fmt.Printf("Warning: could not materialize engine config: %v\n", err)
+		}
+		// Create directories for every config-declared kind (prds, any future
+		// kind) so the generic artifact endpoints work on a fresh repo.
+		if err := ensureKindDirs(); err != nil {
+			fmt.Printf("Warning: could not create artifact kind dirs: %v\n", err)
+		}
+		// Fresh repos get a materialized welcome doc so the docs view has
+		// content (and the AI can read it). Non-destructive: skipped when
+		// docs exist.
+		if err := ensureWelcomeDoc(); err != nil {
+			fmt.Printf("Warning: could not create welcome doc: %v\n", err)
+		}
+	}
+	// Parse the engine config in both modes (falls back to the bundled
+	// default when no config.yml exists).
+	if err := loadEngineConfig(); err != nil {
+		fmt.Printf("Warning: invalid engine config: %v\n", err)
 	}
 
 	// Connect MCP servers

@@ -218,9 +218,22 @@ var registry = &Registry{byName: map[string]*Repo{}}
 // instance state, never repo state: repos don't know which instance serves
 // them, and editing the file (or DEVTOP_REPOS, which is merged at startup) is
 // the supported way to manage the registry outside the UI.
+//
+// In the container, the mounted config volume (/etc/devtop) holds the AI key;
+// the registry goes next to it so registered repos survive container
+// restarts. DEVTOP_CONFIG_DIR overrides the volume path; local runs fall back
+// to the user config dir.
 func registryFilePath() string {
 	if p := strings.TrimSpace(os.Getenv("DEVTOP_REPOS_FILE")); p != "" {
 		return p
+	}
+	for _, dir := range []string{strings.TrimSpace(os.Getenv("DEVTOP_CONFIG_DIR")), "/etc/devtop"} {
+		if dir == "" {
+			continue
+		}
+		if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+			return filepath.Join(dir, "repos.json")
+		}
 	}
 	if dir, err := os.UserConfigDir(); err == nil {
 		return filepath.Join(dir, "devtop", "repos.json")
@@ -506,6 +519,18 @@ func repoFromRequest(w http.ResponseWriter, r *http.Request) (*Repo, bool) {
 		return nil, false
 	}
 	return repo, true
+}
+
+// registryHasRealRepos reports whether any registered repo is not the
+// legacy synthetic single-repo fallback. Used at boot to decide whether the
+// default workspace should be seeded.
+func registryHasRealRepos() bool {
+	for _, r := range registry.List() {
+		if !r.Single {
+			return true
+		}
+	}
+	return false
 }
 
 // handleAPIRepos serves the registry: repo list (with status) via GET, and

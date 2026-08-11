@@ -572,3 +572,40 @@ func TestHandler_FSList_DefaultSeed(t *testing.T) {
 		t.Fatalf("seed listing missing git dir: %s", rr.Body.String())
 	}
 }
+
+func TestRegistryFilePathPreferConfigVolume(t *testing.T) {
+	t.Setenv("DEVTOP_REPOS_FILE", "")
+	dir := t.TempDir()
+	t.Setenv("DEVTOP_CONFIG_DIR", dir)
+	if got := registryFilePath(); got != filepath.Join(dir, "repos.json") {
+		t.Fatalf("registryFilePath = %q, want %q", got, filepath.Join(dir, "repos.json"))
+	}
+}
+
+func TestRegistryHasRealRepos(t *testing.T) {
+	cleanRegistry(t)
+	if registryHasRealRepos() {
+		t.Fatal("empty registry reported real repos")
+	}
+	reg := registry.List()
+	if len(reg) > 0 {
+		t.Fatalf("expected empty registry after clean, got %d", len(reg))
+	}
+	real := filepath.Join(t.TempDir(), "real")
+	if err := os.MkdirAll(real, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Add(real); err != nil {
+		t.Fatal(err)
+	}
+	if !registryHasRealRepos() {
+		t.Fatal("real repo not reported")
+	}
+	registry.mu.Lock()
+	registry.repos = []*Repo{{Name: "synthetic", Single: true}}
+	registry.byName = map[string]*Repo{"synthetic": {Name: "synthetic", Single: true}}
+	registry.mu.Unlock()
+	if registryHasRealRepos() {
+		t.Fatal("synthetic-only registry reported real repos")
+	}
+}
