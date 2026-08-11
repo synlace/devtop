@@ -441,6 +441,15 @@ async function isInfoProbe(req) {
   }
 }
 
+// emptyRuntimeInfo is what CopilotKit's client needs from /info when the
+// active repo has no runtime: the connection resolves with zero remote agents
+// instead of failing. It must at least carry `agents` (the client calls
+// Object.entries on it) and `mode`; the rest of the real descriptor is
+// optional and nullish-coalesced by the client.
+function emptyRuntimeInfo() {
+  return { version: "1.0.0", agents: {}, mode: "sse" };
+}
+
 // Runtimes are created per repo from the agent descriptor (see
 // agentMiddlewareForRepo). Requests are routed by the active repo captured
 // above; a key-less instance keeps the 502, and a repo without its default
@@ -449,7 +458,7 @@ async function isInfoProbe(req) {
 // client resolves the connection instead of retrying forever.
 app.use(async (req, res, next) => {
   if (!isConfigured()) {
-    if (await isInfoProbe(req)) return res.status(200).json({});
+    if (await isInfoProbe(req)) return res.status(200).json(emptyRuntimeInfo());
     // Plain-text 502 (not a JSON body): the CopilotKit client treats an
     // unreachable runtime like the Go proxy's "runtime down" case and shows a
     // connection error instead of crashing on a parsed-but-empty response.
@@ -459,11 +468,11 @@ app.use(async (req, res, next) => {
   try {
     mw = await agentMiddlewareForRepo(currentRepoName);
   } catch {
-    if (await isInfoProbe(req)) return res.status(200).json({});
+    if (await isInfoProbe(req)) return res.status(200).json(emptyRuntimeInfo());
     return res.status(502).send("AI runtime unavailable");
   }
   if (!mw) {
-    if (await isInfoProbe(req)) return res.status(200).json({});
+    if (await isInfoProbe(req)) return res.status(200).json(emptyRuntimeInfo());
     return res
       .status(409)
       .send("No agent configured: initialize the repo to scaffold .devtop/agents");
