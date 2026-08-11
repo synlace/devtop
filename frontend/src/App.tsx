@@ -1915,7 +1915,29 @@ useEffect(() => {
 
             <div className="flex-1 min-w-0 overflow-y-auto p-8">
 
-            {showUninitState ? (
+            {!showSettings && repos.length === 0 ? (
+              <div className="h-full flex items-center justify-center fade-in">
+                <div className="max-w-md text-center px-6">
+                  <div className="mx-auto w-14 h-14 rounded-2xl bg-borderDark/30 border border-borderDark/50 flex items-center justify-center text-accentBlue mb-4">
+                    <GitBranch className="w-6 h-6" />
+                  </div>
+                  <h2 className="text-lg font-semibold text-slate-100">No repositories yet</h2>
+                  <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                    devtop serves one repository at a time. Add the folder you work in to get started —
+                    nothing is created until you do; the repo keeps its own <span className="font-mono text-slate-400">.devtop/</span>.
+                    Configure an AI key in Settings to bring the assistant along.
+                  </p>
+                  <div className="flex items-center justify-center gap-2.5 mt-5">
+                    <button
+                      onClick={() => setShowAddRepo(true)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium bg-accentBlue text-slate-100 hover:bg-accentBlue/80 transition-colors"
+                    >
+                      Add repo…
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : showUninitState ? (
               <div className="h-full flex items-center justify-center fade-in">
                 <div className="max-w-md text-center px-6">
                   <div className="mx-auto w-14 h-14 rounded-2xl bg-borderDark/30 border border-borderDark/50 flex items-center justify-center text-slate-500 mb-4">
@@ -2334,7 +2356,7 @@ useEffect(() => {
         </main>
 
         {/* ===== COPILOT CHAT PANEL ===== */}
-        {chatReady ? (
+        {chatReady && repos.length > 0 ? (
           <CopilotKit
             runtimeUrl="/api/copilotkit"
             threadId={activeThreadId}
@@ -2385,7 +2407,10 @@ useEffect(() => {
       {showAddRepo && (
         <AddRepoModal
           onClose={() => setShowAddRepo(false)}
-          onAdded={() => { setShowAddRepo(false); refreshRepos() }}
+          onAdded={(name: string) => {
+            setShowAddRepo(false)
+            refreshRepos().then(() => { if (name) selectRepo(name) })
+          }}
         />
       )}
       </div>

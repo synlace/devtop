@@ -29,7 +29,7 @@ interface TreeNode {
 
 interface AddRepoModalProps {
   onClose: () => void
-  onAdded: () => void
+  onAdded: (name: string) => void
 }
 
 const CHEVRON = 'M9 5l7 7-7 7'
@@ -105,8 +105,10 @@ function AddRepoModal({ onClose, onAdded }: AddRepoModalProps) {
         body: JSON.stringify({ path: effectivePath }),
       })
       if (r.ok) {
+        const data = await r.json().catch(() => null)
+        const added = data && typeof data.name === 'string' ? data.name : ''
         setJustAdded(true)
-        setTimeout(onAdded, 350)
+        setTimeout(() => onAdded(added), 350)
       } else {
         const data = await r.json().catch(() => null)
         setError((data && data.error) ? String(data.error) : `Failed to register (${r.status})`)

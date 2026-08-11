@@ -48,8 +48,9 @@ docker run --rm -it \
 The header chip lists every registered repo — pick one, or **Manage repos… →
 Add repo…** to browse `/workspace` and register roots. Registered roots
 persist in `/etc/devtop/repos.json`, so `docker rm`/`docker run` keeps your
-repos. Repos are initialized on demand (Init button or first use); the
-folder-of-repos mount itself is never auto-seeded in multi-repo mode.
+repos. A fresh launch in a plain folder (no repo, no `.git`) boots with zero
+repos and nothing written: the first-run page offers **Add repo…**, and
+`.devtop/` is scaffolded only when a repo is initialized.
 
 ### AI assistant key
 

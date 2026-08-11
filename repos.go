@@ -306,14 +306,20 @@ func initRegistry() error {
 	raw := strings.TrimSpace(os.Getenv("DEVTOP_REPOS"))
 	roots := loadRegistryFile()
 	if raw == "" && len(roots) == 0 {
-		r := &Repo{
-			Name:   repoNameForRoot(DEVTOP_DIR),
-			Root:   filepath.Dir(DEVTOP_DIR),
-			Dir:    DEVTOP_DIR,
-			Single: true,
-			paths:  defaultPaths(),
+		// Classic single-repo mode only when the workspace is itself a
+		// repository (a git checkout, or already has a .devtop). A fresh
+		// folder-of-repos mount boots with zero repos instead: nothing is
+		// written until a repo is added and initialized.
+		if workspaceIsRepo() {
+			r := &Repo{
+				Name:   repoNameForRoot(DEVTOP_DIR),
+				Root:   filepath.Dir(DEVTOP_DIR),
+				Dir:    DEVTOP_DIR,
+				Single: true,
+				paths:  defaultPaths(),
+			}
+			registry.addLocked(r)
 		}
-		registry.addLocked(r)
 		return nil
 	}
 
@@ -521,14 +527,29 @@ func repoFromRequest(w http.ResponseWriter, r *http.Request) (*Repo, bool) {
 	return repo, true
 }
 
-// registryHasRealRepos reports whether any registered repo is not the
-// legacy synthetic single-repo fallback. Used at boot to decide whether the
-// default workspace should be seeded.
-func registryHasRealRepos() bool {
-	for _, r := range registry.List() {
-		if !r.Single {
-			return true
-		}
+// registryHasSynthetic reports whether the registry holds only the legacy
+// classic single-repo fallback — the workspace itself is repo-shaped and
+// should be seeded at boot. Used by main() to decide whether the default
+// workspace materializes on first run.
+func registryHasSynthetic() bool {
+	list := registry.List()
+	return len(list) == 1 && list[0].Single
+}
+
+// workspaceIsRepo reports whether the workspace root is itself repo-shaped: a
+// git checkout, a directory that already has a .devtop, or an already-existing
+// .devtop data dir. A fresh folder-of-repos mount (nothing created yet) is not
+// repo-shaped and boots with zero repos.
+func workspaceIsRepo() bool {
+	root := filepath.Dir(DEVTOP_DIR)
+	if _, err := os.Stat(filepath.Join(root, ".git")); err == nil {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(root, ".devtop")); err == nil {
+		return true
+	}
+	if fi, err := os.Stat(DEVTOP_DIR); err == nil && fi.IsDir() {
+		return true
 	}
 	return false
 }

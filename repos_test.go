@@ -582,14 +582,10 @@ func TestRegistryFilePathPreferConfigVolume(t *testing.T) {
 	}
 }
 
-func TestRegistryHasRealRepos(t *testing.T) {
+func TestRegistryHasSynthetic(t *testing.T) {
 	cleanRegistry(t)
-	if registryHasRealRepos() {
-		t.Fatal("empty registry reported real repos")
-	}
-	reg := registry.List()
-	if len(reg) > 0 {
-		t.Fatalf("expected empty registry after clean, got %d", len(reg))
+	if registryHasSynthetic() {
+		t.Fatal("empty registry reported synthetic")
 	}
 	real := filepath.Join(t.TempDir(), "real")
 	if err := os.MkdirAll(real, 0755); err != nil {
@@ -598,14 +594,46 @@ func TestRegistryHasRealRepos(t *testing.T) {
 	if _, err := registry.Add(real); err != nil {
 		t.Fatal(err)
 	}
-	if !registryHasRealRepos() {
-		t.Fatal("real repo not reported")
+	if registryHasSynthetic() {
+		t.Fatal("real repo reported synthetic")
 	}
 	registry.mu.Lock()
 	registry.repos = []*Repo{{Name: "synthetic", Single: true}}
 	registry.byName = map[string]*Repo{"synthetic": {Name: "synthetic", Single: true}}
 	registry.mu.Unlock()
-	if registryHasRealRepos() {
-		t.Fatal("synthetic-only registry reported real repos")
+	if !registryHasSynthetic() {
+		t.Fatal("synthetic-only registry not reported")
+	}
+}
+
+func TestInitRegistryFallsBackByWorkspaceShape(t *testing.T) {
+	oldDir := DEVTOP_DIR
+	defer func() { DEVTOP_DIR = oldDir }()
+
+	// A plain folder mounts with zero repos: no synthetic fallback.
+	plain := t.TempDir()
+	DEVTOP_DIR = filepath.Join(plain, ".devtop")
+	cleanRegistry(t)
+	t.Setenv("DEVTOP_REPOS", "")
+	if err := initRegistry(); err != nil {
+		t.Fatal(err)
+	}
+	if got := registry.List(); len(got) != 0 {
+		t.Fatalf("plain folder synthesized %d repos, want 0", len(got))
+	}
+
+	// A git checkout still gets the classic single-repo fallback.
+	repoWorkspace := t.TempDir()
+	if _, err := execGit(repoWorkspace, "init", "-q"); err != nil {
+		t.Fatal(err)
+	}
+	DEVTOP_DIR = filepath.Join(repoWorkspace, ".devtop")
+	cleanRegistry(t)
+	if err := initRegistry(); err != nil {
+		t.Fatal(err)
+	}
+	list := registry.List()
+	if len(list) != 1 || !list[0].Single {
+		t.Fatalf("git workspace synthesized %d repos, want the single fallback", len(list))
 	}
 }

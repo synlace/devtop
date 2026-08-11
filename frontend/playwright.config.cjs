@@ -59,6 +59,9 @@ module.exports = {
         AI_API_KEY: '',
         AI_BASE_URL: '',
         AI_MODEL: '',
+        // Never read or write the developer's real repo registry (repos.json)
+        // or the /etc/devtop config volume during hermetic runs
+        DEVTOP_REPOS_FILE: path.join(require('node:os').tmpdir(), 'devtop-e2e-repos.json'),
       },
       url: `http://127.0.0.1:${backendPort}/api/config`,
       reuseExistingServer: false,

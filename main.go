@@ -105,10 +105,10 @@ func main() {
 	}
 
 	// The classic single-repo workspace is seeded at boot so the docs view
-	// has content on first run. In multi-repo mode the default workspace
-	// stays untouched until a repo is explicitly initialized: a folder-of-
-	// repos mount must not silently grow a .devtop owned by this instance.
-	if !registryHasRealRepos() {
+	// has content on first run. In multi-repo mode (and on a fresh launch of
+	// a folder-of-repos mount with zero repos) the default workspace stays
+	// untouched until a repo is explicitly initialized.
+	if registryHasSynthetic() {
 		// Ensure directories exist
 		_ = os.MkdirAll(DOCS_DIR, 0755)
 		_ = os.MkdirAll(TICKETS_DIR, 0755)
