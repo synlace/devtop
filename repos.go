@@ -167,7 +167,7 @@ func (r *Repo) Status() RepoStatus {
 		Status: "ready",
 		Single: r.Single,
 	}
-	if _, err := os.Stat(filepath.Join(r.paths.DevTop, "config.yml")); err == nil {
+	if r.Initialized() {
 		st.Initialized = true
 	}
 	// Uninitialized wins over everything: without .devtop/config.yml there is
@@ -483,6 +483,28 @@ func handleAPIRepoDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"removed": removed.Name})
+}
+
+// Initialized reports whether the repo's .devtop has been scaffolded, i.e.
+// whether it holds real content: a config.yml, the agents directory, or
+// seeded docs. The scaffold materializes all three; a legacy repo may carry
+// only docs/ and agents/. A bare folder (or a stale shell of storage dirs
+// with no docs and no agents) is not initialized: nothing is written to its
+// workspace until init scaffolds it.
+//
+// Deliberately NOT the parent git checkout: a git repo without .devtop must
+// still be gated until init runs.
+func (r *Repo) Initialized() bool {
+	p := r.paths.DevTop
+	if _, err := os.Stat(filepath.Join(p, "config.yml")); err == nil {
+		return true
+	}
+	for _, sub := range []string{filepath.Join(p, "agents"), filepath.Join(p, "docs")} {
+		if entries, err := os.ReadDir(sub); err == nil && len(entries) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // Init scaffolds the repo's .devtop directory from the embedded templates:

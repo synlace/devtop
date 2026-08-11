@@ -1282,6 +1282,14 @@ useEffect(() => {
   const statusLoading = aiReachable === null
   const showAiWizard = aiReachable === true && !!aiStatus && !aiStatus.configured
   const chatReady = !statusLoading && !showAiWizard
+  // The chat panel needs a scaffolded repo: CopilotKit is mounted for every
+  // repo (its runtime answers info probes with 200 even without an agent),
+  // but the panel body shows a notice instead of CopilotChat when the repo is
+  // uninitialized — CopilotChat requires the provider context, and a repo
+  // without its deployed agent is refused by the runtime anyway.
+  const chatCanMount = chatReady && repos.length > 0
+  const repoUninitialized = repos.length > 0 && activeRepoStatus !== undefined && !activeRepoStatus.initialized
+  const repoBooting = repos.length > 0 && activeRepoStatus === undefined
 
   const chatPanel = (
         <aside 
@@ -1426,6 +1434,16 @@ useEffect(() => {
               <div className="text-xs text-slate-500 text-center">
                 <Sparkles className="w-8 h-8 mx-auto mb-2 text-slate-600 animate-pulse" />
                 <p className="font-medium text-slate-400">Checking AI configuration…</p>
+              </div>
+            </div>
+          ) : repoUninitialized || repoBooting ? (
+            <div className="flex-1 flex items-center justify-center p-4">
+              <div className="text-xs text-slate-500 text-center">
+                <Sparkles className="w-8 h-8 mx-auto mb-2 text-slate-600" />
+                <p className="font-medium text-slate-400">{repoUninitialized ? 'Repository not initialized' : 'Loading repository…'}</p>
+                <p className="text-slate-500 mt-1">
+                  {repoUninitialized ? 'Initialize it to scaffold .devtop/ and enable the assistant.' : ''}
+                </p>
               </div>
             </div>
           ) : activeThreadId ? (
@@ -2357,7 +2375,7 @@ useEffect(() => {
         </main>
 
         {/* ===== COPILOT CHAT PANEL ===== */}
-        {chatReady && repos.length > 0 ? (
+        {chatCanMount ? (
           <CopilotKit
             runtimeUrl="/api/copilotkit"
             threadId={activeThreadId}

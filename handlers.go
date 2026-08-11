@@ -238,12 +238,15 @@ func handleAPIThreads(w http.ResponseWriter, r *http.Request) {
 func handleAPICreateThread(w http.ResponseWriter, r *http.Request) {
 	// A zero-repo instance has no thread store: the chat is gated until a
 	// repo is added, so refuse before writing anything to the workspace.
-	if zeroRepoInstance() {
-		writeJSONError(w, http.StatusConflict, "no repo selected")
-		return
-	}
+	// The same applies to a repo registered but not yet initialized: its
+	// .devtop does not exist until init scaffolds it, so there is nowhere
+	// to store threads.
 	repo, ok := repoFromRequest(w, r)
 	if !ok {
+		return
+	}
+	if zeroRepoInstance() || !repo.Initialized() {
+		writeJSONError(w, http.StatusConflict, "repo not initialized: run init to scaffold .devtop")
 		return
 	}
 	p := repo.paths
@@ -635,7 +638,10 @@ func handleAPIGetViewState(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if zeroRepoInstance() {
+	// A zero-repo instance or an uninitialized repo keeps viewstate in
+	// memory: nothing is written to the workspace until the repo is
+	// initialized (init scaffolds .devtop/).
+	if zeroRepoInstance() || !repo.Initialized() {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte("{}"))
 		return
@@ -661,9 +667,10 @@ func handleAPIPutViewState(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	// A zero-repo instance keeps viewstate in memory: nothing is written to
-	// the workspace until a repo is added.
-	if zeroRepoInstance() {
+	// A zero-repo instance or an uninitialized repo keeps viewstate in
+	// memory: nothing is written to the workspace until the repo is
+	// initialized (init scaffolds .devtop/).
+	if zeroRepoInstance() || !repo.Initialized() {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

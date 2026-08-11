@@ -424,27 +424,51 @@ const tools = [
     }
   })
 ];
+// isInfoProbe detects CopilotKit's runtime discovery: GET /info
+// (multi-runtime transport) or a POST envelope { method: "info" }
+// (single-route transport). It consumes the request body and MUST only be
+// called in branches that never forward the request to the CopilotKit handler.
+async function isInfoProbe(req) {
+  if (req.method === "GET") return req.path.endsWith("/info");
+  if (req.method !== "POST") return false;
+  try {
+    let raw = "";
+    for await (const chunk of req) raw += chunk;
+    const parsed = JSON.parse(raw);
+    return parsed?.method === "info";
+  } catch {
+    return false;
+  }
+}
+
 // Runtimes are created per repo from the agent descriptor (see
 // agentMiddlewareForRepo). Requests are routed by the active repo captured
 // above; a key-less instance keeps the 502, and a repo without its default
-// agent deployed gets a 409 instead of a built-in fallback.
-app.use((req, res, next) => {
+// agent deployed gets a 409 instead of a built-in fallback. Runtime info
+// probes are the exception: they answer 200 with an empty descriptor so the
+// client resolves the connection instead of retrying forever.
+app.use(async (req, res, next) => {
   if (!isConfigured()) {
+    if (await isInfoProbe(req)) return res.status(200).json({});
     // Plain-text 502 (not a JSON body): the CopilotKit client treats an
     // unreachable runtime like the Go proxy's "runtime down" case and shows a
     // connection error instead of crashing on a parsed-but-empty response.
     return res.status(502).send("AI not configured");
   }
-  agentMiddlewareForRepo(currentRepoName)
-    .then((mw) => {
-      if (!mw) {
-        return res
-          .status(409)
-          .send("No agent configured: initialize the repo to scaffold .devtop/agents");
-      }
-      return mw(req, res, next);
-    })
-    .catch(() => res.status(502).send("AI runtime unavailable"));
+  let mw;
+  try {
+    mw = await agentMiddlewareForRepo(currentRepoName);
+  } catch {
+    if (await isInfoProbe(req)) return res.status(200).json({});
+    return res.status(502).send("AI runtime unavailable");
+  }
+  if (!mw) {
+    if (await isInfoProbe(req)) return res.status(200).json({});
+    return res
+      .status(409)
+      .send("No agent configured: initialize the repo to scaffold .devtop/agents");
+  }
+  return mw(req, res, next);
 });
 
 // Load the persisted .env config from the volume (if any) and build the

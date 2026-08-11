@@ -28,6 +28,11 @@ func setupTestEnvironment(t *testing.T) string {
 	_ = os.MkdirAll(THREADS_DIR, 0755)
 	_ = os.MkdirAll(DATA_DIR, 0755)
 
+	// Mirror the classic boot-time scaffold: a repo is "initialized" once
+	// .devtop/config.yml exists, and the fixture must look like a
+	// boot-scaffolded repo for the per-repo init gates to pass.
+	os.WriteFile(filepath.Join(DEVTOP_DIR, "config.yml"), defaultEngineConfig, 0644)
+
 	APP_DIR = "."
 	STATIC_DIR = filepath.Join(APP_DIR, "frontend", "dist")
 

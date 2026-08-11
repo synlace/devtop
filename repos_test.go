@@ -731,6 +731,104 @@ func TestZeroRepoInstanceWritesNothingToWorkspace(t *testing.T) {
 	}
 }
 
+// TestUninitializedRepoWritesNothingToWorkspace guards the "add a repo,
+// don't initialize it" flow: an added-but-uninitialized repo must behave like
+// a zero-repo instance for writes — in-memory viewstate, refused thread
+// creation, nothing created under the workspace root.
+func TestUninitializedRepoWritesNothingToWorkspace(t *testing.T) {
+	raw := newRepoTemp(t, "tetris", false)
+	ready := newRepoTemp(t, "avocado", true)
+	legacy := newRepoTemp(t, "legacy", false)
+	for _, sub := range []string{"docs", "threads", "tickets", "data"} {
+		if err := os.MkdirAll(filepath.Join(legacy, ".devtop", sub), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	os.WriteFile(filepath.Join(legacy, ".devtop", "docs", "index.mdx"), []byte("---\ntitle: Legacy\n---\n"), 0644)
+	// A legacy repo carries seeded docs but no config.yml — it is initialized.
+	withRegistryEnv(t, raw, ready, legacy)
+
+	// GET viewstate: in-memory only.
+	req := httptest.NewRequest("GET", "/api/viewstate?repo=tetris", nil)
+	rr := httptest.NewRecorder()
+	handleAPIGetViewState(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("viewstate get status %d: %s", rr.Code, rr.Body.String())
+	}
+	if !bytes.Equal(bytes.TrimSpace(rr.Body.Bytes()), []byte("{}")) {
+		t.Fatalf("expected empty viewstate for uninitialized repo, got %s", rr.Body.String())
+	}
+
+	// PUT viewstate: 204 no-op, nothing written.
+	req = httptest.NewRequest("PUT", "/api/viewstate?repo=tetris", bytes.NewReader([]byte(`{"selectedTab":"chat"}`)))
+	rr = httptest.NewRecorder()
+	handleAPIPutViewState(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("viewstate put status %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// POST /api/threads: refused — no thread store without init.
+	req = httptest.NewRequest("POST", "/api/threads?repo=tetris", bytes.NewReader([]byte(`{"context":"global","title":"test"}`)))
+	rr = httptest.NewRecorder()
+	handleAPICreateThread(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("thread create status %d, want 409: %s", rr.Code, rr.Body.String())
+	}
+
+	// Nothing may exist under the uninitialized repo's workspace.
+	if _, err := os.Stat(filepath.Join(raw, ".devtop")); !os.IsNotExist(err) {
+		t.Fatalf("uninitialized repo wrote %s", filepath.Join(raw, ".devtop"))
+	}
+	entries, err := os.ReadDir(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("uninitialized repo workspace not left empty: %v", entries)
+	}
+
+	// The initialized repo keeps normal behavior.
+	req = httptest.NewRequest("GET", "/api/viewstate?repo=avocado", nil)
+	rr = httptest.NewRecorder()
+	handleAPIGetViewState(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("initialized viewstate get status %d: %s", rr.Code, rr.Body.String())
+	}
+	req = httptest.NewRequest("PUT", "/api/viewstate?repo=avocado", bytes.NewReader([]byte(`{"selectedTab":"chat"}`)))
+	rr = httptest.NewRecorder()
+	handleAPIPutViewState(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("initialized viewstate put status %d: %s", rr.Code, rr.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(ready, ".devtop", "viewstate.json")); err != nil {
+		t.Fatalf("initialized repo viewstate not persisted: %v", err)
+	}
+	req = httptest.NewRequest("POST", "/api/threads?repo=avocado", bytes.NewReader([]byte(`{"context":"global","title":"test"}`)))
+	rr = httptest.NewRecorder()
+	handleAPICreateThread(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("initialized thread create status %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// A legacy repo (seeded docs, no config.yml) is also initialized: the
+	// write gates must not depend on config.yml being present.
+	req = httptest.NewRequest("PUT", "/api/viewstate?repo=legacy", bytes.NewReader([]byte(`{"selectedTab":"chat"}`)))
+	rr = httptest.NewRecorder()
+	handleAPIPutViewState(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("legacy viewstate put status %d: %s", rr.Code, rr.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(legacy, ".devtop", "viewstate.json")); err != nil {
+		t.Fatalf("legacy repo viewstate not persisted: %v", err)
+	}
+	req = httptest.NewRequest("POST", "/api/threads?repo=legacy", bytes.NewReader([]byte(`{"context":"global","title":"test"}`)))
+	rr = httptest.NewRecorder()
+	handleAPICreateThread(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("legacy thread create status %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 // TestEntrypointDoesNotSeedWorkspace guards the Docker entrypoint, which the
 // e2e and unit suites never execute directly: a boot-time mkdir there would
 // recreate the workspace .devtop no matter what the Go and Node layers do.
