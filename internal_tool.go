@@ -34,6 +34,12 @@ func handleAPIInternalTool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result := dispatchRepoTool(repo, req.Name, req.Args)
+	// Auto-assess: a doc the chat agent writes is handed to its classifier
+	// agent right after the write lands, so agent-written docs are eligible
+	// or not without a manual click. assessArtifact swallows every failure.
+	if k, slug, ok := assessmentTarget(repo, req.Name, req.Args); ok && !strings.HasPrefix(result, "Error:") {
+		go assessArtifact(repo, k, slug)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"result": result})
 }

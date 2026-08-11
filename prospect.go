@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 )
 
 // Per-target eligibility. A source artifact (e.g. a doc) declares in its
@@ -351,4 +352,103 @@ func handleAPIProspectClassify(w http.ResponseWriter, r *http.Request) {
 	ev, _ := json.Marshal(payload)
 	fmt.Fprintf(w, "data: %s\n\n", ev)
 	flusher.Flush()
+}
+
+// assessLocks serialize automatic assessments per repo root, so concurrent
+// classifier runs in one repo never collide on the same doc or git index.
+var (
+	assessLocksMu sync.Mutex
+	assessLocks   = map[string]*sync.Mutex{}
+)
+
+func assessLockFor(root string) *sync.Mutex {
+	assessLocksMu.Lock()
+	defer assessLocksMu.Unlock()
+	m, ok := assessLocks[root]
+	if !ok {
+		m = &sync.Mutex{}
+		assessLocks[root] = m
+	}
+	return m
+}
+
+// assessmentTarget returns the (kind, slug) a write tool produced, or ok=false
+// when the write has no classifier-bound derivation edge. It feeds the
+// automatic assessment that runs after the chat agent writes a doc.
+func assessmentTarget(repo *Repo, name string, args map[string]interface{}) (kind, slug string, ok bool) {
+	if repo == nil {
+		return "", "", false
+	}
+	cfg, err := repo.Config()
+	if err != nil {
+		return "", "", false
+	}
+	var k, id string
+	switch name {
+	case "write_artifact":
+		k, _ = args["kind"].(string)
+		id, _ = args["id"].(string)
+	case "write_doc":
+		k = "docs"
+		rel, relOK := docToolPath(args)
+		if !relOK {
+			return "", "", false
+		}
+		ak := cfg.ArtifactKinds[k]
+		id = strings.TrimPrefix(strings.TrimSuffix(rel, ak.Extension), ak.Path+"/")
+		id = strings.TrimSuffix(id, "/index")
+	default:
+		return "", "", false
+	}
+	kindDef, hasKind := cfg.ArtifactKinds[k]
+	if !hasKind || id == "" {
+		return "", "", false
+	}
+	id = strings.TrimSuffix(id, kindDef.Extension)
+	edge, ok2 := firstEdgeFromFor(cfg, k)
+	if !ok2 || edge.Classifier == "" {
+		return "", "", false
+	}
+	return k, id, true
+}
+
+// assessArtifact runs the classifier agent for one source artifact in the
+// background, after the chat agent wrote or updated it. It mirrors the manual
+// "Suggest eligibility" flow without streaming: the classifier writes the
+// verdict to the same file and commits it. Every failure is dropped —
+// assessment must never break the originating tool call or the chat.
+func assessArtifact(repo *Repo, kind, slug string) {
+	lock := assessLockFor(repo.Root)
+	lock.Lock()
+	defer lock.Unlock()
+
+	cfg, err := repo.Config()
+	if err != nil {
+		return
+	}
+	edge, ok := firstEdgeFromFor(cfg, kind)
+	if !ok || edge.Classifier == "" {
+		return
+	}
+	p := repo.paths
+	meta, metaOK, _ := artifactMetaOfFor(cfg, p, kind, slug)
+	if !metaOK {
+		return
+	}
+	if _, by := docProspect(meta, edge.To); by == "user" {
+		return
+	}
+	aiCfg := getAPIConfig()
+	if !aiCfg.HasKey {
+		return
+	}
+	rt, err := buildAgentRuntimeFor(repo, edge.Classifier)
+	if err != nil {
+		return
+	}
+	msgs := []AgentMessage{{Role: "user", Content: classifyTaskMessageFor(cfg, p, edge, slug)}}
+	out := make(chan AgentChunk, 100)
+	_ = runAgentInRepo(context.Background(), repo, msgs, aiCfg.APIKey, aiCfg.BaseURL, aiCfg.Model, rt, out)
+	for range out {
+	}
 }

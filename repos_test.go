@@ -652,6 +652,7 @@ func TestZeroRepoInstanceWritesNothingToWorkspace(t *testing.T) {
 	t.Setenv("DEVTOP_REPOS", "")
 	t.Setenv("AI_API_KEY", "")
 	t.Setenv("AI_BASE_URL", "")
+	t.Setenv("DEVTOP_AI_ENV_FILE", filepath.Join(t.TempDir(), "no-ai"))
 
 	if err := initRegistry(); err != nil {
 		t.Fatal(err)

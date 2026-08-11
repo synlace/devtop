@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -40,6 +41,92 @@ func readMeta(t *testing.T, rel string) map[string]interface{} {
 		t.Fatalf("read frontmatter: %v", err)
 	}
 	return meta
+}
+
+// testRepo returns a synthetic repo over the current globals, as registry
+// Resolve("") would, for tests that exercise repo-scoped logic.
+func testRepo() *Repo {
+	return &Repo{
+		Name:   repoNameForRoot(DEVTOP_DIR),
+		Root:   filepath.Dir(DEVTOP_DIR),
+		Dir:    DEVTOP_DIR,
+		Single: true,
+		paths:  defaultPaths(),
+	}
+}
+
+func TestAssessmentTarget(t *testing.T) {
+	setupPipelineEnv(t)
+	writeArtifact(t, "docs/architecture.mdx", "---\ntitle: A\n---\n\nB\n")
+	repo := testRepo()
+
+	k, s, ok := assessmentTarget(repo, "write_artifact", map[string]interface{}{"kind": "docs", "id": "architecture"})
+	if !ok || k != "docs" || s != "architecture" {
+		t.Errorf("write_artifact target = (%q, %q, %v), want (docs, architecture, true)", k, s, ok)
+	}
+
+	k, s, ok = assessmentTarget(repo, "write_doc", map[string]interface{}{"path": "architecture"})
+	if !ok || k != "docs" || s != "architecture" {
+		t.Errorf("write_doc target = (%q, %q, %v), want (docs, architecture, true)", k, s, ok)
+	}
+
+	k, s, ok = assessmentTarget(repo, "write_artifact", map[string]interface{}{"kind": "docs", "id": "index"})
+	if !ok || s != "index" {
+		t.Errorf("write_artifact index target = (%q, %q, %v)", k, s, ok)
+	}
+
+	// prds has no classifier-bound outgoing edge.
+	if _, _, ok := assessmentTarget(repo, "write_artifact", map[string]interface{}{"kind": "prds", "id": "x"}); ok {
+		t.Error("prds write must not trigger assessment")
+	}
+	// Non-write and unknown tools never trigger.
+	if _, _, ok := assessmentTarget(repo, "git_commit", map[string]interface{}{}); ok {
+		t.Error("git_commit must not trigger assessment")
+	}
+}
+
+func TestGetAPIConfig_VolumeAuthority(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DEVTOP_AI_ENV_FILE", filepath.Join(dir, "ai.env"))
+	t.Setenv("AI_API_KEY", "")
+	t.Setenv("AI_BASE_URL", "")
+	t.Setenv("AI_MODEL", "")
+
+	if cfg := getAPIConfig(); cfg.HasKey {
+		t.Error("no key expected without a volume file or env")
+	}
+
+	// The persisted volume file is authoritative when it has a key.
+	writeErr := os.WriteFile(filepath.Join(dir, "ai.env"), []byte("AI_API_KEY=sk-vol\nAI_MODEL=\"m2\"\n"), 0600)
+	if writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	cfg := getAPIConfig()
+	if !cfg.HasKey || cfg.APIKey != "sk-vol" || cfg.Model != "m2" {
+		t.Errorf("volume authority not applied: %+v", cfg)
+	}
+
+	// "not-needed" means deliberately no key: fall through to env.
+	writeErr = os.WriteFile(filepath.Join(dir, "ai.env"), []byte("AI_API_KEY=not-needed\n"), 0600)
+	if writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	t.Setenv("AI_API_KEY", "sk-env")
+	if cfg := getAPIConfig(); !cfg.HasKey || cfg.APIKey != "sk-env" {
+		t.Errorf("not-needed should fall through to env: %+v", cfg)
+	}
+
+	// A file without a key still falls through to env for the key.
+	writeErr = os.WriteFile(filepath.Join(dir, "ai.env"), []byte("AI_BASE_URL=https://example.com/v1\n"), 0600)
+	if writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	if cfg := getAPIConfig(); !cfg.HasKey || cfg.APIKey != "sk-env" {
+		t.Errorf("env fallback for key: %+v", cfg)
+	}
+	if cfg := getAPIConfig(); cfg.BaseURL != "https://example.com/v1" {
+		t.Errorf("volume base URL not applied: %q", cfg.BaseURL)
+	}
 }
 
 func joinPath(dir, rel string) string {
@@ -119,6 +206,7 @@ func TestHandleDerive_ProspectGate(t *testing.T) {
 	setupPipelineEnv(t)
 	engineConfig.Derivation[0].Classifier = "classify-doc"
 	t.Setenv("AI_API_KEY", "")
+	t.Setenv("DEVTOP_AI_ENV_FILE", filepath.Join(t.TempDir(), "no-ai"))
 	writeArtifact(t, "docs/reference/deployment.mdx", "---\ntitle: \"Deployment\"\nderive_prospects:\n  prds: not-eligible\nprospect_by: model\n---\n\nBody.\n")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/derive",
@@ -246,6 +334,7 @@ func TestHandleDerive_ProspectViaWriteArtifact(t *testing.T) {
 	setupPipelineEnv(t)
 	engineConfig.Derivation[0].Classifier = "classify-doc"
 	t.Setenv("AI_API_KEY", "")
+	t.Setenv("DEVTOP_AI_ENV_FILE", filepath.Join(t.TempDir(), "no-ai"))
 	writeArtifact(t, "docs/architecture.mdx", "---\ntitle: \"Architecture\"\n---\n\nBody.\n")
 	res := dispatchTool("write_artifact", map[string]interface{}{
 		"kind": "docs", "id": "architecture",

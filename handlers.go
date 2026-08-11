@@ -27,6 +27,51 @@ type Config struct {
 	MCPServers  int    `json:"mcp_servers"`
 }
 
+// aiVolumeFile is the persisted AI config file. The chat panel writes it, the
+// entrypoint sources it at boot, and the volume mounts it at /etc/devtop/.env
+// (DEVTOP_AI_ENV_FILE overrides the path, e.g. for local runs).
+func aiVolumeFile() string {
+	if f := os.Getenv("DEVTOP_AI_ENV_FILE"); f != "" {
+		return f
+	}
+	return "/etc/devtop/.env"
+}
+
+// readVolumeAIConfig parses the persisted .env file. Missing file or missing
+// keys return "". The volume file is the authority for the AI key: Go reads it
+// on every config build, so a key entered in the chat panel reaches the
+// pipeline and classifier without a restart.
+func readVolumeAIConfig() (apiKey, baseURL, model string) {
+	raw, err := os.ReadFile(aiVolumeFile())
+	if err != nil {
+		return "", "", ""
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		if (strings.HasPrefix(v, `"`) && strings.HasSuffix(v, `"`)) ||
+			(strings.HasPrefix(v, "'") && strings.HasSuffix(v, "'")) {
+			v = v[1 : len(v)-1]
+		}
+		switch strings.TrimSpace(k) {
+		case "AI_API_KEY":
+			apiKey = v
+		case "AI_BASE_URL":
+			baseURL = v
+		case "AI_MODEL":
+			model = v
+		}
+	}
+	return
+}
+
 func getAPIConfig() Config {
 	baseURL := os.Getenv("AI_BASE_URL")
 	if baseURL == "" {
@@ -37,6 +82,19 @@ func getAPIConfig() Config {
 		model = "deepseek/deepseek-v4-flash-0731"
 	}
 	apiKey := os.Getenv("AI_API_KEY")
+
+	// The volume file overrides the frozen boot env: it is what the chat panel
+	// writes, so its values must reach Go without a container restart.
+	vKey, vBase, vModel := readVolumeAIConfig()
+	if vKey != "" && vKey != "not-needed" {
+		apiKey = vKey
+	}
+	if vBase != "" {
+		baseURL = vBase
+	}
+	if vModel != "" {
+		model = vModel
+	}
 
 	provider := "other"
 	if strings.Contains(baseURL, "openrouter") {
