@@ -744,3 +744,25 @@ func TestEntrypointDoesNotSeedWorkspace(t *testing.T) {
 		t.Fatalf("entrypoint.sh still creates a workspace dir at boot: %s", m)
 	}
 }
+
+// TestEntrypointDropsPrivileges guards the config-volume bootstrap: the
+// container starts as root, claims the volume for the target user with a
+// non-permissive mode, and must run every app process as $TARGET_UID:$TARGET_GID.
+func TestEntrypointDropsPrivileges(t *testing.T) {
+	data, err := os.ReadFile("entrypoint.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`chown -R "$TARGET_UID:$TARGET_GID" /etc/devtop`,
+		"chmod 700 /etc/devtop",
+		`su-exec "$TARGET_UID:$TARGET_GID"`,
+	} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Fatalf("entrypoint.sh missing %q", want)
+		}
+	}
+	if bytes.Contains(data, []byte("chmod 777 /etc/devtop")) {
+		t.Fatal("entrypoint.sh must not use a world-writable config dir")
+	}
+}

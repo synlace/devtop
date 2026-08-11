@@ -9,7 +9,8 @@ runtime — everything on a single port.
 ```console
 # from any repository:
 docker run --rm -it \
-  -u "$(id -u):$(id -g)" \
+  -e TARGET_UID="$(id -u)" \
+  -e TARGET_GID="$(id -g)" \
   -v "$PWD:/workspace" \
   -v devtop-ai-config:/etc/devtop \
   -p 8000:8000 \
@@ -21,30 +22,31 @@ Open http://127.0.0.1:8000. Classic single-repo mode seeds `./.devtop/`
 
 Notes:
 
-- `-u "$(id -u):$(id -g)"` runs the container as your user, so files it
-  creates in the mounted repo are owned by you, not root.
+- Do **not** pass `-u "$(id -u):$(id -g)"`. The container starts as root,
+  claims the config volume for `$TARGET_UID:$TARGET_GID`, then drops to that
+  user (`su-exec`). That makes a fresh `devtop-ai-config` volume writable
+  without permissive modes. Files the app creates in the mounted repo are
+  owned by your user.
 - The `devtop-ai-config` volume holds the instance's state: the AI key
-  (`/etc/devtop/.env`) **and the registered-repo list**
-  (`/etc/devtop/repos.json`). If the volume was created by an older
-  root-running container, fix its ownership once:
-  `docker run --rm -v devtop-ai-config:/etc/devtop alpine chown -R "$(id -u):$(id -g)" /etc/devtop`
-  (or use a host bind instead of a named volume:
-  `-v "$HOME/.config/devtop:/etc/devtop"`).
+  (`/etc/devtop/.env`, `0600`) **and the registered-repo list**
+  (`/etc/devtop/repos.json`). The directory is `0700`, owned by
+  `$TARGET_UID:$TARGET_GID`.
+- A **host bind** (`-v "$HOME/.config/devtop:/etc/devtop"`) is supported but
+  not recommended: Docker re-creates a missing bind source as root, so
+  persistence breaks if the directory was deleted after the mount point was
+  decided. The named volume has no such race.
 - With no volume, the registry is held in the container's ephemeral config
   dir and is lost on `docker rm`.
-- A host bind source that does not exist yet is created by Docker as **root**.
-  Pre-create it so the container can write owned by your user:
-  `mkdir -p "$HOME/.config/devtop"`. If it already exists owned by root,
-  fix it once: `chown -R "$(id -u):$(id -g)" "$HOME/.config/devtop"`.
 
 ### Multiple repositories
 
 ```console
 # one instance, several repos (run from a parent folder):
 docker run --rm -it \
-  -u "$(id -u):$(id -g)" \
+  -e TARGET_UID="$(id -u)" \
+  -e TARGET_GID="$(id -g)" \
   -v "$PWD:/workspace" \
-  -v "$HOME/.config/devtop:/etc/devtop" \
+  -v devtop-ai-config:/etc/devtop \
   -p 8000:8000 \
   ghcr.io/synlace/devtop:latest
 ```

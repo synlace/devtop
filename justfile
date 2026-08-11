@@ -85,6 +85,8 @@ devtop *args:
               -v "$PROJECT_DIR:/workspace" \
               -v devtop-ai-config:/etc/devtop \
               -p 8000:8000 \
+              -e TARGET_UID="$(id -u)" \
+              -e TARGET_GID="$(id -g)" \
               -e AI_API_KEY="${AI_API_KEY:-}" \
               devtop:latest
             ;;
@@ -93,6 +95,8 @@ devtop *args:
               -v "$PROJECT_DIR:/workspace" \
               -v devtop-ai-config:/etc/devtop \
               -p 8000:8000 \
+              -e TARGET_UID="$(id -u)" \
+              -e TARGET_GID="$(id -g)" \
               -e AI_API_KEY="${AI_API_KEY:-}" \
               "$IMAGE"
             ;;

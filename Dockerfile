@@ -26,7 +26,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o devtop-bin .
 
 # Stage 3: runtime — Go binary + React dist + Node for the CopilotKit runtime
 FROM alpine:latest
-RUN apk add --no-cache nodejs npm git ca-certificates
+RUN apk add --no-cache su-exec nodejs npm git ca-certificates
 
 WORKDIR /app
 
