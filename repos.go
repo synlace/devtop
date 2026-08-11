@@ -562,18 +562,29 @@ func handleAPIRepoInit(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(repo.Status())
 }
 
+// browseSeed returns the default folder-browser root. The workspace root (the
+// directory that holds .devtop) is where the user's repos live — in a
+// container that is the mounted volume, not the empty OS home. Fall back to
+// the home directory, then the filesystem root.
+func browseSeed() string {
+	if ws := filepath.Dir(DEVTOP_DIR); ws != "" {
+		if fi, err := os.Stat(ws); err == nil && fi.IsDir() {
+			return ws
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return home
+	}
+	return string(filepath.Separator)
+}
+
 // handleAPIFSList lists a directory for the Add-repo folder browser. The
 // server owns the filesystem; the browser only renders what it is told.
 // Hidden entries are skipped unless the path itself is hidden.
 func handleAPIFSList(w http.ResponseWriter, r *http.Request) {
 	dir := r.URL.Query().Get("path")
 	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			dir = home
-		} else {
-			dir = string(filepath.Separator)
-		}
+		dir = browseSeed()
 	}
 	abs, err := filepath.Abs(dir)
 	if err != nil {

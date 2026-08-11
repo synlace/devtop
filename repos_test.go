@@ -528,3 +528,47 @@ func TestPipeline_RepoScopedConfig(t *testing.T) {
 		t.Fatal("pipeline items leaked across repos")
 	}
 }
+
+func TestHandler_FSList_DefaultSeed(t *testing.T) {
+	oldDir := DEVTOP_DIR
+	defer func() { DEVTOP_DIR = oldDir }()
+
+	ws := t.TempDir()
+	DEVTOP_DIR = filepath.Join(ws, ".devtop")
+	seed := filepath.Join(ws, "seed-repo")
+	if err := os.MkdirAll(seed, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execGit(seed, "init", "-q"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/fs/list", nil)
+	rr := httptest.NewRecorder()
+	handleAPIFSList(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Path    string `json:"path"`
+		Entries []struct {
+			Name   string `json:"name"`
+			HasGit bool   `json:"has_git"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Path != ws {
+		t.Fatalf("seed path = %q, want %q", resp.Path, ws)
+	}
+	found := false
+	for _, e := range resp.Entries {
+		if e.Name == "seed-repo" && e.HasGit {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("seed listing missing git dir: %s", rr.Body.String())
+	}
+}
