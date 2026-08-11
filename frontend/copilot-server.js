@@ -132,7 +132,7 @@ async function buildRuntimeFor(agent, name) {
         prompt: agent.prompt || undefined,
       }),
     },
-    runner: new PersistentAgentRunner({ threadsDir }),
+    runner: new PersistentAgentRunner({ threadsDir, context: currentRepoName }),
   });
   return runtime;
 }

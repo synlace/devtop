@@ -291,8 +291,21 @@ func listThreadsP(p RepoPaths, context string) ([]map[string]interface{}, error)
 			return nil
 		}
 		ctx, _ := data["context"].(string)
-		if context != "" && ctx != context {
+		// Threads are repo-global. Legacy threads carried a page-scoped
+		// context (`tetris:docs/index`, `docs/index` in single-repo mode);
+		// scope them to the repo so navigation never orphans them.
+		if !threadInScope(ctx, context) {
 			return nil
+		}
+		// One-way migration: rewrite the legacy context to the canonical repo
+		// key so exact match holds on every later read. Idempotent, best-effort.
+		if ctx != context {
+			data["context"] = context
+			if norm, merr := json.Marshal(data); merr == nil {
+				if perr := os.WriteFile(path, norm, 0644); perr != nil {
+					// non-fatal: still surfaced under the scope
+				}
+			}
 		}
 		threads = append(threads, data)
 		return nil
@@ -303,6 +316,23 @@ func listThreadsP(p RepoPaths, context string) ([]map[string]interface{}, error)
 		return ti > tj
 	})
 	return threads, err
+}
+
+// threadInScope reports whether a thread's context belongs to the requested
+// repo context. Threads are repo-global. A scope-qualified value
+// ("tetris:docs/index") belongs to its prefix; a bare canonical key ("tetris"
+// in multi-repo, "" in single-repo) matches exactly; the unnamed workspace
+// (context == "") owns every other colon-less context — legacy single-repo
+// page keys like "docs/index" or "tickets". "global" is the CopilotKit
+// fallback marker and never matches.
+func threadInScope(ctx, context string) bool {
+	if i := strings.Index(ctx, ":"); i >= 0 {
+		return ctx[:i] == context
+	}
+	if ctx == context {
+		return true
+	}
+	return context == "" && ctx != "global"
 }
 
 func getThreadP(p RepoPaths, id string) (map[string]interface{}, error) {

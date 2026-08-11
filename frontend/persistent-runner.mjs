@@ -43,6 +43,7 @@ export class PersistentAgentRunner extends InMemoryAgentRunner {
   constructor(options = {}) {
     super(options);
     this.threadsDir = options.threadsDir;
+    this.context = options.context ?? "";
     this.threadCache = new Map();
   }
 
@@ -137,7 +138,7 @@ export class PersistentAgentRunner extends InMemoryAgentRunner {
       const merged = mergeMessages(existing?.__messages, messages);
       const payload = {
         id: existing?.id ?? threadId,
-        context: existing?.context ?? "global",
+        context: existing?.context ?? this.context ?? "global",
         title: existing?.title ?? "New conversation",
         created_at: existing?.created_at ?? now,
         updated_at: now,

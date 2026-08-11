@@ -617,12 +617,14 @@ function App() {
   }, [activePage, isHomePage, activeKindDef, activeKindLabel])
 
   // Generic context key: "<kind>" for a kind's overview, "<kind>/<id>" for an
-  // artifact. Threads and viewstate are keyed by this; multi-repo mode
-  // prefixes the repo so contexts never collide across repositories.
+  // Threads and viewstate are scoped per repo, never per page: navigating
+  // between docs/kinds must not switch the chat. Multi-repo mode keys by the
+  // repo name so contexts do not collide; single-repo (no /api/repos) uses
+  // the empty context.
   const contextKey = useMemo(() => {
-    const base = activePage.id ? activePage.kind + '/' + activePage.id : activePage.kind
-    return isMultiRepo && activeRepo ? activeRepo + ':' + base : base
-  }, [activePage, isMultiRepo, activeRepo])
+    if (!isMultiRepo) return ''
+    return activeRepo || ''
+  }, [isMultiRepo, activeRepo])
 
   const breadcrumbItems = useMemo(() => {
     if (activePage.kind === 'repos') {
@@ -995,12 +997,12 @@ function App() {
   }, [])
 
   const createNewThread = useCallback(async (context: string) => {
-    console.log('[thread] createNewThread', { context, contextLabel })
+    console.log('[thread] createNewThread', { context })
     try {
       const r = await fetch(api('/api/threads'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ context, title: contextLabel + ' discussion' }),
+        body: JSON.stringify({ context, title: (context || 'Workspace') + ' discussion' }),
       })
       if (r.ok) {
         const data = await r.json()
@@ -1012,7 +1014,7 @@ function App() {
     } catch (e) {
       console.error('Failed to create thread:', e)
     }
-  }, [contextLabel, fetchThreads])
+  }, [fetchThreads])
 
   const deleteThread = useCallback(async (threadId: string) => {
     console.log('[thread] delete', { threadId, wasActive: threadId === activeThreadId })
@@ -1195,7 +1197,7 @@ function App() {
       const r = await fetch(api('/api/threads'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ context, title: context + ' discussion' }),
+        body: JSON.stringify({ context, title: (context || 'Workspace') + ' discussion' }),
       })
       if (r.ok) {
         const data = await r.json()
