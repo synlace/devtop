@@ -236,6 +236,12 @@ func handleAPIThreads(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAPICreateThread(w http.ResponseWriter, r *http.Request) {
+	// A zero-repo instance has no thread store: the chat is gated until a
+	// repo is added, so refuse before writing anything to the workspace.
+	if zeroRepoInstance() {
+		writeJSONError(w, http.StatusConflict, "no repo selected")
+		return
+	}
 	repo, ok := repoFromRequest(w, r)
 	if !ok {
 		return

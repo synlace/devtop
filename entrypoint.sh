@@ -13,7 +13,10 @@ if [ -d /workspace ]; then
 fi
 DEVTOP_DIR="${DEVTOP_DIR:-/app/.devtop}"
 export DEVTOP_DIR
-mkdir -p "$DEVTOP_DIR/docs" "$DEVTOP_DIR/tickets" "$DEVTOP_DIR/threads" "$DEVTOP_DIR/data"
+# The workspace must not be touched at boot: a fresh folder-of-repos mount
+# writes nothing until a repo is added and initialized. The Go seed creates
+# the classic-mode dirs, and every write path MkdirAlls its own directory, so
+# nothing here pre-creates them.
 
 # Load the persisted AI config from the key volume. It is a single .env-format
 # file (AI_API_KEY / AI_BASE_URL / AI_MODEL) written by the runtime on save.

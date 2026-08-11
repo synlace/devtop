@@ -1133,6 +1133,7 @@ function App() {
 
   // Load threads when context changes
   const autoCreateThread = useCallback(async (context: string) => {
+    if (repos.length === 0) return // no repo: nothing to attach a thread to
     console.log('[thread] autoCreate', { context, reason: 'no saved state found' })
     try {
       const r = await fetch(api('/api/threads'), {
@@ -1149,7 +1150,7 @@ function App() {
     } catch (e) {
       console.error('Failed to auto-create thread:', e)
     }
-  }, [fetchThreads])
+  }, [fetchThreads, repos.length])
 
 useEffect(() => {
     console.log('[effect] contextSwitch', { contextKey, viewStateLoaded, isNavigating: prevContextKey.current !== '' && prevContextKey.current !== contextKey, prev: prevContextKey.current })

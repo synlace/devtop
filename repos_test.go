@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 )
 
@@ -693,6 +694,15 @@ func TestZeroRepoInstanceWritesNothingToWorkspace(t *testing.T) {
 		t.Fatalf("viewstate put status %d: %s", rr.Code, rr.Body.String())
 	}
 
+	// POST /api/threads is refused: the frontend auto-creates one when no
+	// viewstate exists, and that must not write a thread store either.
+	req = httptest.NewRequest("POST", "/api/threads", bytes.NewReader([]byte(`{"context":"global","title":"test"}`)))
+	rr = httptest.NewRecorder()
+	handleAPICreateThread(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("thread create status %d, want 409: %s", rr.Code, rr.Body.String())
+	}
+
 	// Nothing may exist under the workspace after the boot path.
 	if _, err := os.Stat(DEVTOP_DIR); !os.IsNotExist(err) {
 		t.Fatalf("zero-repo boot created %s", DEVTOP_DIR)
@@ -718,5 +728,19 @@ func TestZeroRepoInstanceWritesNothingToWorkspace(t *testing.T) {
 	}
 	if list == nil || len(list) != 0 {
 		t.Fatalf("expected empty repo list, got %+v", list)
+	}
+}
+
+// TestEntrypointDoesNotSeedWorkspace guards the Docker entrypoint, which the
+// e2e and unit suites never execute directly: a boot-time mkdir there would
+// recreate the workspace .devtop no matter what the Go and Node layers do.
+func TestEntrypointDoesNotSeedWorkspace(t *testing.T) {
+	data, err := os.ReadFile("entrypoint.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`(?m)mkdir\b[^\n]*\b(DEVTOP_DIR|docs|tickets|threads|data)\b`)
+	if m := re.Find(data); m != nil {
+		t.Fatalf("entrypoint.sh still creates a workspace dir at boot: %s", m)
 	}
 }
