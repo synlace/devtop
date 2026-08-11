@@ -82,9 +82,30 @@ let aiRemembered = !aiRememberDisabled && isWritableMount(path.dirname(aiEnvFile
 let aiKey = process.env.AI_API_KEY || "";
 
 let currentRuntime = null;
-let currentMw = null;
 
-async function buildRuntime() {
+// Per-repo CopilotKit runtimes. The chat panel is always the active repo's
+// default agent (.devtop/agents/<slug>.mdx, `agent_runtime.default` in
+// config.yml): each runtime is built lazily from that agent's descriptor
+// (system prompt + model override) on the first chat request for the repo,
+// then cached. applyAiConfig clears the cache when the key/provider changes.
+const repoRuntimes = new Map();
+
+// agentForRepo fetches the active repo's default agent descriptor from the Go
+// server (/api/agent). A 409 (agent not deployed) or any error returns null:
+// the chat must not run with built-in defaults.
+async function agentForRepo(name) {
+  try {
+    const r = await fetch(`${goURL}/api/agent`, {
+      headers: { "X-Devtop-Repo": name || "" },
+    });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch {
+    return null;
+  }
+}
+
+async function buildRuntimeFor(agent) {
   const provider = createOpenAI({
     apiKey: aiKey,
     baseURL: baseURL,
@@ -93,14 +114,29 @@ async function buildRuntime() {
   const runtime = new CopilotRuntime({
     agents: {
       default: new BuiltInAgent({
-        model: provider.chat(model),
+        model: provider.chat(agent.model || model),
         tools: tools,
         maxSteps: 10,
+        prompt: agent.prompt || undefined,
       }),
     },
     runner: new PersistentAgentRunner({ threadsDir: THREADS_DIR }),
   });
   return runtime;
+}
+
+async function agentMiddlewareForRepo(name) {
+  if (repoRuntimes.has(name)) return repoRuntimes.get(name);
+  const agent = await agentForRepo(name);
+  if (!agent) return null;
+  const runtime = await buildRuntimeFor(agent);
+  const mw = createCopilotExpressHandler({
+    runtime,
+    basePath: "/api/copilotkit",
+    mode: "single-route",
+  });
+  repoRuntimes.set(name, mw);
+  return mw;
 }
 
 function isConfigured() {
@@ -126,17 +162,10 @@ async function applyAiConfig(config) {
     }
   } catch {}
 
-  if (isConfigured()) {
-    currentRuntime = await buildRuntime();
-    currentMw = createCopilotExpressHandler({
-      runtime: currentRuntime,
-      basePath: "/api/copilotkit",
-      mode: "single-route",
-    });
-  } else {
-    currentRuntime = null;
-    currentMw = null;
-  }
+  currentRuntime = null;
+  // The key/baseURL/model changed: per-repo runtimes are rebuilt lazily on
+  // the next chat request.
+  repoRuntimes.clear();
 }
 
 // Persist the current key + provider config into the volume's .env file
@@ -395,15 +424,27 @@ const tools = [
     }
   })
 ];
-// The runtime is created dynamically from the current key (see applyAiKey).
-// Requests reach it through a swap-in middleware so a key change can replace
-// the handler without restarting the process.
+// Runtimes are created per repo from the agent descriptor (see
+// agentMiddlewareForRepo). Requests are routed by the active repo captured
+// above; a key-less instance keeps the 502, and a repo without its default
+// agent deployed gets a 409 instead of a built-in fallback.
 app.use((req, res, next) => {
-  if (currentMw) return currentMw(req, res, next);
-  // Plain-text 502 (not a JSON body): the CopilotKit client treats an
-  // unreachable runtime like the Go proxy's "runtime down" case and shows a
-  // connection error instead of crashing on a parsed-but-empty response.
-  return res.status(502).send("AI not configured");
+  if (!isConfigured()) {
+    // Plain-text 502 (not a JSON body): the CopilotKit client treats an
+    // unreachable runtime like the Go proxy's "runtime down" case and shows a
+    // connection error instead of crashing on a parsed-but-empty response.
+    return res.status(502).send("AI not configured");
+  }
+  agentMiddlewareForRepo(currentRepoName)
+    .then((mw) => {
+      if (!mw) {
+        return res
+          .status(409)
+          .send("No agent configured: initialize the repo to scaffold .devtop/agents");
+      }
+      return mw(req, res, next);
+    })
+    .catch(() => res.status(502).send("AI runtime unavailable"));
 });
 
 // Load the persisted .env config from the volume (if any) and build the

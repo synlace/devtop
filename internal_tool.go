@@ -47,10 +47,22 @@ func sandboxEnabled() bool {
 var sandboxWarned atomic.Bool
 
 // dispatchRepoTool runs a tool scoped to a repo, sandboxed when possible.
-// If the sandbox is unavailable (old kernel, non-Linux, test binary), it
-// falls back to in-process dispatch, which still enforces the guardPath
-// containment checks.
+// The chat is always the repo's default agent: tool calls are authorized
+// against that agent's allowlist and permission scopes BEFORE dispatch, with
+// no fallback — a repo without its default agent deployed is refused. If the
+// sandbox is unavailable (old kernel, non-Linux, test binary), it falls back
+// to in-process dispatch, which still enforces the guardPath containment
+// checks.
 func dispatchRepoTool(repo *Repo, name string, args map[string]interface{}) string {
+	rt := activeRuntimeFor(repo)
+	if repo != nil && !zeroRepoInstance() && rt == nil {
+		return fmt.Sprintf("Error: no agent configured: initialize the repo to scaffold .devtop/agents")
+	}
+	if rt != nil {
+		if msg := rt.authorizeTool(name, args); msg != "" {
+			return msg
+		}
+	}
 	if sandboxEnabled() {
 		if out, err := runToolSandboxed(repo, name, args); err == nil {
 			return out

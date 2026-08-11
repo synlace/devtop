@@ -504,6 +504,15 @@ func handleAPIModels(w http.ResponseWriter, r *http.Request) {
 
 func handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := getAPIConfig()
+	// The chat is always the active repo's default agent: expose its prompt
+	// (or an explicit empty, never a fallback) when a repo is selected.
+	if repo, ok := repoFromRequest(w, r); ok {
+		if rt := activeRuntimeFor(repo); rt != nil {
+			cfg.AgentPrompt = rt.prompt
+		} else {
+			cfg.AgentPrompt = ""
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(cfg)
 }

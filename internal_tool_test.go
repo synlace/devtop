@@ -122,6 +122,113 @@ func TestHandleInternalTool(t *testing.T) {
 	}
 }
 
+// TestDispatchRepoTool_AuthorizesAgainstDefaultAgent: the chat is always the
+// repo's default agent, so editing .devtop/agents/docs.mdx actually changes
+// what the chat can do.
+func TestDispatchRepoTool_AuthorizesAgainstDefaultAgent(t *testing.T) {
+	t.Setenv("DEVTOP_TOOL_SANDBOX", "0")
+	cleanRegistry(t)
+	root := newRepoTemp(t, "agent-tools", true)
+	if _, err := registry.Add(root); err != nil {
+		t.Fatal(err)
+	}
+	repo := registry.List()[0]
+
+	// The scaffolded docs agent allows tickets: creation works.
+	out := dispatchRepoTool(repo, "create_ticket", map[string]interface{}{
+		"title": "t", "description": "d", "priority": "medium",
+	})
+	if strings.Contains(out, "not allowed") || strings.Contains(out, "not configured") {
+		t.Fatalf("create_ticket should be allowed for the docs agent, got %q", out)
+	}
+
+	// Tighten the agent: drop the tickets group from its tools.
+	agentsDir := filepath.Join(repo.paths.DevTop, "agents")
+	docsPath := filepath.Join(agentsDir, "docs.mdx")
+	if err := os.WriteFile(docsPath, []byte(`---
+title: "Docs"
+tools: [base, docs]
+permissions:
+  read: ["docs/**"]
+  write: ["docs/**"]
+---
+You are the docs agent.`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	out = dispatchRepoTool(repo, "create_ticket", map[string]interface{}{
+		"title": "t", "description": "d", "priority": "medium",
+	})
+	if !strings.Contains(out, "not allowed") {
+		t.Fatalf("create_ticket should be denied after tightening, got %q", out)
+	}
+	out = dispatchRepoTool(repo, "write_doc", map[string]interface{}{"path": "new.mdx", "content": "x"})
+	if strings.Contains(out, "not allowed") {
+		t.Fatalf("write_doc should remain allowed, got %q", out)
+	}
+}
+
+// TestDispatchRepoTool_RequiresDeployedDefaultAgent refuses tool calls when
+// the repo has no scaffolded default agent — no fallback, no unrestricted set.
+func TestDispatchRepoTool_RequiresDeployedDefaultAgent(t *testing.T) {
+	t.Setenv("DEVTOP_TOOL_SANDBOX", "0")
+	cleanRegistry(t)
+	root := newRepoTemp(t, "noagent-tool", false)
+	if _, err := registry.Add(root); err != nil {
+		t.Fatal(err)
+	}
+	repo := registry.List()[0]
+
+	out := dispatchRepoTool(repo, "list_docs", map[string]interface{}{})
+	if !strings.Contains(out, "no agent configured") {
+		t.Fatalf("expected refusal without a deployed agent, got %q", out)
+	}
+}
+
+// TestHandleAPIAgent serves the repo's default agent descriptor to the
+// CopilotKit chat runtime.
+func TestHandleAPIAgent(t *testing.T) {
+	cleanRegistry(t)
+	root := newRepoTemp(t, "agentdesc", true)
+	if _, err := registry.Add(root); err != nil {
+		t.Fatal(err)
+	}
+	repo := registry.List()[0]
+
+	req := httptest.NewRequest("GET", "/api/agent", nil)
+	req.Header.Set("X-Devtop-Repo", repo.Name)
+	rr := httptest.NewRecorder()
+	handleAPIAgent(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
+	}
+	var d map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d["slug"] != "docs" {
+		t.Fatalf("slug = %v, want docs", d["slug"])
+	}
+	prompt, _ := d["prompt"].(string)
+	if !strings.Contains(prompt, "documentation agent") {
+		t.Fatalf("prompt missing the docs agent body: %q", prompt)
+	}
+
+	// A repo without the default agent deployed is a 409, not a fallback.
+	missing := newRepoTemp(t, "noagents", false)
+	if _, err := registry.Add(missing); err != nil {
+		t.Fatal(err)
+	}
+	name := registry.List()[len(registry.List())-1].Name
+	req = httptest.NewRequest("GET", "/api/agent", nil)
+	req.Header.Set("X-Devtop-Repo", name)
+	rr = httptest.NewRecorder()
+	handleAPIAgent(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("missing-agent status %d, want 409", rr.Code)
+	}
+}
+
 func TestHandleAPIRepoDetail(t *testing.T) {
 	cleanRegistry(t)
 	root := newRepoTemp(t, "rdetail", true)

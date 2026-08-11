@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -321,9 +323,11 @@ func resolveActivePrompt() string {
 var writeToolPathers = map[string]func(map[string]interface{}) (string, bool){
 	"write_doc":      docToolPath,
 	"write_artifact": artifactToolPath,
-	"create_ticket":  ticketToolPath,
-	"update_ticket":  ticketToolPath,
-	"add_comment":    ticketToolPath,
+	// create_ticket has no id of its own — the handler generates one — so the
+	// scope check treats it as a fresh ticket under tickets/.
+	"create_ticket": func(_ map[string]interface{}) (string, bool) { return "tickets/<new>.md", true },
+	"update_ticket": ticketToolPath,
+	"add_comment":   ticketToolPath,
 }
 
 var readToolPathers = map[string]func(map[string]interface{}) (string, bool){
@@ -429,6 +433,40 @@ func matchGlobSegs(p, n []string) bool {
 		}
 	}
 	return len(n) == 0
+}
+
+// handleAPIAgent serves the active repo's default agent as a descriptor the
+// CopilotKit chat runtime consumes: slug, title, model override, and the
+// composed system prompt. The chat panel is always this agent (the doc
+// writer). No fallback: a repo without its default agent deployed gets a 409
+// and the chat must not run with built-in defaults.
+func handleAPIAgent(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
+	cfg, err := repo.Config()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	slug := strings.TrimSpace(cfg.AgentRuntime.Default)
+	if slug == "" {
+		writeJSONError(w, http.StatusConflict, "no default agent configured in config.yml")
+		return
+	}
+	rt, err := buildAgentRuntimeFor(repo, slug)
+	if err != nil {
+		writeJSONError(w, http.StatusConflict, err.Error()+"; initialize the repo to scaffold .devtop/agents")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"slug":  rt.Slug,
+		"title": rt.Def.Title,
+		"model": rt.Def.Model,
+		"prompt": rt.prompt,
+	})
 }
 
 // dispatchToolResolved runs a tool under an agent runtime's allowlist and

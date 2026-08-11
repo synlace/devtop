@@ -139,7 +139,11 @@ only files that do not exist.
 - CopilotKit runtime (`frontend/copilot-server.js`): the AI chat, agent tools
   (docs, tickets, and workspace file read/list), thread persistence, and the
   `ai-status` / `ai-key` endpoints that power the UI key prompt. The key lives
-  in this process; the volume is optional.
+  in this process; the volume is optional. The chat is **always the active
+  repo's default agent** (`.devtop/agents`): the agent's body is the system
+  prompt, its `model` overrides the default, and every tool call is
+  authorized server-side against that agent's allowlist and permission scopes
+  — no fallback, no unrestricted set.
 - The old server-rendered (Alpine) frontend and Go templates were removed — the
   React app is the only frontend.
 
