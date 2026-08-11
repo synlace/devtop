@@ -1,0 +1,1156 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>devtop — repo scope mock</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            bgDark: '#070a13',
+            surfaceDark: '#0c101f',
+            borderDark: '#1e293b',
+            accentBlue: '#3b82f6',
+            accentPurple: '#8b5cf6',
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'ui-monospace', 'Fira Code', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    * { scrollbar-width: thin; scrollbar-color: #1e293b transparent; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 9999px; }
+    .stage-grid { display: grid; grid-template-columns: minmax(0, 1fr) 20px minmax(0, 1fr) 20px minmax(0, 1.3fr); align-items: stretch; }
+    @keyframes spin-fast { to { transform: rotate(360deg); } }
+    .spin { animation: spin-fast 0.7s linear infinite; }
+
+    /* rc-tree — prod dark theme (no default stylesheet loaded; styled here) */
+    .rc-tree { font-size: 12px; color: #cbd5e1; }
+    .rc-tree, .rc-tree * { box-sizing: border-box; }
+    .rc-tree-list, .rc-tree-list-scrollbar { list-style: none; margin: 0; padding: 0; }
+    .rc-tree-treenode {
+      display: flex; align-items: center; padding: 1px 4px; border-radius: 8px;
+      transition: background-color 0.12s ease;
+    }
+    .rc-tree-treenode:hover { background: rgba(30, 41, 59, 0.35); }
+    .rc-tree-treenode-selected { background: rgba(59, 130, 246, 0.12); }
+    .rc-tree-indent { display: inline-flex; flex-direction: column; }
+    .rc-tree-indent-unit { width: 18px; flex-shrink: 0; }
+    .rc-tree-switcher {
+      width: 22px; height: 24px; flex-shrink: 0; display: inline-flex; align-items: center;
+      justify-content: center; color: #64748b; cursor: pointer;
+    }
+    .rc-tree-switcher-leaf { pointer-events: none; color: transparent; }
+    .rc-tree-switcher-noop { pointer-events: none; }
+    .rc-tree-icon__loading { display: none; }
+    .rc-tree-switcher-loading-icon {
+      width: 12px; height: 12px; border: 1.5px solid #334155; border-top-color: #3b82f6;
+      border-radius: 9999px; animation: spin-fast 0.7s linear infinite; flex-shrink: 0;
+    }
+    .rc-tree-node-content-wrapper {
+      display: inline-flex; flex: 1; min-width: 0; align-items: center; gap: 6px;
+      border: 1px solid transparent; border-radius: 6px; padding: 3px 6px;
+      color: #cbd5e1; cursor: pointer;
+    }
+    .rc-tree-node-content-wrapper:hover { background: rgba(30, 41, 59, 0.4); }
+    .rc-tree-treenode-selected > .rc-tree-node-content-wrapper { color: #93c5fd; }
+    .rc-tree-drop-indicator { display: none; }
+    .fade-in { animation: fadeIn 0.18s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    .pop { animation: docMenuPop 0.14s cubic-bezier(0.2, 0.8, 0.3, 1); }
+    @keyframes docMenuPop { from { opacity: 0; transform: scale(0.97) translateY(-3px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+  </style>
+</head>
+<body class="bg-bgDark text-slate-300 antialiased h-screen overflow-hidden selection:bg-accentBlue/30 selection:text-white">
+
+<div class="flex h-screen overflow-hidden">
+
+  <!-- ===== LEFT SIDEBAR (prod replica, config-driven per repo) ===== -->
+  <aside class="w-64 bg-[#05070d]/90 border-r border-borderDark/60 flex-shrink-0 flex flex-col z-10">
+    <div class="h-[57px] px-4 border-b border-borderDark/40 flex items-center gap-2.5">
+      <div class="h-7 w-7 rounded-lg bg-gradient-to-tr from-accentBlue to-accentPurple flex items-center justify-center font-bold text-white text-sm">d</div>
+      <div>
+        <div class="flex items-center gap-1.5">
+          <span class="text-sm font-semibold text-slate-100 tracking-tight">devtop</span>
+          <span class="text-[10px] text-slate-500 font-mono bg-borderDark/40 px-1 py-px rounded border border-borderDark/30">v0.1.0</span>
+        </div>
+        <div class="text-[10px] text-slate-500 leading-none">local environment</div>
+      </div>
+    </div>
+    <nav id="sidebar-nav" class="flex-1 overflow-y-auto p-3.5 space-y-5"></nav>
+    <div class="p-4 border-t border-borderDark/40 bg-[#03050a]/40">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></div>
+          <span class="text-[11px] text-slate-400 font-medium">Local Server</span>
+          <span id="server-repos" class="text-[10px] font-mono text-slate-600 bg-borderDark/30 px-1.5 py-0.5 rounded border border-borderDark/20"></span>
+        </div>
+        <code class="text-[10px] text-slate-500 font-mono bg-borderDark/30 px-1.5 py-0.5 rounded border border-borderDark/20">:8000</code>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ===== MAIN CONTENT ===== -->
+  <main class="flex-1 overflow-hidden bg-bgDark border-r border-borderDark/60 flex flex-col relative">
+
+    <header class="h-[57px] flex-shrink-0 border-b border-borderDark/40 px-8 flex items-center justify-between bg-bgDark/80 sticky top-0 z-10">
+      <div class="flex items-center gap-3 min-w-0">
+        <!-- repo scope switcher -->
+        <div id="repo-switcher" class="relative">
+          <button id="repo-switcher-btn" class="flex items-center gap-2.5 h-9 pl-3 pr-3.5 rounded-xl border border-borderDark/60 bg-surfaceDark/60 hover:border-borderDark hover:bg-surfaceDark transition-colors min-w-0">
+            <svg class="w-4 h-4 text-accentBlue flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+            <span id="switcher-name" class="text-xs font-semibold text-slate-100 truncate max-w-[180px]"></span>
+            <span id="switcher-branch" class="hidden sm:inline-flex items-center gap-1 font-mono text-[10px] text-slate-400 bg-borderDark/40 px-1.5 py-0.5 rounded-md border border-borderDark/40"></span>
+            <span id="switcher-dot" class="w-1.5 h-1.5 rounded-full"></span>
+            <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+          </button>
+
+          <!-- dropdown -->
+          <div id="repo-dropdown" class="hidden absolute left-0 top-[calc(100%+6px)] w-[380px] rounded-xl border border-borderDark/60 bg-[#0a0e1c]/95 backdrop-blur shadow-2xl pop z-50 overflow-hidden">
+            <div class="px-4 pt-3 pb-2 text-[10px] font-semibold text-slate-500 uppercase tracking-widest flex items-center justify-between">
+              <span>Repositories on this instance</span>
+              <span class="font-mono text-slate-600 normal-case">DEVTOP_REPOS</span>
+            </div>
+            <div id="repo-list" class="max-h-[320px] overflow-y-auto px-2 pb-1 space-y-0.5"></div>
+            <div class="border-t border-borderDark/40">
+              <button id="manage-repos-btn" class="w-full flex items-center gap-2 px-4 py-2.5 text-xs font-medium text-accentBlue hover:bg-accentBlue/5 transition-colors">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+                Manage repos…
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 text-xs font-medium text-slate-400">
+          <span id="crumb-kind" class="text-slate-200 font-semibold"></span>
+          <span id="crumb-rest" class="hidden items-center gap-2"></span>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <div class="h-7 w-7 rounded-lg border border-amber-500/40 text-amber-400 flex items-center justify-center" title="AI Settings">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 21H7v-4l.243-.243A6 6 0 1119 9z"/></svg>
+        </div>
+        <div class="h-7 w-7 rounded-lg border border-borderDark/50 flex items-center justify-center text-slate-400" title="Toggle Fullscreen">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+        </div>
+      </div>
+    </header>
+
+    <!-- not-a-git-repo banner -->
+    <div id="nogit-banner" class="hidden flex-shrink-0 px-8 py-2.5 bg-amber-500/10 border-b border-amber-500/25 flex items-center justify-between">
+      <p class="text-xs text-amber-300 flex items-center gap-2">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+        Agent commits require a git repo in <span id="nogit-path" class="font-mono text-amber-200"></span>
+      </p>
+      <div class="flex items-center gap-2">
+        <button id="rescan-btn" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-500/20 text-amber-200 border border-amber-500/40 hover:bg-amber-500/30 transition-colors">Re-scan</button>
+      </div>
+    </div>
+
+    <div id="host" class="flex-1 overflow-y-auto fade-in"></div>
+  </main>
+
+  <!-- ===== COPILOT CHAT PANEL (prod replica, repo-scoped) ===== -->
+  <aside class="w-96 bg-[#090c15] border-l border-borderDark/60 flex-shrink-0 flex flex-col z-20 shadow-2xl relative">
+    <div class="h-[57px] px-4 border-b border-borderDark/40 flex items-center justify-between bg-surfaceDark/20 flex-shrink-0">
+      <div class="flex items-center gap-2">
+        <div class="h-7 w-7 rounded-lg border border-accentBlue/40 bg-accentBlue/20 flex items-center justify-center text-accentBlue">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        </div>
+        <span class="text-xs font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider font-mono">
+          <svg class="w-3.5 h-3.5 text-accentBlue animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>
+          Threads
+        </span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span id="chat-context" class="text-[9px] text-slate-500 bg-borderDark/40 px-2 py-0.5 rounded border border-borderDark/20 truncate max-w-[150px] font-mono"></span>
+        <div class="h-7 w-7 rounded-lg border border-borderDark/50 flex items-center justify-center text-slate-400"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 21H7v-4l.243-.243A6 6 0 1119 9z"/></svg></div>
+        <div class="h-7 w-7 rounded-lg border border-borderDark/50 flex items-center justify-center text-slate-400"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V6a2 2 0 012-2h2M4 8v8m0 0v2a2 2 0 002 2h2m8-16h2a2 2 0 012 2v2m0 8v2a2 2 0 01-2 2h-2"/></svg></div>
+      </div>
+    </div>
+
+    <div class="flex-1 overflow-y-auto p-4 space-y-4">
+      <div class="flex flex-col gap-1 items-start">
+        <div class="flex items-center gap-1.5 text-[9px] text-slate-500"><span>Agent</span><span class="text-slate-600 font-mono">•</span><span class="font-mono">20:41</span></div>
+        <div class="max-w-[85%] rounded-2xl rounded-tl-sm bg-[#1a2332] border border-borderDark/40 px-3 py-2 text-[12px] text-slate-300 leading-relaxed">
+          I can read <span id="chat-repo-mono" class="font-mono text-[11px] bg-borderDark/60 px-1 py-0.5 rounded"></span> and manage its docs + tickets. Every write is committed to git.
+        </div>
+      </div>
+      <div class="flex flex-col gap-1 items-end">
+        <div class="flex items-center gap-1.5 text-[9px] text-slate-500"><span class="font-mono">20:42</span><span class="text-slate-600 font-mono">•</span><span>You</span></div>
+        <div class="max-w-[85%] rounded-2xl rounded-tr-sm bg-accentBlue px-3 py-2 text-[12px] text-white leading-relaxed">
+          Which docs qualify for derivation?
+        </div>
+      </div>
+      <div class="flex flex-col gap-1 items-start">
+        <div class="flex items-center gap-1.5 text-[9px] text-slate-500"><span>Agent</span><span class="text-slate-600 font-mono">•</span><span class="font-mono">20:42</span></div>
+        <div class="max-w-[85%] rounded-2xl rounded-tl-sm bg-[#1a2332] border border-borderDark/40 px-3 py-2 text-[12px] text-slate-300 leading-relaxed">
+          <p class="mb-1.5">In this repo, 2 of 5 docs are eligible. The authority is per-doc frontmatter:</p>
+          <div class="space-y-1">
+            <div class="flex items-center gap-2 text-[11px]"><span class="font-mono text-emerald-400 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px]">eligible</span><span class="font-mono text-blue-400">derive_prospects: {prds: eligible}</span></div>
+            <div class="flex items-center gap-2 text-[11px]"><span class="font-mono text-rose-400 rounded-full border border-rose-500/30 bg-rose-500/10 px-1.5 py-0.5 text-[9px]">excluded</span><span class="font-mono text-blue-400">derive_prospects: {prds: not-eligible}</span></div>
+          </div>
+          <p class="mt-1.5">Switch repos with the selector above — each repo keeps its own verdicts.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="p-3 border-t border-borderDark/40 bg-[#06080e]/40 flex-shrink-0">
+      <div class="bg-[#0c101f] border border-borderDark/40 rounded-xl px-4 py-2.5 flex items-center gap-2">
+        <div class="flex-1 text-[11px] text-slate-500">Ask the agent to update this page…</div>
+        <div class="h-6 w-6 rounded-lg bg-accentBlue flex items-center justify-center text-white">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<div id="add-repo-modal-root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="vendor/rc-tree.bundle.js"></script>
+
+<script>
+// ===== icon helper (lucide-style, prod replica) =====
+const S = (d, cls = 'w-4 h-4') => `<svg class="${cls}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="${d}"/></svg>`
+const IC = {
+  file: 'M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z',
+  home: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6',
+  chevDown: 'M19 9l-7 7-7-7',
+  chevRight: 'M9 5l7 7-7 7',
+  check: 'M5 13l4 4L19 7',
+  folder: 'M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z',
+  board: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2',
+  flow: 'M6 3v12a4 4 0 004 4h4M16 3v4a4 4 0 01-4 4H8a4 4 0 00-4 4M18 3a2 2 0 110 4 2 2 0 010-4z',
+  star: 'M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z',
+  sparkles: 'M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z',
+  external: 'M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3',
+  database: 'M12 2c4.42 0 8 2.24 8 5v10c0 2.76-3.58 5-8 5s-8-2.24-8-5V7c0-2.76 3.58-5 8-5zM4 7c0 2.76 3.58 5 8 5s8-2.24 8-5M4 12c0 2.76 3.58 5 8 5s8-2.24 8-5',
+  clock: 'M3 12a9 9 0 109-9 9.75 9.75 0 00-6.74 2.74L3 8M3 3v5h5',
+  git: 'M6 3v12a4 4 0 004 4h4M18 13a2 2 0 110-4 2 2 0 010 4zM6 3a2 2 0 110 4 2 2 0 010-4zM18 7a2 2 0 110-4 2 2 0 010 4z',
+}
+
+// ===== registry: the only instance-level state =====
+// status: ok | dirty | uninit | nogit
+const REGISTRY = [
+  {
+    id: 'devtop', name: 'synlace/devtop', path: '~/dev/synlace/devtop', branch: 'master', status: 'ok', lastView: 'pipeline', chatPath: '.devtop/docs/architecture/agent-engine.mdx',
+    docs: [
+      { slug: 'getting-started/index', title: 'Getting Started' },
+      { slug: 'getting-started/installation', title: 'Installation' },
+      { slug: 'getting-started/configuration', title: 'Configuration' },
+      { slug: 'architecture/agent-engine', title: 'Agent Engine' },
+      { slug: 'architecture/data-layer', title: 'Data Layer' },
+      { slug: 'guides/ste100-compliance', title: 'STE100 Compliance' },
+      { slug: 'reference/frontend-styles', title: 'Frontend Styles' },
+    ],
+    nav: [['docs', 'Docs', 'file'], ['tickets', 'Tickets', 'board'], ['prds', 'PRDs', 'file'], ['pipeline', 'Pipeline', 'flow']],
+    pipeline: [
+      {
+        doc_id: 'architecture/agent-engine', title: 'Agent Engine', slug: 'architecture/agent-engine', path: 'architecture/agent-engine.mdx', dir: 'architecture',
+        summary: 'A repo-owned, devtop-consumed agent runtime. Tools are allowed per repo config; every write is a git commit inside the repo.',
+        prospect: 'eligible', prospect_by: 'user', stale: false,
+        prd: { slug: 'architecture/agent-engine', status: 'approved', reqs: 14 },
+        tickets: [
+          { id: 'dk-001', title: 'Expose tool allowlist per edge', status: 'done' },
+          { id: 'dk-002', title: 'Scaffold .devtop/agents in init', status: 'done' },
+          { id: 'dk-003', title: 'Commit reader for blocked writes', status: 'in-progress' },
+          { id: 'dk-004', title: 'Fail-closed on malformed classify', status: 'in-progress' },
+          { id: 'dk-005', title: 'Per-edge permission mapper', status: 'open' },
+        ],
+      },
+      {
+        doc_id: 'architecture/data-layer', title: 'Data Layer', slug: 'architecture/data-layer', path: 'architecture/data-layer.mdx', dir: 'architecture',
+        summary: 'File-backed docs and tickets; threads and viewstate live beside DEVTOP_DIR, never inside the repo.',
+        prospect: 'eligible', prospect_by: 'model', stale: false,
+        prd: null,
+        tickets: [],
+      },
+      {
+        doc_id: 'getting-started/installation', title: 'Installation', slug: 'getting-started/installation', path: 'getting-started/installation.mdx', dir: 'getting-started',
+        summary: '', prospect: null, prospect_by: null, stale: false, prd: null, tickets: [],
+      },
+      {
+        doc_id: 'guides/ste100-compliance', title: 'STE100 Compliance', slug: 'guides/ste100-compliance', path: 'guides/ste100-compliance.mdx', dir: 'guides',
+        summary: '', prospect: 'not-eligible', prospect_by: 'user', stale: false, prd: null, tickets: [],
+      },
+      {
+        doc_id: 'reference/frontend-styles', title: 'Frontend Styles', slug: 'reference/frontend-styles', path: 'reference/frontend-styles.mdx', dir: 'reference',
+        summary: '', prospect: 'not-eligible', prospect_by: 'model', stale: false, prd: null, tickets: [],
+      },
+    ],
+  },
+  {
+    id: 'kafka', name: 'synlace/kafka-consumer', path: '~/dev/synlace/kafka-consumer', branch: 'feat/export-v2', status: 'dirty', dirty: 3, lastView: 'pipeline', chatPath: '.devtop/docs/consumer-api.mdx',
+    docs: [
+      { slug: 'consumer-api', title: 'Consumer API' },
+      { slug: 'connectors', title: 'Connectors' },
+      { slug: 'deployment', title: 'Deployment' },
+    ],
+    nav: [['docs', 'Docs', 'file'], ['tickets', 'Tickets', 'board'], ['pipeline', 'Pipeline', 'flow']],
+    pipeline: [
+      {
+        doc_id: 'consumer-api', title: 'Consumer API', slug: 'consumer-api', path: 'consumer-api.mdx', dir: '',
+        summary: 'gRPC surface for consuming topics with cursor management and exactly-once offsets.',
+        prospect: 'eligible', prospect_by: 'model', stale: false, prd: null, tickets: [],
+      },
+      {
+        doc_id: 'connectors', title: 'Connectors', slug: 'connectors', path: 'connectors.mdx', dir: '',
+        summary: '', prospect: null, prospect_by: null, stale: false, prd: null, tickets: [],
+      },
+    ],
+  },
+  {
+    id: 'discord', name: 'typescript-discord/bot', path: '~/work/typescript-discord', branch: '', status: 'uninit', lastView: 'docs', chatPath: '—',
+    docs: [], nav: [['docs', 'Docs', 'file']],
+    pipeline: [],
+  },
+  {
+    id: 'legacy', name: 'you/legacy-monolith', path: '~/old/legacy-monolith', branch: 'main', status: 'nogit', lastView: 'tickets', chatPath: '.devtop/docs/index.mdx',
+    docs: [
+      { slug: 'index', title: 'Home' },
+      { slug: 'migration-plan', title: 'Migration Plan' },
+    ],
+    nav: [['docs', 'Docs', 'file'], ['tickets', 'Tickets', 'board']],
+    pipeline: [],
+  },
+]
+
+const STATUS = {
+  ok:     { dot: 'bg-emerald-400',       chip: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300', label: 'ready' },
+  dirty:  { dot: 'bg-amber-400',         chip: 'border-amber-500/30 bg-amber-500/10 text-amber-300',        label: '3 uncommitted' },
+  uninit: { dot: 'bg-slate-500',         chip: 'border-slate-500/40 bg-slate-500/10 text-slate-400',         label: 'needs init' },
+  nogit:  { dot: 'bg-rose-400',          chip: 'border-rose-500/30 bg-rose-500/10 text-rose-300',            label: 'no git repo' },
+}
+
+let activeRepoId = 'devtop'
+let activeKind = 'pipeline'   // docs | tickets | prds | pipeline | repos
+let dropdownOpen = false
+
+const $ = (id) => document.getElementById(id)
+
+// ===== title-case + path helpers (prod replica) =====
+const titleCase = (s) => s.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+const crumbOf = (path) => path.replace(/\.mdx?$/, '').split('/')
+
+// ===== chips (prod replica) =====
+const chip = (cls, label) => `<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border capitalize flex-shrink-0 ${cls}">${label}</span>`
+
+const PRD_STYLES = {
+  draft: 'bg-blue-500/10 border-blue-500/20 text-blue-400',
+  reviewing: 'bg-amber-500/10 border-amber-500/20 text-amber-400',
+  approved: 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400',
+  archived: 'bg-purple-500/10 border-purple-500/20 text-purple-400',
+}
+const TKT_STYLES = {
+  open: 'bg-blue-500/10 border-blue-500/20 text-blue-400',
+  'in-progress': 'bg-amber-500/10 border-amber-500/20 text-amber-400',
+  done: 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400',
+}
+
+const prospectChip = (item) => {
+  if (item.busy) return `<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-medium border border-accentBlue/40 bg-accentBlue/10 text-accentBlue"><svg class="w-2.5 h-2.5 spin" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>assessing</span>`
+  if (!item.prospect) return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-medium border border-slate-600/40 text-slate-500 bg-slate-500/5">unassessed</span>`
+  const eligible = item.prospect === 'eligible'
+  const byUser = item.prospect_by === 'user'
+  const label = (eligible ? 'eligible' : 'not eligible') + (byUser ? ' · verified' : ' · suggested')
+  const cls = eligible
+    ? (byUser ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200' : 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300')
+    : (byUser ? 'border-rose-500/40 bg-rose-500/15 text-rose-200' : 'border-rose-500/25 bg-rose-500/10 text-rose-300')
+  return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-medium border ${cls}">
+    ${byUser ? S('M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z', 'w-2.5 h-2.5 flex-shrink-0') : '<span class="w-1 h-1 rounded-full bg-current"></span>'}
+    <span class="font-mono">${label}</span>
+  </span>`
+}
+
+const openLink = (label) => `<span class="inline-flex items-center justify-center w-5 h-5 rounded-md text-slate-500 hover:text-slate-200 hover:bg-borderDark/40 transition-colors flex-shrink-0" title="Open ${label} in a new tab">${S(IC.external, 'w-3 h-3')}</span>`
+
+const ACTION_BTN = 'px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed'
+const BTN_PRIMARY = `${ACTION_BTN} bg-accentBlue text-slate-100 hover:bg-accentBlue/80`
+const BTN_GHOST = `${ACTION_BTN} text-slate-300 border border-borderDark hover:bg-borderDark/20`
+
+// ===== pipeline view (prod replica) =====
+const SECTION_ORDER = ['eligible', 'unassessed', 'not-eligible']
+const SECTION_LABEL = { eligible: 'Eligible', unassessed: 'Unassessed', 'not-eligible': 'Not eligible' }
+const SECTION_DOT = { eligible: 'bg-emerald-400', unassessed: 'bg-slate-500', 'not-eligible': 'bg-rose-400' }
+const SECTION_TEXT = { eligible: 'text-emerald-300', unassessed: 'text-slate-400', 'not-eligible': 'text-rose-300' }
+const closed = new Set()
+const groupOf = (item) => item.prospect === 'eligible' ? 'eligible' : item.prospect === 'not-eligible' ? 'not-eligible' : 'unassessed'
+
+const statChip = (cls, dot, count, label) => `
+  <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium border ${cls}">
+    <span class="w-1.5 h-1.5 rounded-full ${dot}"></span>
+    <span class="font-mono">${count}</span> ${label}
+  </span>`
+
+function prospectActions(item) {
+  if (item.busy) return `<span class="inline-flex items-center gap-2 text-xs text-accentBlue"><svg class="w-3.5 h-3.5 spin" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>Classifying…</span>`
+  if (!item.prospect) return `<button onclick="suggest('${item.slug}')" class="${BTN_PRIMARY}">Suggest eligibility</button>`
+  if (item.prospect === 'eligible') {
+    if (item.prospect_by === 'user') return `<button onclick="override('${item.slug}')" class="${BTN_GHOST}">Override</button> <button onclick="exclude('${item.slug}')" class="${BTN_GHOST}">Exclude</button>`
+    return `<button onclick="confirm('${item.slug}')" class="${BTN_PRIMARY}">Confirm</button> <button onclick="exclude('${item.slug}')" class="${BTN_GHOST}">Exclude</button>`
+  }
+  return `<button onclick="override('${item.slug}')" class="${BTN_GHOST}">Override</button>`
+}
+
+function prdActions(item) {
+  if (item.prd && item.prd.status === 'approved') return `<button class="${BTN_GHOST}">Re-derive delta</button>`
+  if (item.prd) return `<button class="${BTN_GHOST}">Review PRD</button>`
+  if (item.prospect === 'not-eligible') return null
+  if (!item.prospect) return null
+  return `<button class="${BTN_PRIMARY}" ${item.busy ? 'disabled' : ''}>Derive PRD</button>`
+}
+
+function ticketActions(item) {
+  if (item.prd && item.prd.status === 'approved') return `<button class="${BTN_GHOST}">New ticket</button>`
+  if (item.prd) return `<button class="${BTN_GHOST}" disabled>Create tickets</button>`
+  return null
+}
+
+function groupBlocks(repo) {
+  const groups = []
+  for (const section of SECTION_ORDER) {
+    const items = repo.pipeline.filter(i => groupOf(i) === section)
+    if (!items.length) continue
+    for (const item of items) groups.push({ section, dir: item.dir, items: [item] })
+  }
+  return groups.map(g => ({ ...g, firstOfSection: g === groups.find(x => x.section === g.section) }))
+}
+
+function itemRow(item) {
+  const prd = item.prd
+  const crumbs = crumbOf(item.path)
+  const leaf = crumbs.pop() ?? item.title
+  return `
+  <div class="border-b border-borderDark/30 last:border-b-0 px-6 py-5 fade-in">
+    <div class="flex items-center gap-2.5 min-w-0">
+      <span class="flex items-center justify-center w-7 h-7 rounded-lg bg-borderDark/40 text-slate-300 flex-shrink-0">${S(IC.file, 'w-3.5 h-3.5')}</span>
+      <div class="min-w-0">
+        <div class="flex items-center gap-2 text-sm font-medium text-slate-100 truncate">
+          ${crumbs.map(c => `<span class="flex items-center gap-2 min-w-0"><span class="text-slate-500">${titleCase(c)}</span><span class="text-slate-600">›</span></span>`).join('')}
+          <span class="text-slate-100">${titleCase(leaf)}</span>
+        </div>
+        <p class="text-[10px] font-mono text-slate-600 truncate mt-0.5">.devtop/docs/${item.path}</p>
+      </div>
+    </div>
+
+    <div class="stage-grid gap-2 mt-4">
+      <div class="rounded-xl border border-borderDark/40 bg-surfaceDark/60 p-4 h-full flex flex-col">
+        <div class="flex items-center justify-between gap-2 mb-1.5">
+          <div class="text-[9px] uppercase tracking-widest font-semibold text-slate-500">Document</div>
+          <span class="flex items-center gap-1.5">${prospectChip(item)} ${openLink('doc')}</span>
+        </div>
+        ${item.summary
+          ? `<div class="text-[9px] font-semibold uppercase tracking-widest text-accentBlue">tl;dr</div><p class="text-xs text-slate-300 leading-6 mt-1">${item.summary}</p>`
+          : `<p class="text-xs text-slate-600">No summary yet. Derive a PRD to generate one.</p>`}
+        <div class="mt-auto pt-2">${prospectActions(item)}</div>
+      </div>
+
+      <div class="flex items-center justify-center text-xs text-slate-600 select-none">→</div>
+
+      ${!prd ? `
+      <div class="rounded-xl border border-dashed p-4 h-full flex flex-col ${item.prospect === 'not-eligible' ? 'border-rose-500/20 bg-rose-500/5' : 'border-borderDark/70 bg-bgDark/40'}">
+        <div class="text-[9px] uppercase tracking-widest font-semibold text-slate-500">PRD</div>
+        ${item.prospect === 'not-eligible'
+          ? `<p class="text-xs text-rose-300/80">Excluded — ${item.prospect_by === 'user' ? 'user' : 'suggested'} verdict.</p><p class="text-[10px] text-slate-600 mt-1">Frontmatter: <span class="font-mono">prds: not-eligible</span>.</p>`
+          : !item.prospect
+            ? `<p class="text-xs text-slate-600">Not assessed yet.</p><p class="text-[10px] text-slate-700 mt-1">Suggest eligibility to qualify this doc.</p>`
+            : `<p class="text-xs text-slate-600">Not derived yet.</p><p class="text-[10px] text-slate-700 mt-1">Derive a draft, review it, approve it.</p>`}
+        <div class="mt-auto pt-2">${prdActions(item) || ''}</div>
+      </div>` : `
+      <div class="rounded-xl border border-borderDark/40 bg-surfaceDark/60 p-4 h-full flex flex-col">
+        <div class="flex items-center justify-between">
+          <div class="text-[9px] uppercase tracking-widest font-semibold text-slate-500">PRD</div>
+          ${openLink('PRD')}
+        </div>
+        <div class="flex items-center gap-2 flex-wrap mt-1">${chip(PRD_STYLES[prd.status] ?? PRD_STYLES.draft, prd.status)}</div>
+        <p class="text-[11px] text-slate-400 mt-2">${prd.reqs} requirements</p>
+        <p class="text-[10px] font-mono text-slate-600 truncate mt-0.5">prds/${prd.slug}/index.mdx</p>
+        <div class="mt-auto pt-2">${prdActions(item) || ''}</div>
+      </div>`}
+
+      <div class="flex items-center justify-center text-xs text-slate-600 select-none">→</div>
+
+      <div class="rounded-xl border border-borderDark/40 bg-surfaceDark/60 p-4 h-full flex flex-col">
+        <div class="flex items-center justify-between">
+          <div class="text-[9px] uppercase tracking-widest font-semibold text-slate-500">Tickets${prd ? ` · ${item.tickets.length}` : ''}</div>
+          ${item.tickets.length > 0 ? openLink('tickets') : ''}
+        </div>
+        ${!prd
+          ? `<p class="text-xs text-slate-600">Locked until the PRD is approved.</p>`
+          : prd.status !== 'approved'
+            ? `<div><p class="text-xs text-slate-600">Awaiting approval.</p><p class="text-[10px] text-slate-700 mt-1">Gate: <span class="font-mono">prds.status == approved</span></p></div>`
+            : item.tickets.length === 0
+              ? `<p class="text-xs text-slate-600">No tickets yet.</p>`
+              : `<div class="max-h-36 overflow-y-auto -mr-2 pr-2 space-y-1.5">
+                  ${item.tickets.map(t => `
+                  <div class="flex items-center gap-2.5 rounded-lg border px-2.5 py-1.5 min-w-0 ${t.status === 'done' ? 'border-borderDark/30 bg-transparent opacity-70' : 'border-borderDark/60 bg-bgDark/40'}">
+                    <span class="font-mono text-[10px] text-slate-600 flex-shrink-0">${t.id}</span>
+                    <span class="text-[11px] truncate flex-1 min-w-0 ${t.status === 'done' ? 'text-slate-600 line-through' : 'text-slate-200'}">${t.title}</span>
+                    ${chip(TKT_STYLES[t.status] ?? TKT_STYLES.open, t.status)}
+                  </div>`).join('')}
+                </div>`}
+        <div class="mt-auto pt-2">${ticketActions(item) || ''}</div>
+      </div>
+    </div>
+  </div>`
+}
+
+function pipelineView(repo) {
+  const items = repo.pipeline
+  const stats = {
+    total: items.length,
+    eligible: items.filter(i => i.prospect === 'eligible').length,
+    excluded: items.filter(i => i.prospect === 'not-eligible').length,
+    unassessed: items.filter(i => !i.prospect).length,
+    derived: items.filter(i => i.prd).length,
+    approved: items.filter(i => i.prd && i.prd.status === 'approved').length,
+    open: items.reduce((n, i) => n + i.tickets.filter(t => t.status !== 'done').length, 0),
+    stale: items.filter(i => i.stale).length,
+  }
+  const hasPrds = repo.nav.some(([k]) => k === 'prds')
+  return `
+  <div class="max-w-5xl mx-auto pt-8 px-6 fade-in">
+    <h1 class="text-2xl font-bold text-slate-100">Derivation pipeline</h1>
+    <p class="text-xs text-slate-400 mt-1">
+      document TL;DR → PRD → tickets. Docs qualify via <span class="font-mono">derive_prospects</span>: classify-doc suggests, the user verifies. Gate: <span class="font-mono">prds.status == approved</span>.
+    </p>
+
+    <div class="pt-6 pb-2">
+      <div class="rounded-xl border border-borderDark/40 bg-surfaceDark/40 shadow-2xl overflow-hidden">
+        <div class="px-6 pt-5 flex flex-wrap items-center justify-between gap-3 border-b border-borderDark/30">
+          <div class="flex flex-wrap items-center gap-2">
+            ${statChip('bg-borderDark/40 border-borderDark/50 text-slate-300', 'bg-slate-500', stats.total, 'docs')}
+            ${statChip('border-emerald-500/25 text-emerald-300', 'bg-emerald-400', `${stats.eligible}/${stats.total}`, 'eligible')}
+            ${stats.excluded > 0 ? statChip('border-rose-500/25 text-rose-300', 'bg-rose-400', stats.excluded, 'excluded') : ''}
+            ${stats.unassessed > 0 ? statChip('border-slate-500/30 text-slate-400', 'bg-slate-400', stats.unassessed, 'unassessed') : ''}
+            ${hasPrds ? statChip('border-blue-500/25 text-blue-300', 'bg-blue-400', stats.derived, 'PRDs') : ''}
+            ${hasPrds ? statChip('border-emerald-500/25 text-emerald-300', 'bg-emerald-400', stats.approved, 'approved') : ''}
+            ${hasPrds ? statChip('border-sky-500/25 text-sky-300', 'bg-sky-400', stats.open, 'open tickets') : ''}
+            ${statChip('border-borderDark/50 text-slate-500', 'bg-slate-600', stats.stale, 'stale')}
+          </div>
+          <span class="text-[10px] text-slate-600">Actions write the same files the agent would, then commit.</span>
+        </div>
+
+        ${items.length === 0 ? `
+        <div class="px-6 py-10 text-center">
+          <div class="flex justify-center mb-2 text-slate-600">${S(IC.file, 'w-8 h-8')}</div>
+          <p class="text-sm text-slate-400 font-medium">No documents yet</p>
+          <p class="text-xs text-slate-600 mt-1">Create a doc in .devtop/docs to see its chain here.</p>
+        </div>` : ''}
+
+        ${groupBlocks(repo).map(g => {
+          const sectionLabel = SECTION_LABEL[g.section]
+          return `
+          <div key="${g.section + '/' + g.dir}">
+            ${g.firstOfSection ? `
+            <button onclick="toggleSection('${g.section}')" class="w-full flex items-center gap-3 px-6 py-2.5 border-b border-borderDark/30 bg-bgDark/20 hover:bg-bgDark/40 transition-colors ${SECTION_TEXT[g.section]}">
+              <span class="w-1 h-4 rounded-full ${SECTION_DOT[g.section]}"></span>
+              <span class="text-[10px] font-semibold uppercase tracking-widest">${sectionLabel}</span>
+              <span class="font-mono text-[10px] text-slate-500 bg-borderDark/30 border border-borderDark/40 rounded-md px-1.5 py-0.5">${g.items.length}</span>
+              <svg class="w-3.5 h-3.5 ml-auto text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${closed.has(g.section) ? 'M9 5l7 7-7 7' : 'M19 9l-7 7-7-7'}"/></svg>
+            </button>` : ''}
+            ${closed.has(g.section) ? '' : g.dir !== '' ? `
+            <button onclick="toggleDir('${g.section}', '${g.dir}')" class="w-full flex items-center gap-2 px-6 py-1.5 text-left text-slate-500 hover:text-slate-300 transition-colors">
+              ${S('M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z', 'w-3 h-3')}
+              <span class="text-[9px] font-mono font-semibold uppercase tracking-widest">${g.dir}/</span>
+              <span class="text-[9px] font-mono text-slate-600">· ${g.items.length}</span>
+              <svg class="w-3 h-3 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${closed.has(g.section + '/' + g.dir) ? 'M9 5l7 7-7 7' : 'M19 9l-7 7-7-7'}"/></svg>
+            </button>` : ''}
+            ${closed.has(g.section) || closed.has(g.section + '/' + g.dir) ? '' : g.items.map(itemRow).join('')}
+          </div>`
+        }).join('')}
+      </div>
+      <p class="text-xs text-slate-600 mt-3 px-1">
+        Derive, verdict, and status actions are user-initiated generation. Eligibility and the ticket gate are enforced by the server before any model runs; lifecycle stays external.
+      </p>
+    </div>
+  </div>`
+}
+
+// ===== generic kind views (docs / tickets / prds) =====
+function listView(repo, kind) {
+  if (kind === 'docs') return `
+    <div class="max-w-4xl mx-auto pt-8 px-6 fade-in">
+      <h1 class="text-2xl font-bold text-slate-100">Docs</h1>
+      <p class="text-xs text-slate-400 mt-1">${repo.docs.length} files in <span class="font-mono">.devtop/docs</span></p>
+      <div class="pt-6 rounded-xl border border-borderDark/40 bg-surfaceDark/40 shadow-2xl overflow-hidden">
+        ${repo.docs.map(d => `
+          <div class="flex items-center gap-2.5 px-6 py-3 border-b border-borderDark/30 last:border-b-0 hover:bg-bgDark/30 transition-colors">
+            <span class="text-slate-500">${S(IC.file, 'w-4 h-4')}</span>
+            <div class="min-w-0 flex-1">
+              <span class="text-sm text-slate-200 truncate block">${d.title}</span>
+              <span class="text-[10px] font-mono text-slate-600">.devtop/docs/${d.slug}.mdx</span>
+            </div>
+            <span class="inline-flex items-center justify-center w-5 h-5 rounded-md text-slate-600 hover:text-slate-300">${S(IC.external, 'w-3 h-3')}</span>
+          </div>`).join('') || '<div class="px-6 py-10 text-center text-xs text-slate-600">No docs yet — run Init first.</div>'}
+      </div>
+    </div>`
+  if (kind === 'tickets') {
+    const tickets = [
+      { id: 'dk-006', title: 'Add repo scope to the pipeline API', status: 'open' },
+      { id: 'dk-007', title: 'Per-repo viewstate keys', status: 'in-progress' },
+      { id: 'dk-008', title: 'Registry config docs', status: 'open' },
+    ]
+    return `
+    <div class="max-w-4xl mx-auto pt-8 px-6 fade-in">
+      <h1 class="text-2xl font-bold text-slate-100">Tickets</h1>
+      <p class="text-xs text-slate-400 mt-1">Derived from approved PRDs</p>
+      <div class="pt-6 rounded-xl border border-borderDark/40 bg-surfaceDark/40 shadow-2xl overflow-hidden">
+        ${tickets.map(t => `
+          <div class="flex items-center gap-2.5 px-6 py-3 border-b border-borderDark/30 last:border-b-0 hover:bg-bgDark/30 transition-colors">
+            <span class="font-mono text-[10px] text-slate-600">${t.id}</span>
+            <span class="text-sm text-slate-200 truncate flex-1 min-w-0">${t.title}</span>
+            ${chip(TKT_STYLES[t.status] ?? TKT_STYLES.open, t.status)}
+          </div>`).join('')}
+      </div>
+    </div>`
+  }
+  if (kind === 'prds') return `
+    <div class="max-w-4xl mx-auto pt-8 px-6 fade-in">
+      <h1 class="text-2xl font-bold text-slate-100">PRDs</h1>
+      <p class="text-xs text-slate-400 mt-1">Templates require docs approval</p>
+      <div class="pt-6 rounded-xl border border-borderDark/40 bg-surfaceDark/40 shadow-2xl overflow-hidden">
+        <div class="flex items-center gap-2.5 px-6 py-3 border-b border-borderDark/30 last:border-b-0">
+          <span class="text-sm text-slate-200 truncate flex-1 min-w-0">Agent Engine</span>
+          ${chip(PRD_STYLES.approved, 'approved')}
+        </div>
+      </div>
+    </div>`
+  return ''
+}
+
+// ===== uninitialized repo empty state =====
+function uninitView(repo) {
+  return `
+  <div class="h-full flex items-center justify-center fade-in">
+    <div class="max-w-md text-center px-6">
+      <div class="mx-auto w-14 h-14 rounded-2xl bg-borderDark/30 border border-borderDark/50 flex items-center justify-center text-slate-500 mb-4">${S(IC.database, 'w-6 h-6')}</div>
+      <h2 class="text-lg font-semibold text-slate-100">devtop is not initialized in this repository</h2>
+      <p class="text-xs text-slate-500 mt-2 leading-relaxed">
+        Initialize <span class="font-mono text-slate-400">${repo.path}</span> to scaffold
+        <span class="font-mono text-slate-400">.devtop/</span> — config, agents, and templates land in the repo, not on this instance.
+      </p>
+      <div class="flex items-center justify-center gap-2.5 mt-5">
+        <button onclick="initRepo()" class="${BTN_PRIMARY}">Init .devtop</button>
+        <button class="${BTN_GHOST}">Skip</button>
+      </div>
+    </div>
+  </div>`
+}
+
+// ===== repos overview page =====
+function overviewView() {
+  return `
+  <div class="max-w-5xl mx-auto pt-8 px-6 fade-in">
+    <div class="flex items-center justify-between">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-100">Repositories</h1>
+        <p class="text-xs text-slate-400 mt-1">Registered on this instance only — each repo keeps its own <span class="font-mono">.devtop/</span>.</p>
+      </div>
+      <button id="add-repo-btn" class="${BTN_PRIMARY} inline-flex items-center gap-1.5">${S('M12 6v6m0 0v6m0-6h6m-6 0H6', 'w-3.5 h-3.5')} Add repo…</button>
+    </div>
+    <div class="pt-6 rounded-xl border border-borderDark/40 bg-surfaceDark/40 shadow-2xl overflow-hidden">
+      <table class="w-full text-left">
+        <thead>
+          <tr class="text-[10px] uppercase tracking-widest text-slate-500 border-b border-borderDark/30">
+            <th class="px-6 py-3 font-semibold">Repo</th>
+            <th class="px-4 py-3 font-semibold">Branch</th>
+            <th class="px-4 py-3 font-semibold">Status</th>
+            <th class="px-4 py-3 font-semibold text-right">Docs</th>
+            <th class="px-4 py-3 font-semibold text-right">Pending</th>
+            <th class="px-4 py-3"></th>
+          </tr>
+        </thead>
+        <tbody>
+        ${REGISTRY.map(r => {
+          const st = STATUS[r.status]
+          const pending = r.pipeline ? r.pipeline.filter(i => i.prospect === 'eligible' && !i.prd).length : 0
+          return `
+          <tr class="border-b border-borderDark/30 last:border-b-0 hover:bg-bgDark/30 transition-colors group">
+            <td class="px-6 py-3.5">
+              <div class="flex items-center gap-2.5">
+                <span class="flex items-center justify-center w-7 h-7 rounded-lg bg-borderDark/40 text-slate-400 flex-shrink-0">${S(IC.git, 'w-3.5 h-3.5')}</span>
+                <div class="min-w-0">
+                  <div class="text-xs font-semibold text-slate-100 flex items-center gap-2">
+                    ${r.name}
+                    ${r.id === activeRepoId ? `<span class="inline-flex items-center gap-1 px-1.5 py-px rounded text-[9px] font-medium uppercase tracking-wider bg-accentBlue/15 border border-accentBlue/30 text-accentBlue">active ${S(IC.check, 'w-2.5 h-2.5')}</span>` : ''}
+                  </div>
+                  <div class="text-[10px] font-mono text-slate-600 truncate">${r.path}</div>
+                </div>
+              </div>
+            </td>
+            <td class="px-4 py-3.5"><span class="font-mono text-[10px] text-slate-400 bg-borderDark/40 px-1.5 py-0.5 rounded-md border border-borderDark/40">${r.branch || '—'}</span></td>
+            <td class="px-4 py-3.5">${r.status === 'uninit' ? chip('border-slate-500/40 bg-slate-500/10 text-slate-400', 'needs init') : r.status === 'nogit' ? chip('border-rose-500/30 bg-rose-500/10 text-rose-300', 'no git repo') : r.status === 'dirty' ? chip('border-amber-500/30 bg-amber-500/10 text-amber-300', `${r.dirty} uncommitted`) : chip('border-emerald-500/30 bg-emerald-500/10 text-emerald-300', 'ready')}</td>
+            <td class="px-4 py-3.5 text-right font-mono text-xs text-slate-400">${r.docs.length || '—'}</td>
+            <td class="px-4 py-3.5 text-right font-mono text-xs ${pending ? 'text-accentBlue' : 'text-slate-500'}">${pending || '—'}</td>
+            <td class="px-4 py-3.5 text-right"><button onclick="openRepo('${r.id}')" class="${BTN_GHOST} opacity-0 group-hover:opacity-100 transition-opacity">Open</button></td>
+          </tr>`
+        }).join('')}
+        </tbody>
+      </table>
+    </div>
+    <p class="text-xs text-slate-600 mt-3 px-1">
+      Add repos as paths only. devtop never auto-discovers directories; a repo appears here only when you register it.
+    </p>
+  </div>`
+}
+
+// ===== sidebar (config-driven) =====
+function sidebarView(repo) {
+  const navMap = {
+    docs: (r) => (`
+      <div>
+        <div class="text-[10px] font-semibold text-slate-500 uppercase tracking-widest px-3 mb-1">Docs</div>
+        <div class="space-y-px">
+          ${r.docs.map(d => `
+          <button onclick="setKind('docs')" class="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs font-medium ${activeKind === 'docs' && activeRepoId === r.id ? 'text-slate-100 bg-accentBlue/10 border border-accentBlue/20' : 'text-slate-500 hover:text-slate-300'} transition-colors">
+            ${S(IC.file, 'w-4 h-4 text-slate-600 flex-shrink-0')}
+            <span class="truncate">${d.title}</span>
+          </button>`).join('') || '<div class="px-3 py-2 text-[10px] text-slate-600 italic">No docs yet</div>'}
+        </div>
+      </div>`),
+    tickets: (r) => (`
+      <div>
+        <div class="flex items-center justify-between px-3 mb-1">
+          <span class="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Tickets</span>
+          <span class="text-[10px] font-mono text-slate-500 bg-borderDark/40 px-1.5 py-px rounded-full border border-borderDark/30">3</span>
+        </div>
+        <button onclick="setKind('tickets')" class="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs font-medium ${activeKind === 'tickets' && activeRepoId === r.id ? 'text-slate-100 bg-accentBlue/10 border border-accentBlue/20' : 'text-slate-500 hover:text-slate-300'} transition-colors">
+          ${S(IC.board, 'w-4 h-4 text-slate-600 flex-shrink-0')}
+          Active Board
+        </button>
+      </div>`),
+    prds: (r) => (`
+      <div>
+        <div class="text-[10px] font-semibold text-slate-500 uppercase tracking-widest px-3 mb-1">PRDs</div>
+        <button onclick="setKind('prds')" class="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs font-medium ${activeKind === 'prds' && activeRepoId === r.id ? 'text-slate-100 bg-accentBlue/10 border border-accentBlue/20' : 'text-slate-500 hover:text-slate-300'} transition-colors">
+          ${S(IC.file, 'w-4 h-4 text-slate-600 flex-shrink-0')}
+          Templates
+        </button>
+      </div>`),
+    pipeline: (r) => (`
+      <div>
+        <div class="text-[10px] font-semibold text-slate-500 uppercase tracking-widest px-3 mb-1">Derivation</div>
+        <button onclick="setKind('pipeline')" class="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs font-medium ${activeKind === 'pipeline' && activeRepoId === r.id ? 'text-slate-100 bg-accentBlue/10 border border-accentBlue/20' : 'text-slate-500 hover:text-slate-300'} transition-colors">
+          ${S(IC.flow, 'w-4 h-4 text-slate-600 flex-shrink-0')}
+          Pipeline
+        </button>
+      </div>`),
+  }
+  return repo.nav.map(([kind, label, icon]) => navMap[kind] ? navMap[kind](repo) : '').join('')
+}
+
+// ===== render =====
+function render() {
+  const repo = REGISTRY.find(r => r.id === activeRepoId)
+  const st = STATUS[repo.status]
+
+  // switcher
+  $('switcher-name').textContent = repo.name
+  $('switcher-branch').textContent = repo.branch || 'no branch'
+  $('switcher-dot').className = `w-1.5 h-1.5 rounded-full ${st.dot}`
+  $('server-repos').textContent = `${REGISTRY.length} repos`
+
+  // sidebar
+  $('sidebar-nav').innerHTML = sidebarView(repo)
+
+  // banner
+  $('nogit-banner').classList.toggle('hidden', repo.status !== 'nogit')
+  $('nogit-path').textContent = repo.path
+
+  // chat
+  $('chat-context').textContent = `${repo.name} · ${activeKind === 'repos' ? 'Repos' : titleCase(activeKind)}`
+  $('chat-repo-mono').textContent = repo.chatPath
+
+  // breadcrumbs
+  const kindLabel = activeKind === 'repos' ? 'Repositories' : titleCase(activeKind)
+  $('crumb-kind').textContent = kindLabel
+  $('crumb-rest').className = 'hidden items-center gap-2'
+
+  // host
+  if (repo.status === 'uninit' && activeKind !== 'repos') {
+    $('host').innerHTML = uninitView(repo)
+  } else if (activeKind === 'repos') {
+    $('host').innerHTML = overviewView()
+  } else if (activeKind === 'pipeline') {
+    $('host').innerHTML = pipelineView(repo)
+  } else {
+    $('host').innerHTML = listView(repo, activeKind)
+  }
+}
+
+// ===== interactions =====
+function closeDropdown() {
+  dropdownOpen = false
+  $('repo-dropdown').classList.add('hidden')
+}
+function renderDropdown() {
+  $('repo-list').innerHTML = REGISTRY.map(r => {
+    const st = STATUS[r.status]
+    const active = r.id === activeRepoId
+    return `
+    <button onclick="selectRepo('${r.id}')" class="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left transition-colors ${active ? 'bg-accentBlue/10 border border-accentBlue/25 text-slate-100' : 'border border-transparent hover:bg-borderDark/20 text-slate-300'}">
+      <span class="flex items-center justify-center w-7 h-7 rounded-lg bg-borderDark/40 text-slate-400 flex-shrink-0">${S(IC.git, 'w-3.5 h-3.5')}</span>
+      <span class="flex-1 min-w-0">
+        <span class="flex items-center gap-2 text-xs font-semibold truncate">
+          ${r.name}
+          <span class="w-1.5 h-1.5 rounded-full ${st.dot} flex-shrink-0"></span>
+        </span>
+        <span class="block text-[10px] font-mono text-slate-600 truncate mt-0.5">${r.path}</span>
+      </span>
+      <span class="flex-shrink-0 flex items-center gap-1.5">
+        ${r.branch ? `<span class="font-mono text-[9px] text-slate-500 bg-borderDark/40 px-1.5 py-0.5 rounded-md border border-borderDark/40 max-w-[90px] truncate">${r.branch}</span>` : ''}
+        ${chip(st.chip, st.label)}
+        ${active ? `<span class="text-accentBlue">${S(IC.check, 'w-3.5 h-3.5')}</span>` : ''}
+      </span>
+    </button>`
+  }).join('')
+}
+
+$('repo-switcher-btn').addEventListener('click', (e) => {
+  e.stopPropagation()
+  dropdownOpen = !dropdownOpen
+  if (dropdownOpen) { renderDropdown(); $('repo-dropdown').classList.remove('hidden') }
+  else closeDropdown()
+})
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#repo-switcher')) closeDropdown()
+})
+$('manage-repos-btn').addEventListener('click', (e) => {
+  e.stopPropagation()
+  closeDropdown()
+  activeKind = 'repos'
+  render()
+})
+
+function selectRepo(id) {
+  const repo = REGISTRY.find(r => r.id === id)
+  activeRepoId = id
+  closeDropdown()
+  // repo-scoped last view: go where the user left off in this repo
+  activeKind = repo.lastView && repo.nav.some(([k]) => k === repo.lastView) ? repo.lastView : repo.nav[0][0]
+  render()
+}
+function openRepo(id) {
+  selectRepo(id)
+  activeKind = 'pipeline'
+  render()
+}
+function setKind(kind) {
+  activeKind = kind
+  render()
+}
+function toggleSection(s) { closed.has(s) ? closed.delete(s) : closed.add(s); render() }
+function toggleDir(s, d) { const k = s + '/' + d; closed.has(k) ? closed.delete(k) : closed.add(k); render() }
+
+// prospect action mutators — make the eligibility flow feel alive
+function patchItem(slug, patch) {
+  const repo = REGISTRY.find(r => r.id === activeRepoId)
+  const item = repo.pipeline.find(i => i.slug === slug)
+  if (item) Object.assign(item, patch)
+  render()
+}
+function suggest(slug) {
+  patchItem(slug, { busy: true })
+  setTimeout(() => patchItem(slug, { busy: null, prospect: 'eligible', prospect_by: 'model' }), 1400)
+}
+function confirm(slug) { patchItem(slug, { prospect: 'eligible', prospect_by: 'user' }) }
+function exclude(slug) { patchItem(slug, { prospect: 'not-eligible', prospect_by: 'user' }) }
+function override(slug) { patchItem(slug, { prospect: 'eligible', prospect_by: 'user' }) }
+
+function initRepo() {
+  const repo = REGISTRY.find(r => r.id === activeRepoId)
+  const btn = $('host').querySelector('button')
+  if (btn && btn.textContent.includes('Init')) btn.textContent = 'Initializing…'
+  setTimeout(() => {
+    repo.status = 'ok'
+    repo.branch = 'main'
+    repo.nav = [['docs', 'Docs', 'file'], ['tickets', 'Tickets', 'board'], ['pipeline', 'Pipeline', 'flow']]
+    repo.docs = [{ slug: 'index', title: 'Home' }]
+    repo.pipeline = [{
+      doc_id: 'index', title: 'Home', slug: 'index', path: 'index.mdx', dir: '',
+      summary: '', prospect: null, prospect_by: null, stale: false, prd: null, tickets: [],
+    }]
+    repo.lastView = 'pipeline'
+    activeKind = 'pipeline'
+    render()
+  }, 1300)
+}
+$('rescan-btn').addEventListener('click', () => {
+  const repo = REGISTRY.find(r => r.id === activeRepoId)
+  repo.status = 'ok'
+  render()
+})
+
+// add-repo (overview) — opens the folder-browser modal
+$('host').addEventListener('click', (e) => {
+  if (e.target.closest('#add-repo-btn') && window.showAddRepoModal) {
+    e.preventDefault()
+    window.showAddRepoModal()
+  }
+})
+
+render()
+</script>
+<script>
+// ============================================================================
+// Add-repo modal — rc-tree folder browser (rc-tree bundled via esbuild,
+// React/ReactDOM loaded from UMD CDN; connects to the same vanilla registry)
+// ============================================================================
+(function () {
+  const { useState, useEffect, useCallback, useMemo } = React
+
+  // ---- mock server-side filesystem (stands in for GET /api/fs/list?path=) ----
+  const MOCK_FS = {
+    '~': ['dev', 'work', 'old', 'Projects', 'Downloads'],
+    '~/dev': ['synlace', 'ferret', 'scripts'],
+    '~/dev/synlace': ['devtop', 'kafka-consumer', 'api-gateway'],
+    '~/dev/ferret': [],
+    '~/dev/scripts': [],
+    '~/work': ['typescript-discord', 'internal-tools'],
+    '~/work/typescript-discord': [],
+    '~/work/internal-tools': [],
+    '~/old': ['legacy-monolith', 'java-services'],
+    '~/old/legacy-monolith': [],
+    '~/old/java-services': [],
+    '~/Projects': [],
+    '~/Downloads': [],
+  }
+  const GIT_DIRS = new Set([
+    '~/dev/synlace/devtop', '~/dev/synlace/kafka-consumer', '~/dev/synlace/api-gateway',
+    '~/dev/ferret', '~/dev/scripts', '~/work/typescript-discord', '~/work/internal-tools',
+    '~/old/legacy-monolith',
+  ])
+  const childEntries = (dir) => (MOCK_FS[dir] || []).map(name => {
+    const push = dir === '~' ? `~/${name}` : `${dir}/${name}`
+    const isLeaf = !(MOCK_FS[push] || []).length
+    return { key: push, title: name, isLeaf }
+  })
+  const listDir = (path) => new Promise(res => setTimeout(() => res(childEntries(path)), 260))
+
+  // ---- icons (prod replica) ----
+  const svg = (d, cls) =>
+    React.createElement('svg', { className: cls || 'w-4 h-4', fill: 'none', stroke: 'currentColor', viewBox: '0 0 24 24' },
+      React.createElement('path', { strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 1.8, d }))
+  const FOLDER = 'M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z'
+  const FOLDER_OPEN = 'M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z'
+  const CHEVRON = 'M9 5l7 7-7 7'
+  const X = 'M6 18L18 6M6 6l12 12'
+  const SPIN = 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15'
+
+  const gitBadge = (hasGit) =>
+    React.createElement('span', {
+      className: 'ml-auto flex-shrink-0 inline-flex items-center gap-1 px-1.5 py-px rounded-full text-[8px] font-medium border font-mono ' +
+        (hasGit ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-300'),
+    }, hasGit ? 'git' : 'no git')
+
+  function AddRepoModal() {
+    const [open, setOpenState] = useState(false)
+    const [treeData, setTreeData] = useState([])
+    const [selected, setSelected] = useState('')
+    const [manualPath, setManualPath] = useState('')
+    const [justAdded, setJustAdded] = useState(false)
+
+    const dataRef = React.useRef(treeData)
+    dataRef.current = treeData
+
+    // rc-tree hands loadData a shallow copy of the node (convertNodePropsToEventData),
+    // so mutating node.children is lost. Rebuild the tree immutably instead.
+    const replaceNode = (nodes, key, patch) => nodes.map(n =>
+      n.key === key
+        ? { ...n, ...patch }
+        : n.children ? { ...n, children: replaceNode(n.children, key, patch) } : n,
+    )
+    const loadData = useCallback((node) => {
+      return listDir(String(node.key)).then(children => {
+        const next = replaceNode(dataRef.current, String(node.key), {
+          children,
+          isLeaf: children.length === 0,
+        })
+        dataRef.current = next
+        setTreeData(next)
+      })
+    }, [])
+
+    const openModal = useCallback(() => {
+      setSelected('')
+      setManualPath('')
+      setJustAdded(false)
+      if (treeData.length === 0) setTreeData(childEntries('~'))
+      setOpenState(true)
+    }, [treeData.length])
+
+    useEffect(() => {
+      window.showAddRepoModal = openModal
+    }, [openModal])
+    useEffect(() => {
+      const onKey = (e) => { if (e.key === 'Escape') setOpenState(false) }
+      window.addEventListener('keydown', onKey)
+      return () => window.removeEventListener('keydown', onKey)
+    }, [])
+    useEffect(() => {
+      if (justAdded) {
+        const t = setTimeout(() => setJustAdded(false), 2600)
+        return () => clearTimeout(t)
+      }
+    }, [justAdded])
+
+    const effectivePath = (manualPath.trim() || selected).replace(/\/+$/, '')
+    const hasGit = !!GIT_DIRS.has(effectivePath)
+    const already = REGISTRY.some(r => r.path === effectivePath)
+    const segments = useMemo(() => selected ? selected.split('/') : [], [selected])
+    const canAdd = !!effectivePath && !already
+
+    const doAdd = (e) => {
+      e.preventDefault()
+      if (!canAdd) return
+      const path = effectivePath
+      setManualPath('')
+      setJustAdded(true)
+      setTimeout(() => {
+        const segs = path.split('/')
+        REGISTRY.push({
+          id: 'r' + (REGISTRY.length + 1),
+          name: segs.slice(-2).join('/'),
+          path,
+          branch: hasGit ? 'main' : '—',
+          status: hasGit ? 'ok' : 'nogit',
+          lastView: 'docs',
+          chatPath: '.devtop/docs/index.mdx',
+          docs: hasGit ? [{ slug: 'index', title: 'Home' }] : [],
+          nav: [['docs', 'Docs', 'file'], ['tickets', 'Tickets', 'board'], ['pipeline', 'Pipeline', 'flow']],
+          pipeline: hasGit ? [{ doc_id: 'index', title: 'Home', slug: 'index', path: 'index.mdx', dir: '', summary: '', prospect: null, prospect_by: null, stale: false, prd: null, tickets: [] }] : [],
+        })
+        render()
+        setOpenState(false)
+      }, 400)
+    }
+
+    const Tree = RC.Tree
+    return React.createElement('div', { className: open ? '' : 'hidden' },
+      React.createElement('div', { className: 'fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-6', onMouseDown: (e) => { if (e.target === e.currentTarget) setOpenState(false) } },
+        React.createElement('div', { className: 'pop w-[600px] max-w-full rounded-2xl border border-borderDark/60 bg-[#0a0e1c] shadow-2xl overflow-hidden' },
+          // header
+          React.createElement('div', { className: 'px-6 pt-5 pb-4 border-b border-borderDark/40 flex items-start justify-between gap-4' },
+            React.createElement('div', { className: 'min-w-0' },
+              React.createElement('h2', { className: 'text-sm font-semibold text-slate-100' }, 'Add repository'),
+              React.createElement('p', { className: 'text-[11px] text-slate-500 mt-1 leading-relaxed' },
+                'Pick the repo\u2019s root folder. The instance stores the absolute path \u2014 the browser never touches the filesystem directly.'),
+            ),
+            React.createElement('button', { onClick: () => setOpenState(false), className: 'h-7 w-7 rounded-lg border border-borderDark/50 hover:bg-borderDark/40 text-slate-400 hover:text-slate-100 transition-colors flex items-center justify-center flex-shrink-0', title: 'Close' },
+              svg(X, 'w-3.5 h-3.5')),
+          ),
+          // path bar
+          React.createElement('div', { className: 'px-6 pt-4 pb-2' },
+            React.createElement('div', { className: 'flex items-center gap-2' },
+              React.createElement('button', {
+                onClick: () => { const p = segments.slice(0, -1).join('/'); setSelected(p.length > 0 ? p : '') },
+                disabled: segments.length === 0,
+                className: 'h-7 w-7 rounded-lg border border-borderDark/50 hover:bg-borderDark/40 text-slate-400 hover:text-slate-100 transition-colors flex items-center justify-center flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed',
+                title: 'Up one level',
+              }, svg(CHEVRON, 'w-3.5 h-3.5 -rotate-90')),
+              React.createElement('div', { className: 'flex-1 flex items-center gap-1 font-mono text-[11px] bg-bgDark/60 border border-borderDark/60 rounded-lg px-3 py-1.5 min-w-0 overflow-x-auto' },
+                segments.length === 0
+                  ? React.createElement('span', { className: 'text-slate-500' }, '~ / pick a folder below')
+                  : segments.map((seg, i) =>
+                      React.createElement(React.Fragment, { key: i },
+                        i > 0 && React.createElement('span', { className: 'text-slate-600' }, '/'),
+                        i < segments.length - 1
+                          ? React.createElement('button', {
+                              onClick: () => setSelected(segments.slice(0, i + 1).join('/')),
+                              className: 'text-slate-400 hover:text-accentBlue transition-colors',
+                            }, seg)
+                          : React.createElement('span', { className: 'text-accentBlue' }, seg),
+                      ),
+                    ),
+              ),
+            ),
+          ),
+          // tree
+          React.createElement('div', { className: 'px-6 pb-3' },
+            React.createElement('div', { className: 'h-64 rounded-xl border border-borderDark/60 bg-bgDark/40 p-2 overflow-y-auto' },
+              React.createElement(Tree, {
+                treeData,
+                loadData,
+                selectedKeys: selected ? [selected] : [],
+                onSelect: (keys, info) => { if (info && info.node) setSelected(String(info.node.key)) },
+                icon: ({ expanded, isLeaf }) => svg(isLeaf ? FOLDER : (expanded ? FOLDER_OPEN : FOLDER),
+                  isLeaf ? 'w-3.5 h-3.5 text-slate-500 flex-shrink-0' : (expanded ? 'w-3.5 h-3.5 text-amber-400/90 flex-shrink-0' : 'w-3.5 h-3.5 text-slate-400 flex-shrink-0')),
+                switcherIcon: ({ expanded, loading, isLeaf }) => isLeaf
+                  ? React.createElement('span')
+                  : loading
+                    ? React.createElement('span', { className: 'rc-tree-switcher-loading-icon' })
+                    : svg(CHEVRON, `w-3 h-3 transition-transform ${expanded ? 'rotate-90' : ''}`),
+                titleRender: (node) => React.createElement('span', { className: 'flex items-center gap-1.5 min-w-0' },
+                  React.createElement('span', { className: 'truncate' }, node.title),
+                  gitBadge(GIT_DIRS.has(String(node.key)))),
+                motion: null,
+              }),
+            ),
+          ),
+          // manual path
+          React.createElement('div', { className: 'px-6 pb-4' },
+            React.createElement('div', { className: 'flex items-center gap-2 bg-bgDark/60 border border-borderDark/60 rounded-lg px-3 py-2 focus-within:border-accentBlue/60 transition-colors' },
+              svg('M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z', 'w-3.5 h-3.5 text-slate-600 flex-shrink-0'),
+              React.createElement('input', {
+                value: manualPath,
+                onChange: (e) => setManualPath(e.target.value),
+                placeholder: 'or type a path, e.g. ~/dev/new-project',
+                className: 'flex-1 bg-transparent text-[11px] font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none',
+              }),
+            ),
+          ),
+          // footer
+          React.createElement('div', { className: 'px-6 py-3.5 border-t border-borderDark/40 bg-[#06080e]/40 flex items-center justify-between gap-3' },
+            React.createElement('div', { className: 'flex items-center gap-2 min-w-0' },
+              canAdd
+                ? React.createElement(React.Fragment, null,
+                    React.createElement('span', { className: 'font-mono text-[10px] text-slate-500 truncate max-w-[220px]' }, effectivePath),
+                    React.createElement('span', {
+                      className: 'flex-shrink-0 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-medium border capitalize ' +
+                        (hasGit ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200' : 'border-amber-500/40 bg-amber-500/15 text-amber-200'),
+                    }, hasGit ? 'git repo' : 'no git repo'),
+                  )
+                : already
+                  ? React.createElement('React.Fragment', null,
+                      React.createElement('span', { className: 'font-mono text-[10px] text-slate-500 truncate max-w-[220px]' }, effectivePath),
+                      React.createElement('span', { className: 'flex-shrink-0 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-medium border capitalize border-accentBlue/40 bg-accentBlue/10 text-accentBlue' }, 'already registered'),
+                    )
+                  : React.createElement('span', { className: 'text-[10px] text-slate-600' }, 'Select a folder to see its status'),
+              justAdded && React.createElement('span', { className: 'text-[10px] text-emerald-300 font-mono flex items-center gap-1' },
+                svg('M5 13l4 4L19 7', 'w-3 h-3'), 'added'),
+            ),
+            React.createElement('div', { className: 'flex items-center gap-2 flex-shrink-0' },
+              React.createElement('button', { onClick: () => setOpenState(false), className: 'px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 border border-borderDark hover:bg-borderDark/20 transition-colors' }, 'Cancel'),
+              React.createElement('button', {
+                onClick: doAdd,
+                disabled: !canAdd,
+                className: 'px-3 py-1.5 rounded-lg text-xs font-medium bg-accentBlue text-slate-100 hover:bg-accentBlue/80 transition-colors disabled:opacity-60 disabled:cursor-not-allowed',
+              }, 'Add repo'),
+            ),
+          ),
+        ),
+      ),
+    )
+  }
+
+  ReactDOM.createRoot(document.getElementById('add-repo-modal-root')).render(React.createElement(AddRepoModal))
+})()
+</script>
+</body>
+</html>

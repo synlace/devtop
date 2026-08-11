@@ -1,14 +1,12 @@
 package main
 
 import (
-	"encoding/json"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
-
-	"gopkg.in/yaml.v2"
 )
 
 // The opinionated default config, bundled into the binary. A repo can override
@@ -39,6 +37,11 @@ type DerivationEdge struct {
 	To        string `yaml:"to" json:"to"`
 	Transform string `yaml:"transform" json:"transform"`
 	Gate      string `yaml:"gate" json:"gate,omitempty"`
+	Agent     string `yaml:"agent" json:"agent,omitempty"`
+	// Classifier names the agent that suggests whether a source artifact
+	// qualifies for this edge (derive_prospects in source frontmatter).
+	// When bound, derivation requires an `eligible` verdict for this edge.
+	Classifier string `yaml:"classifier" json:"classifier,omitempty"`
 }
 
 type ReplanPhases struct {
@@ -67,25 +70,45 @@ type Handoff struct {
 	LifecycleOwner string        `yaml:"lifecycle_owner" json:"lifecycle_owner"`
 }
 
+// AgentRuntimeConfig selects the repo-owned agent the embedded chat agent
+// uses. Empty Default means the classic behavior (AGENTS.md / SYSTEM_PROMPT).
+type AgentRuntimeConfig struct {
+	Default string `yaml:"default" json:"default"`
+}
+
+// PipelineConfig declares the cross-kind derivation view. It renders the
+// edges from `derivation`; the nav entry is what surfaces it in the UI.
+type PipelineConfig struct {
+	Nav *EngineNav `yaml:"nav" json:"nav,omitempty"`
+}
+
 type EngineConfig struct {
 	ArtifactKinds map[string]ArtifactKind `yaml:"artifact_kinds" json:"artifact_kinds"`
 	Derivation    []DerivationEdge        `yaml:"derivation" json:"derivation"`
 	Replan        Replan                  `yaml:"replan" json:"replan"`
 	Prompts       map[string]PromptDef    `yaml:"prompts" json:"prompts"`
 	Handoff       Handoff                 `yaml:"handoff" json:"handoff"`
+	AgentRuntime  AgentRuntimeConfig      `yaml:"agent_runtime" json:"agent_runtime"`
+	Pipeline      PipelineConfig          `yaml:"pipeline" json:"pipeline"`
 }
 
-// engineConfig is the parsed config for the running server.
+// engineConfig is the parsed config for the running server (legacy default
+// repo). Per-repo configs live on Repo.Config; the global stays for classic
+// single-repo behavior and tests.
 var engineConfig EngineConfig
 
 // ensureEngineConfig materializes the bundled default into
 // $DEVTOP_DIR/config.yml when absent, so a fresh repo owns an editable copy.
 // Never overwrites an existing config.
 func ensureEngineConfig() (string, error) {
-	if err := os.MkdirAll(DEVTOP_DIR, 0755); err != nil {
+	return ensureEngineConfigIn(DEVTOP_DIR)
+}
+
+func ensureEngineConfigIn(devTop string) (string, error) {
+	if err := os.MkdirAll(devTop, 0755); err != nil {
 		return "", err
 	}
-	path := filepath.Join(DEVTOP_DIR, "config.yml")
+	path := filepath.Join(devTop, "config.yml")
 	if _, err := os.Stat(path); err == nil {
 		return path, nil
 	} else if !os.IsNotExist(err) {
@@ -141,41 +164,29 @@ func toJSONable(v interface{}) interface{} {
 	}
 }
 
-// loadEngineConfig parses $DEVTOP_DIR/config.yml, falling back to the bundled
-// default when the file doesn't exist (hermetic tests, config-less runs).
+// loadEngineConfig parses $DEVTOP_DIR/config.yml into the legacy global,
+// falling back to the bundled default (hermetic tests, config-less runs).
 func loadEngineConfig() error {
-	path := filepath.Join(DEVTOP_DIR, "config.yml")
-	data, err := os.ReadFile(path)
+	cfg, err := loadEngineConfigFrom(DEVTOP_DIR)
 	if err != nil {
-		if os.IsNotExist(err) {
-			data = defaultEngineConfig
-		} else {
-			return err
-		}
-	}
-	var cfg EngineConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return fmt.Errorf("invalid engine config %s: %w", path, err)
-	}
-	if cfg.ArtifactKinds == nil {
-		cfg.ArtifactKinds = map[string]ArtifactKind{}
-	}
-	// Normalize yaml.v2 nested maps in kind schemas for JSON marshaling.
-	for name, kind := range cfg.ArtifactKinds {
-		if kind.Schema != nil {
-			if j, ok := toJSONable(kind.Schema).(map[string]interface{}); ok {
-				kind.Schema = j
-			}
-		}
-		cfg.ArtifactKinds[name] = kind
+		return err
 	}
 	engineConfig = cfg
 	return nil
 }
 
 // handleAPIEngineConfig serves the parsed engine config so the frontend can
-// render nav sections and views from the repo's declaration.
+// render nav sections and views from the active repo's declaration.
 func handleAPIEngineConfig(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
+	cfg, err := repo.Config()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toJSONable(engineConfig))
+	json.NewEncoder(w).Encode(toJSONable(cfg))
 }

@@ -53,12 +53,73 @@ func registerBuiltinTools() {
 		},
 	}, func(args map[string]interface{}) string {
 		path, _ := args["path"].(string)
-		filePath := filepath.Join(DOCS_DIR, path)
+		filePath, err := docPathForSlugP(toolPaths(), path)
+		if err != nil {
+			return fmt.Sprintf("Error: %v", err)
+		}
 		data, err := os.ReadFile(filePath)
 		if err != nil {
 			return fmt.Sprintf("Error: doc '%s' not found", path)
 		}
 		return string(data)
+	})
+
+	registerTool("read_doc_at", map[string]interface{}{
+		"type": "function",
+		"function": map[string]interface{}{
+			"name":        "read_doc_at",
+			"description": "Read a documentation file as it existed at a given git commit. Commit may be a full or short sha, or HEAD. Returns the doc at that revision, or notes the file was deleted there.",
+			"parameters": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path":   map[string]interface{}{"type": "string", "description": "Path relative to docs/ (e.g. 'architecture.mdx')"},
+					"commit": map[string]interface{}{"type": "string", "description": "Git commit sha or HEAD"},
+				},
+				"required": []string{"path", "commit"},
+			},
+		},
+	}, func(args map[string]interface{}) string {
+		path, _ := args["path"].(string)
+		commit, _ := args["commit"].(string)
+		filePath, err := docPathForSlugP(toolPaths(), path)
+		if err != nil {
+			return fmt.Sprintf("Error: %v", err)
+		}
+		title, content, deleted, err := contentAt(filePath, commit)
+		if err != nil {
+			return fmt.Sprintf("Error: %v", err)
+		}
+		if deleted {
+			return fmt.Sprintf("docs/%s was deleted at commit %s", path, commit)
+		}
+		return fmt.Sprintf("title: %s\n%s", title, content)
+	})
+
+	registerTool("list_doc_revisions", map[string]interface{}{
+		"type": "function",
+		"function": map[string]interface{}{
+			"name":        "list_doc_revisions",
+			"description": "List the git history of a documentation file: each commit that changed it, newest first, with sha, message, author, and date. The most recent is marked current.",
+			"parameters": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path": map[string]interface{}{"type": "string", "description": "Path relative to docs/ (e.g. 'architecture.mdx')"},
+				},
+				"required": []string{"path"},
+			},
+		},
+	}, func(args map[string]interface{}) string {
+		path, _ := args["path"].(string)
+		filePath, err := docPathForSlugP(toolPaths(), path)
+		if err != nil {
+			return fmt.Sprintf("Error: %v", err)
+		}
+		revs, err := listRevisions(filePath)
+		if err != nil {
+			return fmt.Sprintf("Error: %v", err)
+		}
+		bytes, _ := json.MarshalIndent(revs, "", "  ")
+		return string(bytes)
 	})
 
 	registerTool("write_doc", map[string]interface{}{
@@ -78,10 +139,72 @@ func registerBuiltinTools() {
 	}, func(args map[string]interface{}) string {
 		path, _ := args["path"].(string)
 		content, _ := args["content"].(string)
-		if err := writeDocToFileSystem(path, content); err != nil {
+
+		// Creating a new doc under a *different* slug than the one the file
+		// actually lives at silently forks content. When the requested slug
+		// does not yet exist but another doc already has the same title,
+		// refuse and point the agent at the existing slug.
+		p := toolPaths()
+		if _, err := docPathForSlugP(p, path); err != nil {
+			if title := docTitleFromContent(content); title != "" {
+				docs, _ := listDocsP(p)
+				normPath := strings.TrimSuffix(path, ".mdx")
+				for _, d := range docs {
+					if strings.EqualFold(d.Title, title) && d.Slug != normPath {
+						return fmt.Sprintf("Error: a doc titled %q already exists at docs/%s. Use write_doc path=%q to update it instead of creating a duplicate.", title, d.Slug, d.Slug)
+					}
+				}
+			}
+		}
+
+		if err := writeDocToFileSystemP(p, path, content); err != nil {
 			return fmt.Sprintf("Error writing doc: %v", err)
 		}
 		return fmt.Sprintf("Written to docs/%s", path)
+	})
+
+	registerTool("write_artifact", map[string]interface{}{
+		"type": "function",
+		"function": map[string]interface{}{
+			"name":        "write_artifact",
+			"description": "Write or overwrite an artifact of a config-declared, agent-writable kind (e.g. prds). Content includes YAML frontmatter and a markdown body.",
+			"parameters": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"kind":    map[string]interface{}{"type": "string", "description": "Artifact kind, declared in config.yml (e.g. 'prds')"},
+					"id":      map[string]interface{}{"type": "string", "description": "Artifact id, e.g. 'architecture/migrations'"},
+					"content": map[string]interface{}{"type": "string", "description": "Full file content (YAML frontmatter + markdown body)"},
+				},
+				"required": []string{"kind", "id", "content"},
+			},
+		},
+	}, func(args map[string]interface{}) string {
+		kind, _ := args["kind"].(string)
+		id, _ := args["id"].(string)
+		content, _ := args["content"].(string)
+
+		cfg := toolConfig()
+		p := toolPaths()
+		k, ok := cfg.ArtifactKinds[kind]
+		if !ok || !k.AgentWritable {
+			return fmt.Sprintf("Error: kind %q is not an agent-writable artifact kind", kind)
+		}
+		// Board kinds have a typed write flow; never route through generic writes.
+		if k.View == "board" {
+			return fmt.Sprintf("Error: kind %q has a typed write flow; use its dedicated tool", kind)
+		}
+		rel, ok := resolveArtifactWriteTargetFor(cfg, p, kind, id)
+		if !ok {
+			return "Error: cannot determine target path for write_artifact"
+		}
+		path := filepath.Join(p.DevTop, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			return fmt.Sprintf("Error: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			return fmt.Sprintf("Error writing artifact: %v", err)
+		}
+		return fmt.Sprintf("Written to .devtop/%s", rel)
 	})
 
 	registerTool("list_docs", map[string]interface{}{
@@ -95,7 +218,7 @@ func registerBuiltinTools() {
 			},
 		},
 	}, func(args map[string]interface{}) string {
-		docs, err := listDocs()
+		docs, err := listDocsP(toolPaths())
 		if err != nil {
 			return fmt.Sprintf("Error listing docs: %v", err)
 		}
@@ -114,7 +237,7 @@ func registerBuiltinTools() {
 			},
 		},
 	}, func(args map[string]interface{}) string {
-		tickets, err := listTickets()
+		tickets, err := listTicketsP(toolPaths())
 		if err != nil {
 			return fmt.Sprintf("Error listing tickets: %v", err)
 		}
@@ -137,7 +260,7 @@ func registerBuiltinTools() {
 		},
 	}, func(args map[string]interface{}) string {
 		id, _ := args["id"].(string)
-		filePath := filepath.Join(TICKETS_DIR, id+".md")
+		filePath := filepath.Join(toolPaths().Tickets, id+".md")
 		data, err := os.ReadFile(filePath)
 		if err != nil {
 			return fmt.Sprintf("Error: ticket '%s' not found", id)
@@ -157,6 +280,7 @@ func registerBuiltinTools() {
 					"description": map[string]interface{}{"type": "string", "description": "Markdown description"},
 					"priority":    map[string]interface{}{"type": "string", "enum": []string{"urgent", "high", "medium", "low"}, "description": "Priority level"},
 					"assignee":    map[string]interface{}{"type": "string", "description": "Assignee username (optional)"},
+					"source":      map[string]interface{}{"type": "string", "description": "Origin artifact slug, e.g. prds/data-layer (optional)"},
 				},
 				"required": []string{"title", "description", "priority"},
 			},
@@ -166,8 +290,9 @@ func registerBuiltinTools() {
 		desc, _ := args["description"].(string)
 		priority, _ := args["priority"].(string)
 		assignee, _ := args["assignee"].(string)
+		source, _ := args["source"].(string)
 
-		tid := getNextTicketID()
+		tid := getNextTicketIDP(toolPaths())
 		now := time.Now().UTC().Format("2006-01-02")
 		t := Ticket{
 			ID:             tid,
@@ -176,11 +301,12 @@ func registerBuiltinTools() {
 			Priority:       priority,
 			Assignee:       assignee,
 			Created:        now,
+			Source:         source,
 			RawDescription: desc,
 			Description:    renderMD(desc),
 		}
 
-		if err := writeTicketToFileSystem(t); err != nil {
+		if err := writeTicketToFileSystemP(toolPaths(), t); err != nil {
 			return fmt.Sprintf("Error creating ticket: %v", err)
 		}
 		return fmt.Sprintf("Created ticket %s: %s", tid, title)
@@ -204,7 +330,7 @@ func registerBuiltinTools() {
 		},
 	}, func(args map[string]interface{}) string {
 		id, _ := args["id"].(string)
-		t, err := getTicket(id)
+		t, err := getTicketP(toolPaths(), id)
 		if err != nil {
 			return fmt.Sprintf("Error: ticket '%s' not found", id)
 		}
@@ -219,7 +345,7 @@ func registerBuiltinTools() {
 			t.Assignee = a
 		}
 
-		if err := writeTicketToFileSystem(t); err != nil {
+		if err := writeTicketToFileSystemP(toolPaths(), t); err != nil {
 			return fmt.Sprintf("Error updating ticket: %v", err)
 		}
 		return fmt.Sprintf("Updated ticket %s", id)
@@ -243,7 +369,7 @@ func registerBuiltinTools() {
 		id, _ := args["id"].(string)
 		body, _ := args["body"].(string)
 
-		t, err := getTicket(id)
+		t, err := getTicketP(toolPaths(), id)
 		if err != nil {
 			return fmt.Sprintf("Error: ticket '%s' not found", id)
 		}
@@ -253,7 +379,7 @@ func registerBuiltinTools() {
 		t.RawDescription += commentLine
 		t.Description = renderMD(t.RawDescription)
 
-		if err := writeTicketToFileSystem(t); err != nil {
+		if err := writeTicketToFileSystemP(toolPaths(), t); err != nil {
 			return fmt.Sprintf("Error adding comment: %v", err)
 		}
 		return fmt.Sprintf("Comment added to ticket %s", id)
@@ -277,7 +403,7 @@ func registerBuiltinTools() {
 		if rel == "" {
 			return "Error: path is required"
 		}
-		full, err := resolveWorkspacePath(rel)
+		full, err := resolveWorkspacePathIn(toolWorkspaceRoot(), rel)
 		if err != nil {
 			return fmt.Sprintf("Error: %v", err)
 		}
@@ -315,9 +441,9 @@ func registerBuiltinTools() {
 		},
 	}, func(args map[string]interface{}) string {
 		rel, _ := args["path"].(string)
-		dir := workspaceRoot()
+		dir := toolWorkspaceRoot()
 		if rel != "" {
-			resolved, err := resolveWorkspacePath(rel)
+			resolved, err := resolveWorkspacePathIn(dir, rel)
 			if err != nil {
 				return fmt.Sprintf("Error: %v", err)
 			}
@@ -385,7 +511,7 @@ func registerBuiltinTools() {
 		},
 	}, func(args map[string]interface{}) string {
 		msg, _ := args["message"].(string)
-		return gitCommit(msg)
+		return gitCommitIn(currentToolRepo(), msg)
 	})
 
 	registerTool("ask_user", map[string]interface{}{
@@ -448,10 +574,15 @@ func pathWithinRoot(root, target string) bool {
 }
 
 func resolveWorkspacePath(rel string) (string, error) {
+	return resolveWorkspacePathIn(workspaceRoot(), rel)
+}
+
+// resolveWorkspacePathIn resolves a tool path relative to the given root,
+// guarding traversal (including via symlinks).
+func resolveWorkspacePathIn(root, rel string) (string, error) {
 	if filepath.IsAbs(rel) {
 		return "", fmt.Errorf("use a path relative to the workspace root")
 	}
-	root := workspaceRoot()
 	abs := filepath.Join(root, filepath.FromSlash(rel))
 	if !pathWithinRoot(root, abs) {
 		return "", fmt.Errorf("path escapes the workspace")
@@ -482,21 +613,89 @@ func getToolSchemas() []map[string]interface{} {
 	return schemas
 }
 
-func dispatchTool(name string, args map[string]interface{}) string {
+// toolCtx carries the repo a tool dispatch is scoped to. Tool handlers read
+// the package globals (legacy single-repo behavior) unless a dispatch pins the
+// current repo; the pin is held for the duration of one handler call, so
+// concurrent agents in different repos never cross scopes.
+var toolCtx struct {
+	mu   sync.Mutex
+	repo *Repo
+}
+
+// dispatchToolForRepo runs a tool under an agent runtime's allowlist and
+// permission scopes, scoped to repo (nil = legacy global behavior).
+func dispatchToolForRepo(repo *Repo, rt *agentRuntime, name string, args map[string]interface{}) string {
+	if rt != nil {
+		if msg := rt.authorizeTool(name, args); msg != "" {
+			return msg
+		}
+	}
 	toolRegistryMu.Lock()
 	def, ok := toolRegistry[name]
 	toolRegistryMu.Unlock()
 	if !ok {
 		return fmt.Sprintf("Unknown tool: %s", name)
 	}
-	return def.Handler(args)
+	toolCtx.mu.Lock()
+	prev := toolCtx.repo
+	toolCtx.repo = repo
+	result := def.Handler(args)
+	toolCtx.repo = prev
+	toolCtx.mu.Unlock()
+	return result
 }
 
-func gitCommit(message string) string {
-	repoDir := filepath.Dir(DEVTOP_DIR)
-	rel, err := filepath.Rel(repoDir, DEVTOP_DIR)
+// currentToolRepo returns the repo scoped to the running tool call, or nil.
+// The caller must be inside a tool handler (dispatchToolForRepo holds the
+// lock); reads in a critical section are ordered against the write by the
+// same mutex, so this is race-safe without re-locking.
+func currentToolRepo() *Repo {
+	return toolCtx.repo
+}
+
+// toolPaths returns the storage paths of the scoped repo, or the legacy
+// globals when the call is unscoped.
+func toolPaths() RepoPaths {
+	if r := currentToolRepo(); r != nil {
+		return r.paths
+	}
+	return defaultPaths()
+}
+
+// toolConfig returns the config of the scoped repo, or the legacy global.
+func toolConfig() EngineConfig {
+	if r := currentToolRepo(); r != nil {
+		if cfg, err := r.Config(); err == nil {
+			return cfg
+		}
+	}
+	return engineConfig
+}
+
+// toolWorkspaceRoot returns the workspace root of the scoped repo.
+func toolWorkspaceRoot() string {
+	if r := currentToolRepo(); r != nil {
+		return r.Root
+	}
+	return workspaceRoot()
+}
+
+func dispatchTool(name string, args map[string]interface{}) string {
+	return dispatchToolResolved(nil, name, args)
+}
+
+func gitCommitIn(repo *Repo, message string) string {
+	if repo == nil {
+		return gitCommit(message)
+	}
+	p := repo.paths
+	repoDir := gitRootFrom(p.DevTop)
+	if repoDir == "" {
+		repoDir = repo.Root
+	}
+	rel, err := filepath.Rel(repoDir, p.DevTop)
 	if err != nil {
-		rel = DEVTOP_DIR
+		rel = p.DevTop
 	}
 
 	addCmd := exec.Command("git", "add", rel)
@@ -522,6 +721,27 @@ func gitCommit(message string) string {
 		return "Nothing to commit — no changes detected."
 	}
 	return out
+}
+
+func gitCommit(message string) string {
+	return gitCommitIn(forRepoOf(defaultPaths()), message)
+}
+
+// forRepoOf finds the registered repo whose devtop dir matches p, or a
+// synthetic legacy repo so unscoped writes keep the classic single-repo
+// behavior (tests, startup scaffolding).
+func forRepoOf(p RepoPaths) *Repo {
+	for _, r := range registry.List() {
+		if r.paths.DevTop == p.DevTop {
+			return r
+		}
+	}
+	return &Repo{
+		Name:  repoNameForRoot(p.DevTop),
+		Root:  filepath.Dir(p.DevTop),
+		Dir:   p.DevTop,
+		paths: p,
+	}
 }
 
 type AgentMessage struct {
@@ -561,11 +781,25 @@ func loadAgentsPrompt() string {
 	return SYSTEM_PROMPT
 }
 
-func runAgent(ctx context.Context, messages []AgentMessage, apiKey, baseURL, model string, outChan chan<- AgentChunk) error {
-	return runAgentWithDepth(ctx, messages, apiKey, baseURL, model, outChan, 0)
+func runAgent(ctx context.Context, messages []AgentMessage, apiKey, baseURL, model string, rt *agentRuntime, outChan chan<- AgentChunk) error {
+	return runAgentInRepo(ctx, nil, messages, apiKey, baseURL, model, rt, outChan)
 }
 
-func runAgentWithDepth(ctx context.Context, messages []AgentMessage, apiKey, baseURL, model string, outChan chan<- AgentChunk, depth int) error {
+// runAgentInRepo runs the agent scoped to a repo (nil = legacy globals). Tool
+// dispatches inside the agent loop are scoped to the repo, so docs, tickets,
+// workspace files and git commits always land in the owning repository.
+func runAgentInRepo(ctx context.Context, repo *Repo, messages []AgentMessage, apiKey, baseURL, model string, rt *agentRuntime, outChan chan<- AgentChunk) error {
+	prompt := loadAgentsPrompt()
+	if rt != nil {
+		if rt.prompt == "" {
+			rt.prompt = buildAgentPrompt(rt)
+		}
+		prompt = rt.prompt
+	}
+	return runAgentWithDepth(ctx, repo, messages, apiKey, baseURL, model, prompt, rt, outChan, 0)
+}
+
+func runAgentWithDepth(ctx context.Context, repo *Repo, messages []AgentMessage, apiKey, baseURL, model, prompt string, rt *agentRuntime, outChan chan<- AgentChunk, depth int) error {
 	defer close(outChan)
 
 	if depth >= MAX_AGENT_DEPTH {
@@ -576,7 +810,7 @@ func runAgentWithDepth(ctx context.Context, messages []AgentMessage, apiKey, bas
 		return fmt.Errorf("max agent depth %d reached", MAX_AGENT_DEPTH)
 	}
 
-	systemMsg := AgentMessage{Role: "system", Content: loadAgentsPrompt()}
+	systemMsg := AgentMessage{Role: "system", Content: prompt}
 	fullMessages := append([]AgentMessage{systemMsg}, messages...)
 
 	// Map AgentMessage to openai.ChatCompletionMessage
@@ -709,7 +943,7 @@ func runAgentWithDepth(ctx context.Context, messages []AgentMessage, apiKey, bas
 				args = make(map[string]interface{})
 			}
 
-			result := dispatchTool(tc.Name, args)
+			result := dispatchToolForRepo(repo, rt, tc.Name, args)
 			outChan <- AgentChunk{
 				Type:      "tool_call",
 				Name:      tc.Name,
@@ -727,7 +961,7 @@ func runAgentWithDepth(ctx context.Context, messages []AgentMessage, apiKey, bas
 
 		followupChan := make(chan AgentChunk, 100)
 		go func() {
-			_ = runAgentWithDepth(ctx, followupMessages, apiKey, baseURL, model, followupChan, depth+1)
+			_ = runAgentWithDepth(ctx, repo, followupMessages, apiKey, baseURL, model, prompt, rt, followupChan, depth+1)
 		}()
 
 		for chunk := range followupChan {

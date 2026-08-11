@@ -238,3 +238,95 @@ tr.copilotKitMarkdownElement:nth-child(even) td.copilotKitMarkdownElement {
   border-color: #7f1d1d;
   color: #f87171;
 }
+
+/* Historical document reads — dimmed headings/body so it is obvious the
+   content shown is a past revision, not the live working copy. */
+.prose-history h1 {
+  font-size: 1.5rem;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.75rem;
+  color: #94a3b8;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+.prose-history h2 {
+  font-size: 1.05rem;
+  font-weight: 500;
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+  color: #64748b;
+  border-bottom: 1px dashed #1e293b;
+  padding-bottom: 0.4rem;
+}
+.prose-history p {
+  margin-bottom: 0.75rem;
+  line-height: 1.65;
+  color: #64748b;
+}
+.prose-history code {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  background: #1e293b;
+  color: #94a3b8;
+  padding: 0.1em 0.35em;
+  border-radius: 0.3rem;
+  font-size: 0.8rem;
+}
+
+/* The diff-view library ships its own dark theme via CSS variables; keep its
+   GitHub-style colors and only tighten the font so the "what this commit
+   changed" panel reads like the rest of the app. */
+.diff-view-theme-dark .diff-line-content,
+.diff-view-theme-dark .diff-line-old-content,
+.diff-view-theme-dark .diff-line-new-content {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* Doc ⋯ menu — Notion-style popover entrance. The menu itself is a fixed
+   positioned element so it can overflow the sidebar's scroll container; the
+   animation is only a fade + tiny rise. */
+@keyframes doc-menu-pop {
+  from { opacity: 0; transform: scale(0.97) translateY(-3px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.doc-menu-pop { animation: doc-menu-pop 0.14s cubic-bezier(0.2, 0.8, 0.3, 1); }
+
+/* Pipeline view — the cross-kind derivation grid and its busy spinner. */
+.stage-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20px minmax(0, 1fr) 20px minmax(0, 1.3fr);
+  align-items: stretch;
+}
+@keyframes spin-fast { to { transform: rotate(360deg); } }
+.spin { animation: spin-fast 0.7s linear infinite; }
+
+/* rc-tree (Add-repo folder browser) — prod dark theme, no default stylesheet */
+.rc-tree { font-size: 12px; color: #cbd5e1; }
+.rc-tree, .rc-tree * { box-sizing: border-box; }
+.rc-tree-list, .rc-tree-list-scrollbar { list-style: none; margin: 0; padding: 0; }
+.rc-tree-treenode {
+  display: flex; align-items: center; padding: 1px 4px; border-radius: 8px;
+  transition: background-color 0.12s ease;
+}
+.rc-tree-treenode:hover { background: rgba(30, 41, 59, 0.35); }
+.rc-tree-treenode-selected { background: rgba(59, 130, 246, 0.12); }
+.rc-tree-indent { display: inline-flex; flex-direction: column; }
+.rc-tree-indent-unit { width: 18px; flex-shrink: 0; }
+.rc-tree-switcher {
+  width: 22px; height: 24px; flex-shrink: 0; display: inline-flex; align-items: center;
+  justify-content: center; color: #64748b; cursor: pointer;
+}
+.rc-tree-switcher-noop { pointer-events: none; }
+.rc-tree-switcher-loading-icon {
+  width: 12px; height: 12px; border: 1.5px solid #334155; border-top-color: #3b82f6;
+  border-radius: 9999px; animation: spin-fast 0.7s linear infinite; flex-shrink: 0;
+}
+.rc-tree-icon__loading { display: none; }
+.rc-tree-node-content-wrapper {
+  display: inline-flex; flex: 1; min-width: 0; align-items: center; gap: 6px;
+  border: 1px solid transparent; border-radius: 6px; padding: 3px 6px;
+  color: #cbd5e1; cursor: pointer;
+}
+.rc-tree-node-content-wrapper:hover { background: rgba(30, 41, 59, 0.4); }
+.rc-tree-treenode-selected > .rc-tree-node-content-wrapper { color: #93c5fd; }

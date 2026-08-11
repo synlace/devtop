@@ -24,6 +24,8 @@ artifact_kinds:
       title: string
       description: string
       tags: [string]
+      derive_prospects: { prds: [eligible, not-eligible] }
+      prospect_by: [model, user]
   tickets:
     path: tickets
     extension: .md
@@ -62,14 +64,54 @@ artifact_kinds:
       status: [draft, reviewing, approved, archived]
       requirements: [{ id, description, acceptance }]
 
+# ---------------------------------------------------------------------------
+# Agents and skills: repo-owned, devtop-consumed. Files in .devtop/agents/
+# and .devtop/skills/ are NOT prescribed — the repo copies what it wants from
+# templates/. An empty agents/ directory changes nothing.
+# ---------------------------------------------------------------------------
+  agents:
+    path: agents
+    extension: .mdx
+    agent_writable: false
+    view: list
+    schema:
+      title: string
+      model: string
+      tools: [string]
+      skills: [string]
+      permissions:
+        read: [string]
+        write: [string]
+  skills:
+    path: skills
+    extension: .mdx
+    agent_writable: false
+    view: list
+    schema:
+      title: string
+      description: string
+      triggers: [string]
+
 derivation:
   - from: docs
     to: prds
     transform: breakdown
+    agent: prd-builder
+    classifier: classify-doc
   - from: prds
     to: tickets
     transform: derive_tickets
+    agent: ticket-deriver
     gate: "prds.status == approved"
+
+# The cross-kind derivation view. Renders the `derivation` edges above;
+# the nav entry is what surfaces it in the UI.
+pipeline:
+  nav:
+    label: Pipeline
+    icon: flow
+    order: 4
+    view: pipeline
 
 # How changed source artifacts affect derived artifacts. Computed generically
 # from the derivation edges above.
@@ -87,6 +129,12 @@ prompts:
   classify:
     prompt: prompts/classify.md
     default: knowledge
+
+# The embedded chat agent runtime. `default` names a file in .devtop/agents/
+# (slug). Empty means the classic behavior: the workspace AGENTS.md, or the
+# embedded SYSTEM_PROMPT, with an unrestricted tool set.
+agent_runtime:
+  default: ""
 
 # The machine-readable contract external orchestrators (ferret, Agent Manager)
 # parse to know the artifact vocabulary, which states are grabbable, and how

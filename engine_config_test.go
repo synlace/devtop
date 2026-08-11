@@ -71,8 +71,8 @@ func TestLoadEngineConfig_ParsesDefault(t *testing.T) {
 	if err := loadEngineConfig(); err != nil {
 		t.Fatalf("loadEngineConfig: %v", err)
 	}
-	if len(engineConfig.ArtifactKinds) != 3 {
-		t.Fatalf("expected 3 default kinds, got %d", len(engineConfig.ArtifactKinds))
+	if len(engineConfig.ArtifactKinds) != 5 {
+		t.Fatalf("expected 5 default kinds, got %d", len(engineConfig.ArtifactKinds))
 	}
 	docs, ok := engineConfig.ArtifactKinds["docs"]
 	if !ok {
@@ -98,8 +98,34 @@ func TestLoadEngineConfig_ParsesDefault(t *testing.T) {
 	if prds.Nav == nil || prds.Nav.Label != "PRDs" || prds.Nav.View != "list" {
 		t.Errorf("prds nav misconfigured: %+v", prds.Nav)
 	}
+	agents, ok := engineConfig.ArtifactKinds["agents"]
+	if !ok {
+		t.Fatal("missing agents kind")
+	}
+	if agents.Path != "agents" || agents.AgentWritable || agents.Nav != nil {
+		t.Errorf("agents kind misconfigured: %+v", agents)
+	}
+	skills, ok := engineConfig.ArtifactKinds["skills"]
+	if !ok {
+		t.Fatal("missing skills kind")
+	}
+	if skills.Path != "skills" || skills.AgentWritable || skills.Nav != nil {
+		t.Errorf("skills kind misconfigured: %+v", skills)
+	}
+	if engineConfig.AgentRuntime.Default != "" {
+		t.Errorf("agent_runtime.default = %q, want empty", engineConfig.AgentRuntime.Default)
+	}
 	if len(engineConfig.Derivation) != 2 {
 		t.Errorf("expected 2 derivation edges, got %d", len(engineConfig.Derivation))
+	}
+	if engineConfig.Derivation[0].Agent != "prd-builder" || engineConfig.Derivation[0].Transform != "breakdown" {
+		t.Errorf("docs->prds edge misconfigured: %+v", engineConfig.Derivation[0])
+	}
+	if engineConfig.Derivation[1].Agent != "ticket-deriver" || engineConfig.Derivation[1].Gate != "prds.status == approved" {
+		t.Errorf("prds->tickets edge misconfigured: %+v", engineConfig.Derivation[1])
+	}
+	if engineConfig.Pipeline.Nav == nil || engineConfig.Pipeline.Nav.Label != "Pipeline" || engineConfig.Pipeline.Nav.View != "pipeline" {
+		t.Errorf("pipeline nav misconfigured: %+v", engineConfig.Pipeline.Nav)
 	}
 	if engineConfig.Handoff.LifecycleOwner != "external" {
 		t.Errorf("handoff lifecycle_owner = %q, want external", engineConfig.Handoff.LifecycleOwner)
@@ -194,13 +220,24 @@ func TestAPIEngineConfig(t *testing.T) {
 	}
 	var out struct {
 		ArtifactKinds map[string]ArtifactKind `json:"artifact_kinds"`
+		AgentRuntime  AgentRuntimeConfig      `json:"agent_runtime"`
+		Pipeline      PipelineConfig          `json:"pipeline"`
 		Handoff       Handoff                 `json:"handoff"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(out.ArtifactKinds) != 3 {
-		t.Errorf("expected 3 kinds in response, got %d", len(out.ArtifactKinds))
+	if len(out.ArtifactKinds) != 5 {
+		t.Errorf("expected 5 kinds in response, got %d", len(out.ArtifactKinds))
+	}
+	if _, ok := out.ArtifactKinds["agents"]; !ok {
+		t.Error("agents kind missing from response")
+	}
+	if _, ok := out.ArtifactKinds["skills"]; !ok {
+		t.Error("skills kind missing from response")
+	}
+	if out.Pipeline.Nav == nil || out.Pipeline.Nav.Label != "Pipeline" {
+		t.Error("pipeline nav missing from response")
 	}
 	if out.Handoff.LifecycleOwner != "external" {
 		t.Errorf("lifecycle_owner = %q", out.Handoff.LifecycleOwner)

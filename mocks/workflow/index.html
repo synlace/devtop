@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>devtop — workflow mock (docs → prds → tickets)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            bgDark: '#070a13',
+            surfaceDark: '#0c101f',
+            borderDark: '#1e293b',
+            accentBlue: '#3b82f6',
+            accentPurple: '#8b5cf6',
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'ui-monospace', 'Fira Code', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    * { scrollbar-width: thin; scrollbar-color: #1e293b transparent; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 9999px; }
+    .fade-in { animation: fadeIn 0.18s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    .spin { animation: spin 0.7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .stage-grid { display: grid; grid-template-columns: minmax(0, 1fr) 26px minmax(0, 1fr) 26px minmax(0, 1.3fr); align-items: stretch; }
+    .compact-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) 20px minmax(0, 0.8fr) 20px minmax(0, 1fr); align-items: center; }
+  </style>
+</head>
+  <body class="min-h-screen bg-bgDark text-slate-200 font-sans antialiased" style="background-image: radial-gradient(900px 400px at 50% -80px, rgba(59,130,246,0.08), transparent 60%), radial-gradient(700px 350px at 85% 110px, rgba(139,92,246,0.06), transparent 60%)">
+  <!-- App chrome (excluded from the evaluated design) -->
+  <header class="h-12 flex items-center gap-2 px-5 border-b border-borderDark/50 bg-bgDark sticky top-0 z-40">
+    <span class="w-6 h-6 rounded-lg bg-accentBlue/20 border border-accentBlue/40 flex items-center justify-center text-[10px] font-bold text-accentBlue font-mono">d</span>
+    <span class="text-sm font-semibold text-slate-100">devtop</span>
+    <span class="text-xs text-slate-600 mx-2">/</span>
+    <span class="text-xs text-slate-400">Derivation pipeline</span>
+    <span class="ml-auto text-[10px] uppercase tracking-widest text-slate-600">mock — workflow</span>
+  </header>
+
+  <main id="design" class="w-full"></main>
+
+  <script>
+  // ---------------------------------------------------------------
+  // Variant switcher — all variants iterate on the pipeline overview
+  // ---------------------------------------------------------------
+  const VARIANTS = [
+    { key: 'A', name: 'Summary cards', fn: renderCards },
+    { key: 'B', name: 'Compact rows', fn: renderCompact },
+    { key: 'C', name: 'Focus + inline delta', fn: renderFocus },
+  ]
+  const PRD_CHIP_STYLES = {
+    draft: 'bg-gradient-to-b from-blue-500/15 to-blue-500/5 border-blue-500/30 text-blue-300 shadow-[0_0_12px_-6px_rgba(59,130,246,0.6)]',
+    reviewing: 'bg-gradient-to-b from-amber-500/15 to-amber-500/5 border-amber-500/30 text-amber-300 shadow-[0_0_12px_-6px_rgba(245,158,11,0.6)]',
+    approved: 'bg-gradient-to-b from-emerald-500/15 to-emerald-500/5 border-emerald-500/30 text-emerald-300 shadow-[0_0_12px_-6px_rgba(16,185,129,0.6)]',
+    archived: 'bg-gradient-to-b from-purple-500/15 to-purple-500/5 border-purple-500/30 text-purple-300',
+  }
+  const PRD_CHIP_DOTS = { draft: 'bg-blue-400', reviewing: 'bg-amber-400', approved: 'bg-emerald-400', archived: 'bg-purple-400' }
+  function prdChip(status, label) {
+    return `<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border capitalize flex-shrink-0 ${PRD_CHIP_STYLES[status] || PRD_CHIP_STYLES.draft}"><span class="w-1.5 h-1.5 rounded-full ${PRD_CHIP_DOTS[status] || 'bg-blue-400'}"></span>${label || status}</span>`
+  }
+  const TKT_CHIP_STYLES = {
+    open: 'bg-blue-500/10 border-blue-500/25 text-blue-400',
+    'in-progress': 'bg-amber-500/10 border-amber-500/25 text-amber-400',
+    done: 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400',
+  }
+  function tktChip(status) {
+    return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border capitalize flex-shrink-0 ${TKT_CHIP_STYLES[status] || TKT_CHIP_STYLES.open}"><span class="w-1 h-1 rounded-full bg-current"></span>${status}</span>`
+  }
+  function primaryBtn(label, onClick, extra) {
+    return `<button class="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white bg-gradient-to-b from-accentBlue to-blue-600 shadow-[0_4px_14px_-4px_rgba(59,130,246,0.7)] hover:brightness-110 hover:shadow-[0_6px_18px_-4px_rgba(59,130,246,0.8)] active:scale-[0.97] transition-all ${extra || ''}" ${onClick ? 'onclick="' + onClick + '"' : ''}>${label}</button>`
+  }
+  function ghostBtn(label, onClick, extra) {
+    return `<button class="px-3.5 py-1.5 rounded-lg text-xs font-medium text-slate-300 bg-surfaceDark/40 border border-borderDark/60 hover:text-white hover:border-accentBlue/40 hover:bg-surfaceDark/80 active:scale-[0.97] transition-all ${extra || ''}" ${onClick ? 'onclick="' + onClick + '"' : ''}>${label}</button>`
+  }
+  function pageHead(title, sub) {
+    return `
+      <div class="max-w-5xl mx-auto pt-10 px-6 fade-in">
+        <div class="flex items-center gap-2 mb-2">
+          <span class="w-1.5 h-1.5 rounded-full bg-accentBlue shadow-[0_0_10px_rgba(59,130,246,0.9)]"></span>
+          <span class="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">devtop · cross-kind derivation</span>
+        </div>
+        <h1 class="text-3xl font-bold tracking-tight bg-gradient-to-r from-slate-50 via-slate-200 to-slate-500 bg-clip-text text-transparent">${title}</h1>
+        <p class="text-xs text-slate-400 mt-2">${sub}</p>
+      </div>`
+  }
+  function stageLabel(t) {
+    return `<div class="text-[9px] uppercase tracking-[0.18em] font-bold text-slate-500 mb-1.5">${t}</div>`
+  }
+  function arrow(sm) {
+    return `
+      <div class="flex items-center justify-center gap-0 select-none">
+        <span class="h-px ${sm ? 'w-3' : 'w-4'} rounded-full bg-gradient-to-r from-borderDark/30 to-borderDark/80"></span>
+        <svg class="${sm ? 'w-2.5 h-2.5' : 'w-3 h-3'} -ml-0.5 text-accentBlue/80" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M9 5l7 7-7 7"/></svg>
+      </div>`
+  }
+  function docIcon() {
+    return `<svg class="w-3.5 h-3.5 text-slate-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>`
+  }
+  function openIcon(href, label) {
+    return `<a href="${href}" target="_blank" rel="noopener" title="Open ${label} in a new tab" class="inline-flex items-center justify-center w-5 h-5 rounded-md text-slate-500 hover:text-slate-200 hover:bg-borderDark/40 transition-colors flex-shrink-0">
+      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+    </a>`
+  }
+  function docBreadcrumb(doc) {
+    const parts = doc.replace(/\.mdx$/, '').split('/')
+    const last = parts.pop()
+    const tc = s => s.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+    const crumbs = [
+      ...parts.map(p => `<span class="text-slate-500">${tc(p)}</span>`),
+      `<span class="font-semibold bg-gradient-to-r from-white to-slate-300 bg-clip-text text-transparent">${tc(last)}</span>`,
+    ]
+    return crumbs.join(`<span class="text-slate-600 mx-1.5 select-none">›</span>`)
+  }
+  function staleBadge() {
+    return `<span class="inline-flex items-center gap-1 px-1.5 py-px rounded text-[9px] font-semibold uppercase tracking-wider bg-rose-500/10 border border-rose-500/30 text-rose-400 shadow-[0_0_10px_-4px_rgba(244,63,94,0.7)]"><span class="w-1 h-1 rounded-full bg-rose-400 animate-pulse"></span>stale</span>`
+  }
+
+  // ---------------------------------------------------------------
+  // Data — one entry per document, with a generated TL;DR
+  //   prospect: null | 'eligible' | 'not-eligible'  (per-target, here: prd)
+  //   prospectBy: 'model' | 'user' | null           (who set the verdict)
+  // ---------------------------------------------------------------
+  const ROWS = {
+    architecture: {
+      doc: 'architecture/agent-engine.mdx',
+      tldr: 'How the embedded agent works: tool registry, recursion depth limit, SSE streaming, and auto-commit of every write.',
+      prd: 'approved', reqs: 4, stale: false,
+      prospect: 'eligible', prospectBy: 'user',
+      tickets: [
+        { id: '006', title: 'Document agent tool set', status: 'open' },
+        { id: '007', title: 'Add SSE status events', status: 'in-progress' },
+        { id: '008', title: 'Surface depth limit in UI', status: 'done' },
+      ],
+    },
+    gettingStarted: {
+      doc: 'getting-started/configuration.mdx',
+      tldr: 'Installation and environment setup: just recipes, required variables, and first-run materialization of config.yml.',
+      prd: 'reviewing', reqs: 2, stale: false,
+      prospect: 'eligible', prospectBy: 'model',
+      tickets: [
+        { id: '009', title: 'Write config reference', status: 'open' },
+      ],
+    },
+    api: {
+      doc: 'reference/api.mdx',
+      tldr: 'The HTTP surface: docs, tickets, threads, revisions, favorites, and the generic artifact endpoints.',
+      prd: 'draft', reqs: 3, stale: false,
+      prospect: 'eligible', prospectBy: 'user',
+      tickets: [],
+    },
+    integrations: {
+      doc: 'reference/integrations.mdx',
+      tldr: 'External tool surface: auth providers, webhook delivery, and the integration manifest format.',
+      prd: null, reqs: 0, stale: false,
+      prospect: 'eligible', prospectBy: 'user',
+      tickets: [],
+    },
+    deployment: {
+      doc: 'reference/deployment.mdx',
+      tldr: 'Building and running devtop: image build, container entrypoint, and mounting against a repository.',
+      prd: null, reqs: 0, stale: false,
+      prospect: null, prospectBy: null,
+      tickets: [],
+    },
+    dataLayer: {
+      doc: 'architecture/data-layer.mdx',
+      tldr: 'Filesystem is the store: frontmatter parsing, write placement, git revision history, and the file watcher.',
+      prd: 'approved', reqs: 5, stale: true,
+      prospect: 'eligible', prospectBy: 'user',
+      tickets: [
+        { id: '010', title: 'Adopt file-based storage', status: 'in-progress' },
+        { id: '011', title: 'Migrate fixtures to files', status: 'open' },
+        { id: '012', title: 'Remove sqlite dependency', status: 'open' },
+        { id: '013', title: 'Document read paths', status: 'done' },
+        { id: '014', title: 'Watch .devtop directory', status: 'done' },
+      ],
+    },
+    roadmap: {
+      doc: 'roadmap/product-notes.mdx',
+      tldr: 'Raw product notes: parking-lot ideas and half-formed sketches, not yet shaped into system intent.',
+      prd: null, reqs: 0, stale: false,
+      prospect: 'not-eligible', prospectBy: 'model',
+      tickets: [],
+    },
+  }
+
+  function pipelineStats() {
+    const vals = Object.values(ROWS)
+    const total = vals.length
+    const derived = vals.filter(r => r.prd !== null).length
+    const approved = vals.filter(r => r.prd === 'approved').length
+    const open = vals.reduce((n, r) => n + r.tickets.filter(t => t.status !== 'done').length, 0)
+    const stale = vals.filter(r => r.stale).length
+    const eligible = vals.filter(r => r.prospect === 'eligible').length
+    const excluded = vals.filter(r => r.prospect === 'not-eligible').length
+    const unassessed = vals.filter(r => r.prospect === null).length
+    const chip = (cls, dot, txt) => `<span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] font-medium border bg-gradient-to-b from-surfaceDark/90 to-bgDark/70 shadow-sm backdrop-blur-sm ${cls}"><span class="w-1.5 h-1.5 rounded-full ${dot}"></span>${txt}</span>`
+    return `
+      <div class="flex flex-wrap items-center gap-2">
+        ${chip('border-borderDark/50 text-slate-300', 'bg-slate-500', `<span class="text-slate-400">${total}</span> docs`)}
+        ${chip('border-emerald-500/25 text-emerald-300', 'bg-emerald-400', `<span class="text-emerald-400">${eligible}/${total}</span> eligible`)}
+        ${excluded ? chip('border-rose-500/25 text-rose-300', 'bg-rose-400', `<span class="text-rose-400">${excluded}</span> excluded`) : ''}
+        ${unassessed ? chip('border-slate-500/30 text-slate-400', 'bg-slate-400', `<span class="text-slate-300">${unassessed}</span> unassessed`) : ''}
+        ${chip('border-blue-500/25 text-blue-300', 'bg-blue-400', `<span class="text-blue-400">${derived}</span> PRDs`)}
+        ${chip('border-emerald-500/25 text-emerald-300', 'bg-emerald-400', `<span class="text-emerald-400">${approved}</span> approved`)}
+        ${chip('border-sky-500/25 text-sky-300', 'bg-sky-400', `<span class="text-sky-400">${open}</span> open tickets`)}
+        ${stale ? chip('border-rose-500/30 text-rose-300 bg-rose-500/5', 'bg-rose-400', `<span class="text-rose-400">${stale}</span> stale`) : chip('border-borderDark/50 text-slate-500', 'bg-slate-600', 'no stale')}
+      </div>`
+  }
+
+  function prospectChip(key) {
+    const r = ROWS[key]
+    if (r.prospect === null) return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-medium border border-slate-600/40 text-slate-500 bg-slate-500/5">unassessed</span>`
+    const eligible = r.prospect === 'eligible'
+    const byModel = r.prospectBy === 'model'
+    const label = (eligible ? 'eligible' : 'not eligible') + (byModel ? ' · suggested' : ' · verified')
+    const cls = eligible
+      ? (byModel ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300' : 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200 shadow-[0_0_12px_-6px_rgba(16,185,129,0.7)]')
+      : (byModel ? 'border-rose-500/25 bg-rose-500/10 text-rose-300' : 'border-rose-500/40 bg-rose-500/15 text-rose-200 shadow-[0_0_12px_-6px_rgba(244,63,94,0.7)]')
+    return `<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-medium border ${cls}">${byModel ? `<span class="w-1 h-1 rounded-full bg-current"></span>` : '<svg class="w-2.5 h-2.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>'}<span class="font-mono">${label}</span></span>`
+  }
+
+  function prospectActions(key) {
+    const r = ROWS[key]
+    if (r.prospect === null) {
+      if (r.busy) return `
+        <div class="mt-2.5 pt-2.5 border-t border-borderDark/30">${spinner('checking…')}</div>`
+      return `
+      <div class="mt-2.5 pt-2.5 border-t border-borderDark/30 flex items-center gap-2 flex-wrap">
+        ${primaryBtn('Suggest eligibility', `suggestProspect('${key}')`)}
+        <span class="text-[10px] text-slate-600">classify-doc reads the doc, writes <span class="font-mono">derive_prospects</span>.</span>
+      </div>`
+    }
+    if (r.prospectBy !== 'model') return '' // user-verified — sealed
+    if (r.prospect === 'eligible') return `
+      <div class="mt-2.5 pt-2.5 border-t border-borderDark/30 flex items-center gap-2 flex-wrap">
+        ${ghostBtn('Confirm', `confirmProspect('${key}')`)}
+        ${ghostBtn('Exclude', `excludeProspect('${key}')`)}
+        <span class="text-[10px] text-slate-600">Model verdict — the user decides.</span>
+      </div>`
+    return `
+      <div class="mt-2.5 pt-2.5 border-t border-borderDark/30 flex items-center gap-2 flex-wrap">
+        ${ghostBtn('Override', `overrideProspect('${key}')`)}
+        <span class="text-[10px] text-slate-600">Model says no — the user decides.</span>
+      </div>`
+  }
+
+  function spinner(msg) {
+    return `<span class="inline-flex items-center gap-2 text-xs text-slate-400"><svg class="w-3.5 h-3.5 spin" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>${msg}</span>`
+  }
+  // Actions bound to the stage cell they mutate — no header-level buttons.
+  function prdActions(key) {
+    const r = ROWS[key]
+    if (r.prospect === null || r.prospect === 'not-eligible') return ''
+    if (r.busy) return spinner('deriving…')
+    if (r.approving) return spinner('approving…')
+    if (r.prd === null) return primaryBtn('Derive PRD', `derivePRD('${key}')`)
+    if (r.prd === 'draft') return ghostBtn('Review PRD', `reviewPRD('${key}')`)
+    if (r.prd === 'reviewing') return `${primaryBtn('Approve', `approvePRD('${key}')`)}${ghostBtn('Request changes', `requestChanges('${key}')`)}`
+    const re = r.stale
+      ? primaryBtn('Re-derive delta', `rederive('${key}')`)
+      : ghostBtn('Re-derive', `rederive('${key}')`, r.derived ? '' : 'opacity-60')
+    return `<span class="flex items-center gap-2 flex-wrap">${re}</span>`
+  }
+  function ticketActions(key) {
+    const r = ROWS[key]
+    if (r.prd !== 'approved') return ''
+    if (r.deriving) return spinner('creating tickets…')
+    const tk = r.tickets.length === 0
+      ? primaryBtn('Create tickets', `createTickets('${key}')`)
+      : ghostBtn('New ticket', `addTicket('${key}')`)
+    return `<span class="flex items-center gap-2 flex-wrap">${tk}</span>`
+  }
+  const cellActions = (key, fn) => { const a = fn(key); return a ? `<div class="mt-2.5 flex items-center gap-2 flex-wrap">${a}</div>` : '' }
+
+  // ---------- shared stage renderers ----------
+  function prdStage(key) {
+    const r = ROWS[key]
+    if (r.prd === null) {
+      const msg = r.prospect === 'not-eligible'
+        ? `<p class="text-xs text-rose-300/80">Excluded — ${r.prospectBy === 'user' ? 'user' : 'suggested'} verdict.</p><p class="text-[10px] text-slate-700 mt-1">Frontmatter: <span class="font-mono">prd: not-eligible</span>.</p>`
+        : r.prospect === null
+          ? `<p class="text-xs text-slate-600">Not assessed yet.</p><p class="text-[10px] text-slate-700 mt-1">Suggest eligibility to qualify this doc.</p>`
+          : `<p class="text-xs text-slate-600">Not derived yet.</p><p class="text-[10px] text-slate-700 mt-1">Derive a draft, review it, approve it.</p>`
+      return `
+      <div class="rounded-xl border border-dashed border-borderDark/60 bg-[radial-gradient(ellipse_at_top,rgba(59,130,246,0.05),transparent_65%)] p-4 h-full flex flex-col">
+        ${stageLabel('PRD')}
+        ${msg}
+        <div class="mt-auto">${cellActions(key, prdActions)}</div>
+      </div>`
+    }
+    return `
+      <div class="rounded-xl border border-borderDark/50 bg-surfaceDark/60 p-4 h-full flex flex-col shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] hover:border-accentBlue/25 transition-colors">
+        <div class="flex items-center justify-between" >${stageLabel('PRD')}${openIcon('prds/' + r.doc.replace(/\.mdx$/, '/index.mdx'), 'PRD')}</div>
+        <div class="flex items-center gap-2 flex-wrap">${prdChip(r.prd)}${r.stale ? staleBadge() : ''}</div>
+        <p class="text-[11px] text-slate-400 mt-2">${r.reqs} requirements · ${r.derived ? 'synced' : r.stale ? 'source changed' : 'draft'}</p>
+        <p class="text-[10px] font-mono text-slate-600 truncate mt-0.5">prds/${r.doc.replace(/\.mdx$/, '/index.mdx')}</p>
+        <div class="mt-auto">${cellActions(key, prdActions)}</div>
+      </div>`
+  }
+
+  function ticketsList(key, max) {
+    const r = ROWS[key]
+    const list = r.tickets.slice(0, max)
+    return list.map(t => `
+      <div class="flex items-center gap-2.5 rounded-lg border ${t.status === 'done' ? 'border-borderDark/30 bg-transparent opacity-70' : 'border-borderDark/60 bg-bgDark/40 hover:border-borderDark/80 hover:bg-bgDark/60'} px-2.5 py-1.5 min-w-0 transition-colors">
+        <span class="font-mono text-[10px] text-slate-500 flex-shrink-0">${t.id}</span>
+        <span class="text-[11px] ${t.status === 'done' ? 'text-slate-600 line-through' : 'text-slate-200'} truncate flex-1 min-w-0">${t.title}</span>
+        ${tktChip(t.status)}
+      </div>`).join('')
+  }
+
+  function ticketsStage(key) {
+    const r = ROWS[key]
+    const count = r.tickets.length
+    const label = count ? `Tickets · ${count}` : 'Tickets'
+    if (r.prd === null) return `
+      <div class="rounded-xl border border-borderDark/50 bg-surfaceDark/60 p-4 h-full flex flex-col shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+        ${stageLabel(label)}
+        <p class="text-xs text-slate-600">Locked until the PRD is approved.</p>
+      </div>`
+    if (r.prd !== 'approved') return `
+      <div class="rounded-xl border border-borderDark/50 bg-surfaceDark/60 p-4 h-full flex flex-col shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+        ${stageLabel(label)}
+        <p class="text-xs text-slate-600">Awaiting approval.</p>
+        <p class="text-[10px] text-slate-700 mt-1">Gate: <span class="font-mono">prds.status == approved</span></p>
+      </div>`
+    if (count === 0) return `
+      <div class="rounded-xl border border-borderDark/50 bg-surfaceDark/60 p-4 h-full flex flex-col shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+        ${stageLabel(label)}
+        <p class="text-xs text-slate-600">No tickets yet.</p>
+        <div class="mt-auto">${cellActions(key, ticketActions)}</div>
+      </div>`
+    return `
+      <div class="rounded-xl border border-borderDark/50 bg-surfaceDark/60 p-4 h-full flex flex-col shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] hover:border-accentPurple/25 transition-colors">
+        <div class="flex items-center justify-between" >${stageLabel(label)}${openIcon('.devtop/tickets/', 'tickets')}</div>
+        <div class="max-h-36 overflow-y-auto -mr-2 pr-2 space-y-1.5">${ticketsList(key)}</div>
+        <div class="mt-auto">${cellActions(key, ticketActions)}</div>
+      </div>`
+  }
+
+  function docStage(key, tldrFirst) {
+    const r = ROWS[key]
+    const body = tldrFirst
+      ? `
+        <div class="text-[9px] font-bold uppercase tracking-[0.18em] bg-gradient-to-r from-accentBlue to-accentPurple bg-clip-text text-transparent">tl;dr</div>
+        <p class="text-xs text-slate-300 leading-6 mt-1.5">${r.tldr}</p>`
+      : `
+        <div class="text-[9px] uppercase tracking-[0.18em] font-bold text-slate-500 mb-1.5">${r.doc.replace(/^[^/]*\//, '').replace(/\.mdx$/, '')}</div>
+        <p class="text-xs text-slate-500 leading-5">${r.tldr}</p>`
+    return `
+      <div class="rounded-xl border border-borderDark/50 bg-surfaceDark/60 p-4 h-full min-h-0 flex flex-col shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] hover:border-accentBlue/25 transition-colors">
+        <div class="flex items-center justify-between gap-2 mb-1.5">
+          ${stageLabel('Document')}
+          <span class="flex items-center gap-1.5">${prospectChip(key)}${openIcon('.devtop/docs/' + r.doc, 'doc')}</span>
+        </div>
+        ${body}
+        <div class="mt-auto">${prospectActions(key)}</div>
+      </div>`
+  }
+
+  // ---------------------------------------------------------------
+  // Grouping — eligibility first, then directory (first path segment)
+  // ---------------------------------------------------------------
+  const GROUPS = [
+    { key: 'eligible', label: 'Eligible', cls: 'text-emerald-300 border-emerald-500/25', dot: 'bg-emerald-400' },
+    { key: 'unassessed', label: 'Unassessed', cls: 'text-slate-400 border-borderDark/60', dot: 'bg-slate-500' },
+    { key: 'not-eligible', label: 'Not eligible', cls: 'text-rose-300 border-rose-500/25', dot: 'bg-rose-400' },
+  ]
+  const COLLAPSED = new Set(['unassessed', 'not-eligible'])
+  const DIR_COLLAPSED = new Set()
+  const dirCollapseKey = (sectionKey, r) => sectionKey + '/' + r.doc.split('/')[0]
+
+  function groupOf(r) {
+    if (r.prospect === null) return 'unassessed'
+    if (r.prospect === 'not-eligible') return 'not-eligible'
+    return 'eligible'
+  }
+  function groupKeys(groupKey) {
+    return Object.keys(ROWS)
+      .filter(k => groupOf(ROWS[k]) === groupKey)
+      .sort((a, b) => {
+        const dirA = ROWS[a].doc.split('/')[0]
+        const dirB = ROWS[b].doc.split('/')[0]
+        if (dirA !== dirB) return dirA < dirB ? -1 : 1
+        return ROWS[a].doc < ROWS[b].doc ? -1 : 1
+      })
+  }
+  function toggleGroup(key) {
+    if (COLLAPSED.has(key)) COLLAPSED.delete(key); else COLLAPSED.add(key)
+    rerender()
+  }
+  function toggleDir(dir, dirName) {
+    const key = dir + '/' + dirName
+    if (DIR_COLLAPSED.has(key)) DIR_COLLAPSED.delete(key); else DIR_COLLAPSED.add(key)
+    rerender()
+  }
+  function sectionHeader(g, count) {
+    const collapsed = COLLAPSED.has(g.key)
+    const washes = {
+      eligible: 'from-emerald-500/[0.07]',
+      unassessed: 'from-slate-500/[0.07]',
+      'not-eligible': 'from-rose-500/[0.07]',
+    }
+    return `
+      <button class="w-full flex items-center gap-3 px-6 py-3 border-y border-borderDark/30 bg-gradient-to-r ${washes[g.key]} via-transparent to-transparent hover:bg-bgDark/40 transition-colors cursor-pointer" onclick="toggleGroup('${g.key}')">
+        <span class="w-1 h-4 rounded-full ${g.dot} shadow-[0_0_8px_var(--tw-shadow-color)]"></span>
+        <span class="flex items-center gap-2.5 text-[11px] font-bold uppercase tracking-[0.18em] ${g.cls}">
+          ${g.label}
+          <span class="font-mono text-[10px] font-medium tracking-normal normal-case text-slate-500 bg-bgDark/60 border border-borderDark/40 rounded-md px-1.5 py-0.5">${count}</span>
+        </span>
+        <span class="ml-auto text-slate-500">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${collapsed ? 'M9 5l7 7-7 7' : 'M19 9l-7 7-7-7'}"/></svg>
+        </span>
+      </button>`
+  }
+  function dirGrouped(keys, renderKey, sectionKey) {
+    let out = ''
+    let run = []
+    let runDir = null
+    const flush = () => {
+      if (run.length === 0) return
+        const collapseKey = sectionKey + '/' + runDir
+        const collapsed = DIR_COLLAPSED.has(collapseKey)
+        out += `
+          <button class="w-full flex items-center gap-2 px-6 py-2 mb-1 text-left hover:text-slate-200 transition-colors cursor-pointer group" onclick="toggleDir('${sectionKey}', '${runDir}')">
+            <svg class="w-3.5 h-3.5 text-slate-600 group-hover:text-accentBlue transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+            <span class="text-[9px] font-mono font-semibold uppercase tracking-widest text-slate-500 group-hover:text-slate-300 transition-colors">${runDir}/</span>
+            <span class="text-[9px] font-mono text-slate-700">· ${run.length}</span>
+            <span class="ml-auto text-slate-600 group-hover:text-slate-400">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${collapsed ? 'M9 5l7 7-7 7' : 'M19 9l-7 7-7-7'}"/></svg>
+            </span>
+          </button>`
+      if (!collapsed) out += run.map(renderKey).join('')
+      run = []
+    }
+    for (const k of keys) {
+      const dir = ROWS[k].doc.split('/')[0]
+      if (runDir !== dir) { flush(); runDir = dir }
+      run.push(k)
+    }
+    flush()
+    return out
+  }
+
+  function groupedCards(renderKey) {
+    return GROUPS.map(g => {
+      const keys = groupKeys(g.key)
+      if (keys.length === 0) return ''
+      const collapsed = COLLAPSED.has(g.key)
+      return `
+        <div class="fade-in">
+          ${sectionHeader(g, keys.length)}
+          ${collapsed ? '' : dirGrouped(keys, renderKey, g.key)}
+        </div>`
+    }).join('')
+  }
+
+  // ---------------------------------------------------------------
+  // Variant A — summary cards (tl;dr-first document stage)
+  // ---------------------------------------------------------------
+  function cardShell(key, inner) {
+    const r = ROWS[key]
+    return `
+      <div class="border-b border-borderDark/30 last:border-b-0 px-6 py-6 fade-in hover:bg-surfaceDark/[0.04] transition-colors">
+        <div class="flex items-center gap-3 min-w-0">
+          <span class="flex items-center justify-center w-7 h-7 rounded-lg bg-gradient-to-br from-accentBlue/25 to-accentPurple/25 border border-accentBlue/20 text-accentBlue shadow-[0_2px_10px_-2px_rgba(59,130,246,0.5)] flex-shrink-0">${docIcon()}</span>
+          <div class="min-w-0">
+            <div class="text-sm font-medium tracking-tight truncate whitespace-nowrap">${docBreadcrumb(r.doc)}</div>
+            <p class="text-[10px] font-mono text-slate-600 truncate mt-0.5">.devtop/docs/${r.doc}</p>
+          </div>
+        </div>
+        ${inner}
+      </div>`
+  }
+
+  function cardA(key) {
+    return cardShell(key, `
+      <div class="stage-grid gap-2 mt-4">
+        ${docStage(key, true)}
+        ${arrow()}
+        ${prdStage(key)}
+        ${arrow()}
+        ${ticketsStage(key)}
+      </div>`)
+  }
+  function renderCards() {
+    document.getElementById('design').innerHTML = pageHead('Derivation pipeline', 'document TL;DR → PRD → tickets. Docs qualify via <span class="font-mono">derive_prospects</span>: classify-doc suggests, the user verifies. Gate: <span class="font-mono">prds.status == approved</span>.') + pipelineContainer(groupedCards(cardA))
+  }
+
+  // ---------------------------------------------------------------
+  // Variant B — compact rows (density over detail)
+  // ---------------------------------------------------------------
+  function compactTickets(key) {
+    const r = ROWS[key]
+    if (r.prd !== 'approved' || r.tickets.length === 0) return `<span class="text-[10px] text-slate-600">${r.prd === null ? 'locked' : r.prd !== 'approved' ? 'awaiting approval' : 'none'}</span>`
+    const shown = r.tickets.slice(0, 3)
+    const more = r.tickets.length - shown.length
+    const bits = shown.map(t => `<span class="inline-flex items-center gap-1.5"><span class="font-mono text-slate-500">${t.id}</span>${tktChip(t.status)}</span>`).join('')
+    return `<div class="flex items-center gap-2 flex-wrap text-[10px]">${bits}${more > 0 ? `<span class="text-slate-600 font-mono">+${more}</span>` : ''}</div>`
+  }
+
+  function compactRow(key) {
+    const r = ROWS[key]
+    return `
+      <div class="border-b border-borderDark/30 last:border-b-0 px-6 py-4 fade-in compact-grid gap-3 hover:bg-surfaceDark/[0.04] transition-colors">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <span class="flex items-center justify-center w-6 h-6 rounded-md bg-gradient-to-br from-accentBlue/25 to-accentPurple/25 border border-accentBlue/20 text-accentBlue flex-shrink-0">${docIcon()}</span>
+          <div class="min-w-0">
+            <div class="flex items-center gap-2 min-w-0"><span class="text-[11px] font-medium tracking-tight truncate whitespace-nowrap">${docBreadcrumb(r.doc)}</span>${r.stale ? staleBadge() : ''}${prospectChip(key)}${openIcon('.devtop/docs/' + r.doc, 'doc')}</div>
+            <p class="text-[10px] text-slate-600 truncate leading-4 mt-0.5">${r.tldr}</p>
+          </div>
+        </div>
+          ${arrow(true)}
+          <div class="min-w-0">
+            ${r.prd === null ? `<span class="text-[10px] text-slate-700 font-mono">no PRD</span>` : `<div class="flex items-center gap-1.5 flex-wrap">${prdChip(r.prd)}${openIcon('prds/' + r.doc.replace(/\.mdx$/, '/index.mdx'), 'PRD')}</div><p class="text-[10px] font-mono text-slate-600 truncate mt-1">${r.reqs} req · prds/${r.doc.replace(/\.mdx$/, '/index.mdx')}</p>`}
+            ${cellActions(key, prdActions)}
+          </div>
+          ${arrow(true)}
+          <div class="min-w-0">${compactTickets(key)}${r.tickets.length > 0 ? openIcon('.devtop/tickets/', 'tickets') : ''}${cellActions(key, ticketActions)}</div>
+        </div>`
+  }
+  function renderCompact() {
+    document.getElementById('design').innerHTML = pageHead('Derivation pipeline', 'document TL;DR → PRD → tickets, compact. Eligibility per doc; gate <span class="font-mono">prds.status == approved</span>.') + pipelineContainer(groupedCards(compactRow))
+  }
+
+  // ---------------------------------------------------------------
+  // Variant C — focus cards with an inline delta panel
+  // ---------------------------------------------------------------
+  const EXPANDED = new Set()
+
+  function deltaPanel(key) {
+    const r = ROWS[key]
+    if (r.prd === null) return `
+      <p class="text-xs text-slate-600">Derive a PRD draft to see the breakdown here.</p>`
+    if (r.prd === 'draft') return `
+      <p class="text-xs text-slate-600">Draft requirements · ${r.reqs} extracted. Review the PRD before approval.</p>`
+    if (r.prd === 'reviewing') return `
+      <p class="text-xs text-slate-600">In review · ${r.reqs} requirements. Approve to unlock tickets.</p>`
+    const diffs = [
+      { label: 'File-based storage', id: 'R-01', change: '+ADDED', cls: 'border-emerald-500/20 bg-emerald-500/5', textCls: 'text-slate-300', sig: 'text-emerald-400' },
+      { label: 'Write protection', id: 'R-02', change: 'unchanged', cls: 'border-borderDark/40', textCls: 'text-slate-300', sig: 'text-slate-500' },
+      { label: 'SQLite requirement', id: 'R-03', change: '−REMOVED', cls: 'border-rose-500/20 bg-rose-500/5 line-through', textCls: 'text-slate-400', sig: 'text-rose-400' },
+    ]
+    return `
+      <div class="flex items-center justify-between flex-wrap gap-3">
+        <span class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Delta vs source · <span class="text-slate-400 normal-case tracking-normal">in_flight → delta_only</span></span>
+        <span class="flex items-center gap-2">${primaryBtn('Approve delta', `rederive('${key}')`)}${ghostBtn('Discard', '')}</span>
+      </div>
+      <div class="mt-3 space-y-1.5">${diffs.map(d => `
+        <div class="flex items-start justify-between gap-2 rounded-lg border ${d.cls} px-3 py-2 text-[11px]">
+          <span class="${d.textCls}">${d.label} <span class="text-slate-500 font-mono text-[10px]">${d.id}</span></span>
+          <span class="flex-shrink-0 font-mono text-[10px] ${d.sig}">${d.change}</span>
+        </div>`).join('')}</div>`
+  }
+
+  function cardC(key) {
+    const r = ROWS[key]
+    const expanded = EXPANDED.has(key)
+    const expander = expanded ? 'Collapse derivation' : 'Show derivation delta'
+    return cardShell(key, `
+      <div class="stage-grid gap-2 mt-4">
+        ${docStage(key, true)}
+        ${arrow()}
+        ${prdStage(key)}
+        ${arrow()}
+        ${ticketsStage(key)}
+      </div>
+        <div class="mt-3">
+          <button class="text-[11px] font-medium text-accentBlue hover:underline" onclick="toggleDelta('${key}')">${expander}</button>
+          ${expanded ? `<div class="mt-3 rounded-xl border border-borderDark/40 bg-surfaceDark/40 p-4 text-xs fade-in">${deltaPanel(key)}</div>` : ''}
+        </div>`)
+  }
+  function renderFocus() {
+    document.getElementById('design').innerHTML = pageHead('Derivation pipeline', 'document TL;DR → PRD → tickets, with the re-derive delta inline.') + pipelineContainer(groupedCards(cardC))
+  }
+  function toggleDelta(key) {
+    if (EXPANDED.has(key)) EXPANDED.delete(key); else EXPANDED.add(key)
+    rerender()
+  }
+
+  function pipelineContainer(cards) {
+    return `
+      <div class="max-w-5xl mx-auto px-6 pt-9 fade-in">
+        <div class="rounded-2xl border border-borderDark/50 bg-surfaceDark/30 backdrop-blur-sm shadow-[0_30px_80px_-30px_rgba(0,0,0,0.8)] overflow-hidden">
+          <div class="px-6 pt-5 pb-4 flex flex-wrap items-center justify-between gap-3 border-b border-borderDark/30 bg-gradient-to-r from-surfaceDark/80 via-surfaceDark/30 to-transparent">
+            ${pipelineStats()}
+            <span class="text-[10px] text-slate-500">TL;DR is generated from the document. <span class="font-mono">classify-doc</span> sets <span class="font-mono">derive_prospects</span> per target; a user verdict seals it. Actions write the same files the agent would, then commit.</span>
+          </div>
+          ${cards}
+        </div>
+      </div>`
+  }
+
+  // ---------------------------------------------------------------
+  // Interactions — shared by all variants
+  // ---------------------------------------------------------------
+  function suggestProspect(key) {
+    ROWS[key].busy = true; rerender()
+    setTimeout(() => {
+      ROWS[key].busy = false
+      ROWS[key].prospect = 'not-eligible' // classify-doc reads the doc, refuses here
+      ROWS[key].prospectBy = 'model'
+      COLLAPSED.delete('not-eligible')
+      DIR_COLLAPSED.delete(dirCollapseKey('not-eligible', ROWS[key]))
+      rerender()
+    }, 1400)
+  }
+  function confirmProspect(key) { ROWS[key].prospectBy = 'user'; rerender() }
+  function excludeProspect(key) {
+    ROWS[key].prospect = 'not-eligible'
+    ROWS[key].prospectBy = 'user'
+    COLLAPSED.delete('not-eligible')
+    DIR_COLLAPSED.delete(dirCollapseKey('not-eligible', ROWS[key]))
+    rerender()
+  }
+  function overrideProspect(key) {
+    ROWS[key].prospect = 'eligible'
+    ROWS[key].prospectBy = 'user'
+    COLLAPSED.delete('eligible')
+    DIR_COLLAPSED.delete(dirCollapseKey('eligible', ROWS[key]))
+    rerender()
+  }
+  function derivePRD(key) {
+    ROWS[key].busy = true; rerender()
+    setTimeout(() => { ROWS[key].busy = false; ROWS[key].prd = 'draft'; ROWS[key].reqs = 3; rerender() }, 1600)
+  }
+  function reviewPRD(key) { ROWS[key].prd = 'reviewing'; rerender() }
+  function approvePRD(key) {
+    ROWS[key].approving = true; rerender()
+    setTimeout(() => { ROWS[key].approving = false; ROWS[key].prd = 'approved'; rerender() }, 1200)
+  }
+  function requestChanges(key) { ROWS[key].prd = 'draft'; rerender() }
+  function createTickets(key) {
+    ROWS[key].deriving = true; rerender()
+    setTimeout(() => {
+      ROWS[key].deriving = false
+      ROWS[key].tickets = [
+        { id: '015', title: 'First requirement ticket', status: 'open' },
+        { id: '016', title: 'Second requirement ticket', status: 'open' },
+        { id: '017', title: 'Third requirement ticket', status: 'open' },
+      ]
+      rerender()
+    }, 1400)
+  }
+  function addTicket(key) {
+    ROWS[key].tickets.push({ id: String(18 + ROWS[key].tickets.length), title: 'Follow-up from PRD review', status: 'open' })
+    rerender()
+  }
+  function rederive(key) {
+    ROWS[key].busy = true; rerender()
+    setTimeout(() => { ROWS[key].busy = false; ROWS[key].stale = false; ROWS[key].derived = true; rerender() }, 1200)
+  }
+  function rerender() { render(currentVariantKey()) }
+
+  // ---------------------------------------------------------------
+  // Switcher chrome
+  // ---------------------------------------------------------------
+  const bar = document.createElement('div')
+  bar.className = 'fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1 bg-[#0a0e18]/95 border border-borderDark/70 rounded-full px-2 py-1.5 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.8)] backdrop-blur'
+  bar.innerHTML = `
+    <button id="sw-prev" class="h-6 w-6 rounded-full hover:bg-borderDark/40 flex items-center justify-center text-slate-300 transition-colors">‹</button>
+    <span id="sw-label" class="text-[11px] font-medium text-slate-200 px-2 font-mono whitespace-nowrap"></span>
+    <button id="sw-next" class="h-6 w-6 rounded-full hover:bg-borderDark/40 flex items-center justify-center text-slate-300 transition-colors">›</button>
+    <span class="text-[8px] text-slate-500 uppercase tracking-widest pl-1 pr-1">prototype</span>`
+  document.body.appendChild(bar)
+
+  function currentVariantKey() {
+    const v = new URL(window.location.href).searchParams.get('variant')
+    return VARIANTS.some(x => x.key === v) ? v : 'A'
+  }
+  function render(key) {
+    const v = VARIANTS.find(x => x.key === key) || VARIANTS[0]
+    v.fn()
+    document.getElementById('sw-label').textContent = `${v.key} — ${v.name}`
+  }
+  function cycle(dir) {
+    const i = VARIANTS.findIndex(x => x.key === currentVariantKey())
+    const next = VARIANTS[(i + dir + VARIANTS.length) % VARIANTS.length]
+    const url = new URL(window.location.href)
+    url.searchParams.set('variant', next.key)
+    history.replaceState({}, '', url)
+    render(next.key)
+  }
+  bar.querySelector('#sw-prev').onclick = () => cycle(-1)
+  bar.querySelector('#sw-next').onclick = () => cycle(1)
+  document.addEventListener('keydown', (e) => {
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return
+    if (e.key === 'ArrowLeft') cycle(-1)
+    if (e.key === 'ArrowRight') cycle(1)
+  })
+  render(currentVariantKey())
+  </script>
+</body>
+</html>

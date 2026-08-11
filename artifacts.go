@@ -19,6 +19,10 @@ func artifactKindRoot(kind ArtifactKind) string {
 	return filepath.Join(DEVTOP_DIR, kind.Path)
 }
 
+func artifactKindRootFor(p RepoPaths, kind ArtifactKind) string {
+	return filepath.Join(p.DevTop, kind.Path)
+}
+
 // artifactIDFromPath derives the id from a file path relative to the kind
 // root: "deploy-backfill.mdx" -> "deploy-backfill", "nested/foo.mdx" ->
 // "nested/foo", "dir/index.mdx" -> "dir".
@@ -35,8 +39,18 @@ func artifactIDFromPath(root, path, ext string) string {
 }
 
 func handleAPIArtifacts(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
+	cfg, err := repo.Config()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	p := repo.paths
 	kindName := r.PathValue("kind")
-	kind, ok := engineConfig.ArtifactKinds[kindName]
+	kind, ok := cfg.ArtifactKinds[kindName]
 	if !ok {
 		http.NotFound(w, r)
 		return
@@ -45,7 +59,7 @@ func handleAPIArtifacts(w http.ResponseWriter, r *http.Request) {
 	if ext == "" {
 		ext = ".md"
 	}
-	root := artifactKindRoot(kind)
+	root := artifactKindRootFor(p, kind)
 
 	items := []map[string]interface{}{}
 	if _, statErr := os.Stat(root); os.IsNotExist(statErr) {
@@ -96,8 +110,18 @@ func handleAPIArtifacts(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAPIArtifactDetail(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
+	cfg, err := repo.Config()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	p := repo.paths
 	kindName := r.PathValue("kind")
-	kind, ok := engineConfig.ArtifactKinds[kindName]
+	kind, ok := cfg.ArtifactKinds[kindName]
 	if !ok {
 		http.NotFound(w, r)
 		return
@@ -112,7 +136,7 @@ func handleAPIArtifactDetail(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	root := artifactKindRoot(kind)
+	root := artifactKindRootFor(p, kind)
 
 	filePath := filepath.Join(root, id+ext)
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {

@@ -54,7 +54,7 @@ func getAPIConfig() Config {
 		Provider:    provider,
 		DevtopDir:   DEVTOP_DIR,
 		HasKey:      apiKey != "" && apiKey != "not-needed",
-		AgentPrompt: loadAgentsPrompt(),
+		AgentPrompt: resolveActivePrompt(),
 		MCPServers:  len(mcpCfgs),
 	}
 }
@@ -105,7 +105,11 @@ func handleCopilotKitProxy(w http.ResponseWriter, r *http.Request) {
 
 // API Routes
 func handleAPIDocs(w http.ResponseWriter, r *http.Request) {
-	docs, err := listDocs()
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
+	docs, err := listDocsP(repo.paths)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -115,15 +119,20 @@ func handleAPIDocs(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAPIDocPage(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
+	p := repo.paths
 	slug := r.PathValue("slug")
 	slug = strings.TrimSuffix(slug, ".mdx")
 
-	title, htmlContent, err := getDoc(slug)
+	title, htmlContent, err := getDocP(p, slug)
 	if err != nil {
 		if slug == "index" {
-			docs, _ := listDocs()
+			docs, _ := listDocsP(p)
 			if len(docs) > 0 {
-				title, htmlContent, err = getDoc(docs[0].Slug)
+				title, htmlContent, err = getDocP(p, docs[0].Slug)
 			} else {
 				title, htmlContent, err = getWelcomeDoc()
 			}
@@ -143,7 +152,11 @@ func handleAPIDocPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAPITickets(w http.ResponseWriter, r *http.Request) {
-	tickets, err := listTickets()
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
+	tickets, err := listTicketsP(repo.paths)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -153,8 +166,12 @@ func handleAPITickets(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAPITicketDetail(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
 	id := r.PathValue("id")
-	t, err := getTicket(id)
+	t, err := getTicketP(repo.paths, id)
 	if err != nil {
 		http.Error(w, "Ticket not found", 404)
 		return
@@ -166,8 +183,13 @@ func handleAPITicketDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAPIThreads(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
+	p := repo.paths
 	context := r.URL.Query().Get("context")
-	threads, err := listThreads(context)
+	threads, err := listThreadsP(p, context)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -214,6 +236,11 @@ func handleAPIThreads(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAPICreateThread(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
+	p := repo.paths
 	var payload map[string]string
 	_ = json.NewDecoder(r.Body).Decode(&payload)
 
@@ -249,7 +276,7 @@ func handleAPICreateThread(w http.ResponseWriter, r *http.Request) {
 		"messages":   messages,
 	}
 
-	if err := writeThreadToFileSystem(tid, threadMap); err != nil {
+	if err := writeThreadToFileSystemP(p, tid, threadMap); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
@@ -259,8 +286,12 @@ func handleAPICreateThread(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAPIGetThread(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
 	id := r.PathValue("id")
-	t, err := getThread(id)
+	t, err := getThreadP(repo.paths, id)
 	if err != nil {
 		http.Error(w, "Thread not found", 404)
 		return
@@ -271,12 +302,16 @@ func handleAPIGetThread(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAPIDeleteThread(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		http.Error(w, "Thread ID is required", 400)
 		return
 	}
-	if err := deleteThreadFile(id); err != nil {
+	if err := deleteThreadFileP(repo.paths, id); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
@@ -284,8 +319,13 @@ func handleAPIDeleteThread(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAPIChat(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
+	p := repo.paths
 	threadID := r.PathValue("thread_id")
-	threadMap, err := getThread(threadID)
+	threadMap, err := getThreadP(p, threadID)
 	if err != nil {
 		http.Error(w, "Thread not found", 404)
 		return
@@ -326,7 +366,7 @@ func handleAPIChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_ = writeThreadToFileSystem(threadID, threadMap)
+	_ = writeThreadToFileSystemP(p, threadID, threadMap)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -356,8 +396,9 @@ func handleAPIChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	outChan := make(chan AgentChunk, 100)
+	rt := activeRuntimeFor(repo)
 	go func() {
-		_ = runAgent(context.Background(), agentMsgs, cfg.APIKey, cfg.BaseURL, cfg.Model, outChan)
+		_ = runAgentInRepo(context.Background(), repo, agentMsgs, cfg.APIKey, cfg.BaseURL, cfg.Model, rt, outChan)
 	}()
 
 	agentResponse := ""
@@ -418,7 +459,7 @@ func handleAPIChat(w http.ResponseWriter, r *http.Request) {
 		threadMap["messages"] = msgsSlice
 		threadMap["updated_at"] = now
 
-		_ = writeThreadToFileSystem(threadID, threadMap)
+		_ = writeThreadToFileSystemP(p, threadID, threadMap)
 	}
 
 	doneBytes, _ := json.Marshal(map[string]string{"type": "done"})
@@ -472,8 +513,96 @@ func extractComments(content string) []Comment {
 	return comments
 }
 
+// Revision history API — the git history of a doc (or ticket) file, plus
+// content-at-commit and unified diffs. git-diff-view consumes `diff` verbatim.
+//
+//	GET /api/revisions/docs/{slug...}            -> list of revisions
+//	GET /api/revisions/docs/{slug...}?at=<sha>   -> {title, content, deleted}
+//	GET /api/revisions/docs/{slug...}?a=<a>&b=<b> -> {diff}
+//
+// Same shapes under /api/revisions/tickets/{id}.
+func handleAPIDocRevisions(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
+	slug := r.PathValue("slug")
+	path, err := docPathForSlugP(repo.paths, slug)
+	if err != nil {
+		http.Error(w, "Document not found", 404)
+		return
+	}
+	serveRevisionRequest(w, r, repo, path)
+}
+
+func handleAPITicketRevisions(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	path := filepath.Join(repo.paths.Tickets, id+".md")
+	if _, err := os.Stat(path); err != nil {
+		http.Error(w, "Ticket not found", 404)
+		return
+	}
+	serveRevisionRequest(w, r, repo, path)
+}
+
+func serveRevisionRequest(w http.ResponseWriter, r *http.Request, repo *Repo, path string) {
+	at := r.URL.Query().Get("at")
+	from := r.URL.Query().Get("a")
+	to := r.URL.Query().Get("b")
+
+	root, err := findRepoRootFrom(repo.paths.DevTop)
+	if err != nil {
+		// In a non-git workspace every history op fails at the root; surface once.
+		http.Error(w, "History unavailable: not a git repository", 409)
+		return
+	}
+	rel, err := gitRelPathFrom(root, path)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	switch {
+	case at != "":
+		title, content, deleted, err := contentAtIn(root, rel, at)
+		if err != nil {
+			http.Error(w, "Invalid commit", 400)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"title":   title,
+			"content": content,
+			"deleted": deleted,
+		})
+	case from != "" && to != "":
+		diff, err := diffBetweenIn(root, rel, from, to)
+		if err != nil {
+			http.Error(w, "Invalid commit range", 400)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"diff": diff})
+	default:
+		revs, err := listRevisionsIn(root, rel)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		json.NewEncoder(w).Encode(revs)
+	}
+}
+
 func handleAPIGetViewState(w http.ResponseWriter, r *http.Request) {
-	vsPath := filepath.Join(DEVTOP_DIR, "viewstate.json")
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
+	vsPath := filepath.Join(repo.paths.DevTop, "viewstate.json")
 	data, err := os.ReadFile(vsPath)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -485,14 +614,78 @@ func handleAPIGetViewState(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAPIPutViewState(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	vsPath := filepath.Join(DEVTOP_DIR, "viewstate.json")
+	vsPath := filepath.Join(repo.paths.DevTop, "viewstate.json")
 	if err := os.WriteFile(vsPath, body, 0644); err != nil {
 		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Favourites — Option B: user-scoped doc slugs, persisted next to the config
+// in .devtop/favourites.json (never committed, like viewstate).
+func handleAPIGetFavourites(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
+	slugs, err := listFavouritesP(repo.paths)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(slugs)
+}
+
+func handleAPIPutFavourites(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	var slugs []string
+	if err := json.Unmarshal(body, &slugs); err != nil {
+		http.Error(w, "Expected a JSON array of slug strings", 400)
+		return
+	}
+	if err := saveFavouritesP(repo.paths, slugs); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func handleAPIDeleteDoc(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
+	slug := r.PathValue("slug")
+	slug = strings.TrimSuffix(slug, ".mdx")
+	if slug == "" || strings.Contains(slug, "..") {
+		http.Error(w, "Invalid slug", 400)
+		return
+	}
+	if slug == "index" || slug == "/" {
+		http.Error(w, "Cannot delete the index document", 400)
+		return
+	}
+	if err := deleteDocP(repo.paths, slug); err != nil {
+		http.Error(w, "Document not found", 404)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

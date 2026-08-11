@@ -9,6 +9,7 @@ import {
   ChevronRight,
   ChevronDown,
   Sparkles,
+  Check,
   MessageSquare,
   Plus,
   Trash2,
@@ -17,10 +18,23 @@ import {
   X,
   Palette,
   Database,
-  Info
+  Info,
+  History,
+  MoreVertical,
+  Star,
+  GitBranch
 } from 'lucide-react'
 import { CopilotKit, CopilotChat } from '@copilotkit/react-core/v2'
 import { useAgentContext } from '@copilotkit/react-core/v2'
+import { WildcardToolCallRender } from '@copilotkit/react-core/v2'
+import { DiffView, DiffModeEnum } from '@git-diff-view/react'
+import '@git-diff-view/react/styles/diff-view-pure.css'
+import { toolCallRenderers } from './ToolCalls'
+import DocActionsMenu from './DocActionsMenu'
+import PipelineView from './PipelineView'
+import AddRepoModal from './AddRepoModal'
+import { api, setActiveRepo, type RepoStatus } from './api'
+import type { DocMenuAnchor, DocExportFormat } from './DocActionsMenu'
 import './App.css'
 
 // No auto-greeting in the chat. Kept referentially stable so the memoized chat
@@ -55,6 +69,16 @@ interface Ticket {
     author: string
     text: string
   }>
+}
+
+// One git commit that touched the current doc/ticket, newest first.
+interface DocRevision {
+  sha: string
+  short: string
+  message: string
+  author: string
+  date: string
+  is_current?: boolean
 }
 
 // A generic artifact row from the engine's /api/artifacts/<kind> endpoints —
@@ -101,6 +125,7 @@ interface EngineConfig {
   replan?: { detect?: string; stale_badge?: boolean }
   prompts?: Record<string, unknown>
   handoff?: { contract?: string; grabbable?: string[]; lifecycle_owner?: string }
+  pipeline?: { nav?: EngineNav }
 }
 
 // Generic route location: a config-declared artifact kind plus an optional id.
@@ -144,6 +169,7 @@ const BUILTIN_ENGINE_CONFIG: EngineConfig = {
     { from: 'prds', to: 'tickets', transform: 'derive_tickets', gate: 'prds.status == approved' },
   ],
   replan: { detect: 'git_diff', stale_badge: true },
+  pipeline: { nav: { label: 'Pipeline', icon: 'flow', order: 4, view: 'pipeline' } },
   handoff: { contract: 'tickets/*.md + this config', grabbable: [], lifecycle_owner: 'external' },
 }
 
@@ -159,6 +185,14 @@ type AIProviderKey = keyof typeof AI_PROVIDERS
 // Sections in the settings dialog (left rail). AI is the only populated pane
 // today; the others are placeholders until they gain real controls.
 type SettingsPane = 'ai' | 'appearance' | 'data' | 'about'
+
+// Repo status badges for the switcher and the Repos overview.
+const REPO_STATUS_META: Record<string, { dot: string; label: string }> = {
+  ready:  { dot: 'bg-emerald-400', label: 'ready' },
+  dirty:  { dot: 'bg-amber-400',  label: 'uncommitted' },
+  uninit: { dot: 'bg-slate-500',   label: 'needs init' },
+  nogit:  { dot: 'bg-rose-400',    label: 'no git repo' },
+}
 type AiStatus = { configured: boolean; remembered: boolean; baseURL?: string; model?: string } | null
 
 function App() {
@@ -169,6 +203,15 @@ function App() {
   const [docMissing, setDocMissing] = useState<boolean>(false)
   const [docSlugs, setDocSlugs] = useState<DocSlug[]>([])
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
+  // Favourites (user-scoped, never committed): slugs the user starred via the
+  // doc ⋯ menu. Persisted through GET/PUT /api/favourites; the backend drops
+  // slugs whose doc has disappeared, so a refresh stays canonical.
+  const [favourites, setFavourites] = useState<string[]>([])
+  // Open doc action menu ("⋯"); null when closed. Anchor is viewport px.
+  const [menuAnchor, setMenuAnchor] = useState<DocMenuAnchor | null>(null)
+  // Pending "open the revision rail" for a nav row's ⋯ → clock; resolved once
+  // the navigated-to doc becomes the active page.
+  const [historyIntent, setHistoryIntent] = useState<string | null>(null)
   
   const [tickets, setTickets] = useState<Ticket[]>([])
   const [activeTicket, setActiveTicket] = useState<Ticket | null>(null)
@@ -183,7 +226,15 @@ function App() {
   const [threads, setThreads] = useState<ThreadSummary[]>([])
   const [activeThreadId, setActiveThreadId] = useState<string | undefined>(undefined)
   const [showThreadList, setShowThreadList] = useState<boolean>(false)
-  const contextThreadState = useRef<Record<string, {activeThreadId?: string; showThreadList: boolean}>>({})
+  // Git-revision history rail. Visible state and the selected revision are
+  // per-context (persisted with viewstate); the revision list and the
+  // content/diff of the selected revision are fetched on demand.
+  const [historyOpen, setHistoryOpen] = useState<boolean>(false)
+  const [revisions, setRevisions] = useState<DocRevision[]>([])
+  const [historyIdx, setHistoryIdx] = useState<number>(-1)  // -1 = current working copy
+  const [historyAt, setHistoryAt] = useState<{ title: string; content: string; deleted: boolean } | null>(null)
+  const [historyDiff, setHistoryDiff] = useState<string>('')
+  const contextThreadState = useRef<Record<string, {activeThreadId?: string; showThreadList: boolean; historyOpen?: boolean}>>({})
   const prevContextKey = useRef<string>('')
   const [viewStateLoaded, setViewStateLoaded] = useState<boolean>(false)
 
@@ -202,6 +253,20 @@ function App() {
   const [aiSaving, setAiSaving] = useState<boolean>(false)
   // Repo-declared artifact kinds; replaced by the backend config when available.
   const [engineConfig, setEngineConfig] = useState<EngineConfig>(BUILTIN_ENGINE_CONFIG)
+  // Repo scope: the registry as served by /api/repos. Single-repo mode has one
+  // entry with single=true and no switcher; multi-repo mode scopes every API
+  // call through the api() helper.
+  const [repos, setRepos] = useState<RepoStatus[]>([])
+  const [activeRepo, setActiveRepoState] = useState<string>('')
+  const [repoInitBusy, setRepoInitBusy] = useState(false)
+  const [repoDropdownOpen, setRepoDropdownOpen] = useState(false)
+  const [showAddRepo, setShowAddRepo] = useState(false)
+  const [repoRemoveId, setRepoRemoveId] = useState<string | null>(null)
+  const [repoRemoveError, setRepoRemoveError] = useState('')
+  const activeRepoStatus: RepoStatus | undefined = activeRepo
+    ? repos.find(r => r.name === activeRepo)
+    : repos.length > 0 ? repos[0] : undefined
+  const isMultiRepo = repos.some(r => !r.single) || repos.length > 1
 
   useEffect(() => {
     let cancelled = false
@@ -225,9 +290,29 @@ function App() {
     }
   }, [aiReachable, aiStatus])
 
+  // Repo registry on mount; multi-repo mode scopes all API calls through api().
   useEffect(() => {
     let cancelled = false
-    fetch('/api/engine-config')
+    fetch('/api/repos')
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('repos ' + r.status)))
+      .then((list: RepoStatus[]) => {
+        if (cancelled || !Array.isArray(list) || list.length === 0) return
+        setRepos(list)
+        const multi = list.some(r => !r.single) || list.length > 1
+        if (!multi) return
+        // Restore the last selected repo, falling back to the first.
+        const saved = localStorage.getItem('devtop.activeRepo')
+        const next = saved && list.some(r => r.name === saved) ? saved : list[0].name
+        setActiveRepoState(next)
+        setActiveRepo(next)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(api('/api/engine-config'))
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`engine-config ${r.status}`)))
       .then((cfg: EngineConfig) => {
         if (!cancelled && cfg && cfg.artifact_kinds && Object.keys(cfg.artifact_kinds).length > 0) {
@@ -236,7 +321,71 @@ function App() {
       })
       .catch(() => {})
     return () => { cancelled = true }
+  }, [activeRepo])
+
+  const isReposPage = activePage.kind === 'repos'
+  const showUninitState = isMultiRepo && activeRepoStatus?.status === 'uninit' && !isReposPage && !showSettings
+
+  const refreshRepos = useCallback(async () => {
+    try {
+      const r = await fetch('/api/repos')
+      if (r.ok) {
+        const list = await r.json()
+        if (Array.isArray(list) && list.length > 0) setRepos(list)
+      }
+    } catch { /* ignore */ }
   }, [])
+
+  const selectRepo = useCallback((name: string) => {
+    setActiveRepoState(name)
+    setActiveRepo(name)
+    localStorage.setItem('devtop.activeRepo', name)
+    setRepoDropdownOpen(false)
+    navigateTo('/')
+  }, [])
+
+  const removeRepo = useCallback(async (name: string) => {
+    setRepoRemoveId(null)
+    try {
+      const r = await fetch(`/api/repos/${encodeURIComponent(name)}`, { method: 'DELETE' })
+      if (!r.ok) {
+        const data = await r.json().catch(() => null)
+        throw new Error(data && data.error ? String(data.error) : `Failed to remove (${r.status})`)
+      }
+      await refreshRepos()
+      // If the active repo was removed, fall back to the first remaining.
+      if (activeRepo === name && repos.length > 1) {
+        selectRepo(repos.find(x => x.name !== name)?.name ?? '')
+      }
+    } catch (e) {
+      // Surface the refusal (e.g. removing the last repo) without a dialog.
+      setRepoRemoveError(String(e instanceof Error ? e.message : e))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRepo, repos, refreshRepos, selectRepo])
+
+  const initActiveRepo = useCallback(async () => {
+    if (!activeRepo) return
+    setRepoInitBusy(true)
+    try {
+      const r = await fetch(api('/api/repos/init'), { method: 'POST' })
+      if (r.ok) await refreshRepos()
+    } finally {
+      setRepoInitBusy(false)
+    }
+    routeTo(window.location.hash.replace('#', '') || '/')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRepo, refreshRepos])
+
+  // Re-fetch per-repo data when the active repo changes.
+  useEffect(() => {
+    if (!activeRepo) return
+    fetchDocSlugs()
+    fetchFavourites()
+    fetchTicketsList()
+    routeTo(window.location.hash.replace('#', '') || '/')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRepo])
 
   const onAiProviderChange = (provider: AIProviderKey) => {
     setAiProvider(provider)
@@ -328,6 +477,7 @@ function App() {
     
     // Initial load
     fetchDocSlugs()
+    fetchFavourites()
     fetchTicketsList()
     handleHashChange()
 
@@ -403,6 +553,7 @@ function App() {
   // Generic views: a "list" kind's overview page, and any kind's detail page
   // (document view) unless it's a board kind with an id (ticket detail).
   const isListOverviewPage = !!activeKindDef && activeKindDef.view === 'list' && !activePage.id
+  const isPipelinePage = activePage.kind === 'pipeline' && !activePage.id
   const isDocumentView = isDocPage || (!!activePage.id && activeKindDef?.view !== 'board')
   const activeKindLabel = activeKindDef?.nav?.label || activePage.kind
 
@@ -423,13 +574,17 @@ function App() {
   }, [activePage, isHomePage, activeKindDef, activeKindLabel])
 
   // Generic context key: "<kind>" for a kind's overview, "<kind>/<id>" for an
-  // artifact. Threads and viewstate are keyed by this.
+  // artifact. Threads and viewstate are keyed by this; multi-repo mode
+  // prefixes the repo so contexts never collide across repositories.
   const contextKey = useMemo(() => {
-    if (activePage.id) return activePage.kind + '/' + activePage.id
-    return activePage.kind
-  }, [activePage])
+    const base = activePage.id ? activePage.kind + '/' + activePage.id : activePage.kind
+    return isMultiRepo && activeRepo ? activeRepo + ':' + base : base
+  }, [activePage, isMultiRepo, activeRepo])
 
   const breadcrumbItems = useMemo(() => {
+    if (activePage.kind === 'repos') {
+      return [{ label: 'Repositories', href: '#/repos' }]
+    }
     if (activePage.kind === 'docs') {
       const slug = activePage.id ?? 'index'
       if (slug === 'index') {
@@ -504,7 +659,7 @@ function App() {
   // -------------------------------------------------------------
   const fetchDocSlugs = async () => {
     try {
-      const r = await fetch('/api/docs')
+      const r = await fetch(api('/api/docs'))
       if (r.ok) {
         const data = await r.json()
         setDocSlugs(data)
@@ -514,9 +669,108 @@ function App() {
     }
   }
 
+  const fetchFavourites = async () => {
+    try {
+      const r = await fetch(api('/api/favourites'))
+      if (r.ok) {
+        const data = await r.json()
+        if (Array.isArray(data)) setFavourites(data)
+      }
+    } catch (e) {
+      console.error('Failed to fetch favourites:', e)
+    }
+  }
+
+  // Slug → title for every listed doc (dots on nav rows don't re-fetch).
+  const titleBySlug = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const d of docSlugs) if (!m.has(d.slug)) m.set(d.slug, d.title)
+    return m
+  }, [docSlugs])
+
+  const favSet = useMemo(() => new Set(favourites), [favourites])
+
+  // Rows for the Favourites nav section: kept stable by fast-path index,
+  // shown off-tree whether or not the doc is currently listed.
+  const favouriteRows = useMemo(() =>
+    favourites
+      .map(slug => ({ slug, title: titleBySlug.get(slug) ?? slug, listed: titleBySlug.has(slug) }))
+      .sort((a, b) => a.title.localeCompare(b.title)),
+    [favourites, titleBySlug],
+  )
+
+  const toggleFavourite = useCallback(async (slug: string) => {
+    const isFav = favourites.includes(slug)
+    const next = isFav ? favourites.filter(s => s !== slug) : [...favourites, slug]
+    setFavourites(next)
+    try {
+      const r = await fetch(api('/api/favourites'), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(next),
+      })
+      if (!r.ok) console.error('Failed to save favourites:', r.status)
+    } catch (e) {
+      console.error('Failed to save favourites:', e)
+    }
+  }, [favourites])
+
+  // Open the ⋯ menu anchored at the dots that were clicked.
+  const openDocMenu = (slug: string, el: HTMLElement) => {
+    const r = el.getBoundingClientRect()
+    setMenuAnchor({ slug, title: titleBySlug.get(slug) ?? slug, x: r.right, y: r.top })
+  }
+
+  // ⋯ → clock: navigate, then open the revision rail once the doc is active.
+  const openDocHistory = (slug: string) => {
+    setMenuAnchor(null)
+    setHistoryIntent(slug)
+    navigateTo(`/docs/${slug}`)
+  }
+
+  const copyDocPath = (slug: string) => {
+    const path = `docs/${slug}`
+    navigator.clipboard?.writeText(path).catch(() => undefined)
+  }
+
+  const exportDoc = async (slug: string, fmt: DocExportFormat) => {
+    const title = titleBySlug.get(slug) ?? slug
+    let content: string | null = null
+    if (isDocPage && activePage.id === slug) content = docContent
+    else {
+      try {
+        const r = await fetch(api(`/api/docs/${slug}`))
+        if (r.ok) { const d = await r.json(); content = d.content }
+      } catch (e) { console.error('Failed to load doc for export:', e) }
+    }
+    if (content == null) return
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${title}.${fmt}`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const deleteDocFile = async (slug: string) => {
+    const title = titleBySlug.get(slug) ?? slug
+    if (!window.confirm(`Delete "${title}"? This removes the doc file from your local workspace.`)) return
+    try {
+      const r = await fetch(api(`/api/docs/${slug}`), { method: 'DELETE' })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      setMenuAnchor(null)
+      fetchDocSlugs()
+      fetchFavourites() // backend re-reads and drops the now-stale slug
+      if (isDocPage && activePage.id === slug) navigateTo('/')
+    } catch (e) {
+      console.error('Failed to delete doc:', e)
+    }
+  }
+
   const fetchTicketsList = async () => {
     try {
-      const r = await fetch('/api/tickets')
+      const r = await fetch(api('/api/tickets'))
       if (r.ok) {
         const data = await r.json()
         setTickets(data)
@@ -528,7 +782,7 @@ function App() {
 
   const fetchDocPage = async (slug: string) => {
     try {
-      const r = await fetch(`/api/docs/${slug}`)
+      const r = await fetch(api(`/api/docs/${slug}`))
       if (r.ok) {
         const data = await r.json()
         setDocTitle(data.title)
@@ -543,9 +797,66 @@ function App() {
     }
   }
 
+  // The canonical git path of the current artifact, used by all history calls.
+  const revisionsPath = useMemo(() => {
+    if (activePage.kind === 'docs') return `/api/revisions/docs/${activePage.id ?? 'index'}`
+    if (activePage.kind === 'tickets' && activePage.id) return `/api/revisions/tickets/${activePage.id}`
+    return null
+  }, [activePage])
+
+  // List of commits that touched the current doc/ticket, newest first.
+  const fetchRevisions = useCallback(async () => {
+    if (!revisionsPath) { setRevisions([]); return }
+    try {
+      const r = await fetch(api(revisionsPath))
+      if (r.ok) {
+        const data = await r.json()
+        setRevisions(Array.isArray(data) ? data : [])
+      } else {
+        setRevisions([])
+      }
+    } catch (e) {
+      console.error('Failed to load revisions:', e)
+      setRevisions([])
+    }
+  }, [revisionsPath])
+
+  // Show a revision: fetch its content (and the adjacent diff vs its parent).
+  const selectRevision = useCallback(async (idx: number) => {
+    if (!revisionsPath || idx < 0) return
+    const rev = revisions[idx]
+    if (!rev) return
+    setHistoryIdx(idx)
+    setHistoryAt(null)
+    // Diff against the adjacent parent (older) commit — the root commit has
+    // none, so compare against git's empty tree to show the whole body added.
+    const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
+    const parentSha = idx + 1 < revisions.length ? revisions[idx + 1].sha : EMPTY_TREE
+    try {
+      const [atR, diffR] = await Promise.all([
+        fetch(api(`${revisionsPath}?at=${encodeURIComponent(rev.sha)}`)),
+        fetch(api(`${revisionsPath}?a=${encodeURIComponent(parentSha)}&b=${encodeURIComponent(rev.sha)}`)),
+      ])
+      if (atR.ok) setHistoryAt(await atR.json())
+      if (diffR.ok) setHistoryDiff((await diffR.json()).diff || '')
+      else setHistoryDiff('')
+    } catch (e) {
+      console.error('Failed to load revision:', e)
+      setHistoryAt(null)
+      setHistoryDiff('')
+    }
+  }, [revisionsPath, revisions])
+
+  // Back at the working copy: show the live doc.
+  const showCurrent = useCallback(() => {
+    setHistoryIdx(-1)
+    setHistoryAt(null)
+    setHistoryDiff('')
+  }, [])
+
   const fetchTicketDetail = async (id: string) => {
     try {
-      const r = await fetch(`/api/tickets/${id}`)
+      const r = await fetch(api(`/api/tickets/${id}`))
       if (r.ok) {
         const data = await r.json()
         setActiveTicket(data)
@@ -562,7 +873,7 @@ function App() {
   // Generic artifact endpoints — the engine serves any config-declared kind.
   const fetchArtifactList = async (kind: string) => {
     try {
-      const r = await fetch(`/api/artifacts/${encodeURIComponent(kind)}`)
+      const r = await fetch(api(`/api/artifacts/${encodeURIComponent(kind)}`))
       if (r.ok) {
         const data = await r.json()
         setArtifactLists(prev => ({ ...prev, [kind]: data }))
@@ -574,7 +885,7 @@ function App() {
 
   const fetchArtifactDetail = async (kind: string, id: string) => {
     try {
-      const r = await fetch(`/api/artifacts/${encodeURIComponent(kind)}/${id}`)
+      const r = await fetch(api(`/api/artifacts/${encodeURIComponent(kind)}/${id}`))
       if (r.ok) {
         const data = await r.json()
         setDocTitle(data.title)
@@ -594,7 +905,7 @@ function App() {
   // -------------------------------------------------------------
   const fetchThreads = useCallback(async (context: string) => {
     try {
-      const r = await fetch(`/api/threads?context=${encodeURIComponent(context)}`)
+      const r = await fetch(api(`/api/threads?context=${encodeURIComponent(context)}`))
       if (r.ok) {
         const data = await r.json()
         console.log('[thread] fetchThreads', { context, count: data.length, ids: data.map((t: any) => t.id) })
@@ -609,7 +920,7 @@ function App() {
     const payload = { ...contextThreadState.current, scroll: { ...chatScrollPosByThreadRef.current } }
     console.log('[viewstate] save', JSON.stringify(payload))
     try {
-      await fetch('/api/viewstate', {
+      await fetch(api('/api/viewstate'), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -621,7 +932,7 @@ function App() {
 
   const fetchViewState = useCallback(async () => {
     try {
-      const r = await fetch('/api/viewstate')
+      const r = await fetch(api('/api/viewstate'))
       if (r.ok) {
         const data = await r.json()
         if (data && typeof data === 'object' && !Array.isArray(data)) {
@@ -643,7 +954,7 @@ function App() {
   const createNewThread = useCallback(async (context: string) => {
     console.log('[thread] createNewThread', { context, contextLabel })
     try {
-      const r = await fetch('/api/threads', {
+      const r = await fetch(api('/api/threads'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ context, title: contextLabel + ' discussion' }),
@@ -663,7 +974,7 @@ function App() {
   const deleteThread = useCallback(async (threadId: string) => {
     console.log('[thread] delete', { threadId, wasActive: threadId === activeThreadId })
     try {
-      await fetch(`/api/threads/${threadId}`, { method: 'DELETE' })
+      await fetch(api(`/api/threads/${threadId}`), { method: 'DELETE' })
       if (activeThreadId === threadId) {
         setActiveThreadId(undefined)
       }
@@ -824,7 +1135,7 @@ function App() {
   const autoCreateThread = useCallback(async (context: string) => {
     console.log('[thread] autoCreate', { context, reason: 'no saved state found' })
     try {
-      const r = await fetch('/api/threads', {
+      const r = await fetch(api('/api/threads'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ context, title: context + ' discussion' }),
@@ -848,10 +1159,10 @@ useEffect(() => {
 
     const isNavigation = prevContextKey.current !== '' && prevContextKey.current !== contextKey
     if (isNavigation) {
-      console.log('[effect] flushing context', { from: prevContextKey.current, to: contextKey, state: { activeThreadId, showThreadList } })
+      console.log('[effect] flushing context', { from: prevContextKey.current, to: contextKey, state: { activeThreadId, showThreadList, historyOpen } })
       // Flush the context we're leaving with its live values
       saveChatScrollPos()
-      contextThreadState.current[prevContextKey.current] = { activeThreadId, showThreadList }
+      contextThreadState.current[prevContextKey.current] = { activeThreadId, showThreadList, historyOpen }
       saveViewState()
     }
     prevContextKey.current = contextKey
@@ -873,17 +1184,27 @@ useEffect(() => {
       setShowThreadList(false)
       autoCreateThread(contextKey)
     }
+    setHistoryOpen(!!saved?.historyOpen)
     fetchThreads(contextKey)
   }, [contextKey, viewStateLoaded, fetchThreads, saveChatScrollPos])
+
+  // ⋯ → clock from a nav row: once the target doc is the active page, open the
+  // revision rail (and let it do its usual on-demand fetch).
+  useEffect(() => {
+    if (historyIntent && activePage.kind === 'docs' && activePage.id === historyIntent) {
+      setHistoryOpen(true)
+      setHistoryIntent(null)
+    }
+  }, [historyIntent, activePage])
 
   // Save view state to disk whenever thread state changes within the same context
   useEffect(() => {
     if (viewStateLoaded) {
-      console.log('[effect] saveOnChange', { contextKey, activeThreadId, showThreadList })
-      contextThreadState.current[contextKey] = { activeThreadId, showThreadList }
+      console.log('[effect] saveOnChange', { contextKey, activeThreadId, showThreadList, historyOpen })
+      contextThreadState.current[contextKey] = { activeThreadId, showThreadList, historyOpen }
       saveViewState()
     }
-  }, [activeThreadId, showThreadList, viewStateLoaded])
+  }, [activeThreadId, showThreadList, historyOpen, viewStateLoaded, contextKey, saveViewState])
 
   // Refresh the thread list every time it is opened, so message counts and
   // previews reflect the conversation that just happened.
@@ -892,6 +1213,19 @@ useEffect(() => {
       fetchThreads(contextKey)
     }
   }, [showThreadList, contextKey, fetchThreads])
+
+  // Load revisions when the rail opens or the current doc changes while open;
+  // reset the selection if the doc itself changed.
+  const prevHistoryPath = useRef<string | null>(null)
+  useEffect(() => {
+    if (!historyOpen || !revisionsPath) return
+    if (prevHistoryPath.current !== revisionsPath) {
+      prevHistoryPath.current = revisionsPath
+      showCurrent()
+    }
+    fetchRevisions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyOpen, revisionsPath, fetchRevisions])
 
   // Load view state from disk on mount, then flag as loaded
   useEffect(() => {
@@ -997,7 +1331,7 @@ useEffect(() => {
             </div>
             <div className="flex items-center gap-2">
               <span className="text-[9px] text-slate-500 bg-borderDark/40 px-2 py-0.5 rounded border border-borderDark/20 truncate max-w-[120px]">
-                {contextLabel}
+                {(isMultiRepo && activeRepo ? activeRepo + ' · ' : '') + contextLabel}
               </span>
               <button
                 onClick={() => { setSettingsPane('ai'); setShowSettings(true) }}
@@ -1134,15 +1468,38 @@ useEffect(() => {
   // Nav sections are data-driven from the engine config: one section per kind
   // that declares nav. Views are engine capabilities (tree, board); unknown
   // views render nothing until the engine implements them.
-  const navSections = useMemo(() =>
-    Object.entries(engineConfig.artifact_kinds)
+  const navSections = useMemo(() => {
+    const kinds = Object.entries(engineConfig.artifact_kinds)
       .map(([kind, def]) => ({ kind, def }))
       .filter(e => !!e.def.nav)
-      .sort((a, b) => (a.def.nav!.order ?? 99) - (b.def.nav!.order ?? 99)),
-    [engineConfig],
-  )
+    if (engineConfig.pipeline?.nav) {
+      kinds.push({ kind: 'pipeline', def: { path: '', extension: '.mdx', agent_writable: false, view: 'pipeline', nav: engineConfig.pipeline.nav } })
+    }
+    return kinds.sort((a, b) => (a.def.nav!.order ?? 99) - (b.def.nav!.order ?? 99))
+  }, [engineConfig])
 
   const renderNavSection = (kind: string, nav: EngineNav) => {
+    if (kind === 'pipeline') {
+      return (
+        <div>
+          <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest px-3 mb-1">{nav.label}</div>
+          <div className="space-y-px">
+            <a
+              href="#/pipeline"
+              onClick={(e) => { e.preventDefault(); navigateTo('/pipeline') }}
+              className={`flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 border ${
+                activePage.kind === 'pipeline'
+                  ? 'bg-accentPurple/10 text-slate-100 border-accentPurple/20'
+                  : 'text-slate-500 hover:text-slate-200 hover:bg-borderDark/20 border-transparent'
+              }`}
+            >
+              <GitBranch className="w-4 h-4 text-slate-600" />
+              <span>Derivation</span>
+            </a>
+          </div>
+        </div>
+      )
+    }
     if (nav.view === 'tree') {
       return (
         <div>
@@ -1170,20 +1527,34 @@ useEffect(() => {
 
                 if (isLeaf) {
                   return (
-                    <a
+                    <div
                       key={node.slug}
-                      href={`#/docs/${node.slug}`}
-                      onClick={(e) => { e.preventDefault(); navigateTo(`/docs/${node.slug}`) }}
                       style={{ paddingLeft: `${12 + depth * 16}px` }}
-                      className={`flex items-center gap-2.5 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 border ${
+                      className={`group flex items-center gap-2.5 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 border ${
                         activePage.id === node.slug && isDocPage
                           ? 'bg-accentBlue/10 text-slate-100 border-accentBlue/20'
                           : 'text-slate-500 hover:text-slate-200 hover:bg-borderDark/20 border-transparent'
                       }`}
                     >
-                      <FileText className="w-4 h-4 text-slate-600 flex-shrink-0" />
-                      <span className="truncate">{node.title}</span>
-                    </a>
+                      <a
+                        href={`#/docs/${node.slug}`}
+                        onClick={(e) => { e.preventDefault(); navigateTo(`/docs/${node.slug}`) }}
+                        className="flex items-center gap-2.5 flex-1 min-w-0"
+                      >
+                        <FileText className="w-4 h-4 text-slate-600 flex-shrink-0" />
+                        <span className="truncate">{node.title}</span>
+                        {favSet.has(node.slug!) && <Star className="w-3 h-3 text-amber-400 ml-auto flex-shrink-0" fill="currentColor" />}
+                      </a>
+                      <button
+                        type="button"
+                        onClick={(e) => openDocMenu(node.slug!, e.currentTarget)}
+                        className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-1 rounded hover:bg-borderDark/40 text-slate-400 hover:text-slate-100 transition-opacity flex-shrink-0"
+                        title={`Actions for ${node.title}`}
+                        aria-haspopup="menu"
+                      >
+                        <MoreVertical className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   )
                 }
 
@@ -1214,10 +1585,19 @@ useEffect(() => {
                         <a
                           href={`#/docs/${node.slug}`}
                           onClick={(e) => { e.preventDefault(); navigateTo(`/docs/${node.slug}`) }}
-                          className="truncate hover:text-slate-100 transition-colors"
+                          className="truncate hover:text-slate-100 transition-colors flex-1 min-w-0"
                         >
                           {label}
                         </a>
+                        <button
+                          type="button"
+                          onClick={(e) => openDocMenu(node.slug!, e.currentTarget)}
+                          className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-1 rounded hover:bg-borderDark/40 text-slate-400 hover:text-slate-100 transition-opacity flex-shrink-0"
+                          title={`Actions for ${label}`}
+                          aria-haspopup="menu"
+                        >
+                          <MoreVertical className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     ) : (
                       <button
@@ -1236,6 +1616,42 @@ useEffect(() => {
               return tree.map(node => renderNode(node, 0))
             })()}
           </div>
+          {/* User-scoped favourites: star any doc via its ⋯ menu. Stale slugs
+              (doc deleted) are dropped by the backend on read. */}
+          {kind === 'docs' && favouriteRows.length > 0 && (
+            <div className="space-y-px mt-2.5">
+              <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest px-3 mb-1">Favourites</div>
+              {favouriteRows.map(({ slug, title, listed }) => (
+                <div
+                  key={slug}
+                  className={`group flex items-center gap-2.5 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 border ${
+                    listed && activePage.id === slug && isDocPage
+                      ? 'bg-accentBlue/10 text-slate-100 border-accentBlue/20'
+                      : 'text-slate-500 hover:text-slate-200 hover:bg-borderDark/20 border-transparent'
+                  }`}
+                >
+                  <a
+                    href={`#/docs/${slug}`}
+                    onClick={(e) => { e.preventDefault(); navigateTo(`/docs/${slug}`) }}
+                    className="flex items-center gap-2.5 flex-1 min-w-0"
+                  >
+                    <Star className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" fill="currentColor" />
+                    <span className="truncate">{title}</span>
+                    {!listed && <span className="text-[9px] text-slate-600 font-mono flex-shrink-0">missing</span>}
+                  </a>
+                  <button
+                    type="button"
+                    onClick={(e) => openDocMenu(slug, e.currentTarget)}
+                    className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-1 rounded hover:bg-borderDark/40 text-slate-400 hover:text-slate-100 transition-opacity flex-shrink-0"
+                    title={`Actions for ${title}`}
+                    aria-haspopup="menu"
+                  >
+                    <MoreVertical className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )
     }
@@ -1347,8 +1763,119 @@ useEffect(() => {
 
         {/* ===== MAIN CONTENT ===== */}
         <main className="flex-1 overflow-y-auto bg-bgDark border-r border-borderDark/60 flex flex-col">
+
+        {isMultiRepo && activeRepoStatus?.status === 'nogit' && (
+          <div className="flex-shrink-0 px-8 py-2.5 bg-amber-500/10 border-b border-amber-500/25 flex items-center justify-between">
+            <p className="text-xs text-amber-300 flex items-center gap-2">
+              <Info className="w-3.5 h-3.5" />
+              Agent commits require a git repo in <span className="font-mono text-amber-200">{activeRepoStatus.path}</span>
+            </p>
+            <button
+              onClick={() => refreshRepos()}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-500/20 text-amber-200 border border-amber-500/40 hover:bg-amber-500/30 transition-colors"
+            >
+              Re-scan
+            </button>
+          </div>
+        )}
           <header className="h-[57px] flex-shrink-0 border-b border-borderDark/40 px-8 flex items-center justify-between bg-bgDark/80 sticky top-0 z-10">
-            <div className="flex items-center gap-2 text-xs font-medium text-slate-400">
+            <div className="flex items-center gap-3 text-xs font-medium text-slate-400 relative">
+              {activeRepoStatus && (
+                <>
+                  <div className="relative">
+                    <button
+                      onClick={() => setRepoDropdownOpen(o => !o)}
+                      className="flex items-center gap-2.5 h-8 pl-2.5 pr-3 rounded-xl border border-borderDark/60 bg-surfaceDark/60 hover:border-borderDark hover:bg-surfaceDark transition-colors"
+                      title="Switch repository"
+                    >
+                      <span className="flex items-center justify-center h-6 w-6 rounded-md bg-borderDark/40 text-accentBlue flex-shrink-0">
+                        <GitBranch className="w-3.5 h-3.5" />
+                      </span>
+                      <span className="text-xs font-semibold text-slate-100 truncate max-w-[180px]">{activeRepoStatus.name}</span>
+                      {activeRepoStatus.branch && (
+                        <span className="hidden sm:inline-flex font-mono text-[10px] text-slate-400 bg-borderDark/40 px-1.5 py-0.5 rounded-md border border-borderDark/40">
+                          {activeRepoStatus.branch}
+                        </span>
+                      )}
+                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${(REPO_STATUS_META[activeRepoStatus.status] ?? REPO_STATUS_META.ready).dot}`} />
+                      <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
+                    </button>
+
+                    {repoDropdownOpen && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setRepoDropdownOpen(false)} />
+                        <div className="absolute left-0 top-[calc(100%+6px)] w-[380px] rounded-xl border border-borderDark/60 bg-[#0a0e1c]/95 backdrop-blur shadow-2xl doc-menu-pop z-50 overflow-hidden">
+                          <div className="px-4 pt-3 pb-2 text-[10px] font-semibold text-slate-500 uppercase tracking-widest flex items-center justify-between">
+                            <span>Repositories on this instance</span>
+                            <span className="font-mono text-slate-600 normal-case">DEVTOP_REPOS</span>
+                          </div>
+                          <div className="max-h-[320px] overflow-y-auto px-2 pb-1 space-y-0.5">
+                            {repos.map(r => {
+                              const meta = REPO_STATUS_META[r.status] ?? REPO_STATUS_META.ready
+                              const active = r.name === activeRepo
+                              return (
+                                <button
+                                  key={r.name}
+                                  onClick={() => selectRepo(r.name)}
+                                  className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left transition-colors ${
+                                    active ? 'bg-accentBlue/10 border border-accentBlue/25 text-slate-100' : 'border border-transparent hover:bg-borderDark/20 text-slate-300'
+                                  }`}
+                                >
+                                  <span className="flex items-center justify-center h-7 w-7 rounded-lg bg-borderDark/40 text-slate-400 flex-shrink-0">
+                                    <GitBranch className="w-3.5 h-3.5" />
+                                  </span>
+                                  <span className="flex-1 min-w-0">
+                                    <span className="flex items-center gap-2 text-xs font-semibold truncate">
+                                      {r.name}
+                                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${meta.dot}`} />
+                                    </span>
+                                    <span className="block text-[10px] font-mono text-slate-600 truncate mt-0.5">{r.path}</span>
+                                  </span>
+                                  <span className="flex-shrink-0 flex items-center gap-1.5">
+                                    {r.branch && (
+                                      <span className="font-mono text-[9px] text-slate-500 bg-borderDark/40 px-1.5 py-0.5 rounded-md border border-borderDark/40 max-w-[90px] truncate">{r.branch}</span>
+                                    )}
+                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-medium border capitalize flex-shrink-0 ${
+                                      r.status === 'ready' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                                      : r.status === 'dirty' ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                                      : r.status === 'uninit' ? 'border-slate-500/40 bg-slate-500/10 text-slate-400'
+                                      : 'border-rose-500/30 bg-rose-500/10 text-rose-300'
+                                    }`}>{meta.label}</span>
+                                    {active && <Check className="w-3.5 h-3.5 text-accentBlue" />}
+                                  </span>
+                                </button>
+                              )
+                            })}
+                          </div>
+                          <div className="border-t border-borderDark/40">
+                            <button
+                              onClick={() => { setRepoDropdownOpen(false); navigateTo('/repos') }}
+                              className="w-full flex items-center gap-2 px-4 py-2.5 text-xs font-medium text-accentBlue hover:bg-accentBlue/5 transition-colors"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              Manage repos…
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </>
+              )}
+              {revisionsPath && (
+                <button
+                  onClick={() => setHistoryOpen(o => !o)}
+                  title="Revision history"
+                  aria-expanded={historyOpen}
+                  className={`h-7 w-7 rounded-lg border flex items-center justify-center transition-colors ${
+                    historyOpen
+                      ? 'bg-accentBlue/10 border-accentBlue/50 text-accentBlue'
+                      : 'border-borderDark/50 text-slate-400 hover:text-slate-100 hover:border-accentBlue/50 hover:bg-accentBlue/10'
+                  }`}
+                >
+                  <History className="w-3.5 h-3.5" />
+                </button>
+              )}
               {breadcrumbItems.map((item, i) => (
                 <Fragment key={i}>
                   {i > 0 && <ChevronRight className="w-3.5 h-3.5 text-slate-600" />}
@@ -1364,8 +1891,172 @@ useEffect(() => {
             </div>
           </header>
 
-          <div className="flex-1 p-8 overflow-y-auto">
-            
+          <div className="flex flex-1 min-h-0">
+            {/* 0. REVISION HISTORY RAIL (open via the clock icon in the header) */}
+            {historyOpen && isDocumentView && revisions.length > 0 && (
+              <aside className="w-56 flex-shrink-0 border-r border-borderDark/40 overflow-y-auto p-2 bg-[#080c16]/60">
+                <div className="px-2 pt-1 pb-2 text-[9px] font-semibold text-slate-500 uppercase tracking-widest">Revisions</div>
+                {revisions.map((r, i) => (
+                  <button
+                    key={r.sha}
+                    onClick={() => (r.is_current ? showCurrent() : selectRevision(i))}
+                    className={`w-full flex flex-col gap-0.5 px-3 py-2 rounded-lg text-left border transition-all ${i === historyIdx ? 'bg-accentBlue/10 border-accentBlue/30' : 'border-transparent hover:bg-borderDark/20'}`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className={`font-mono text-[10px] ${r.is_current ? 'text-emerald-400' : 'text-blue-400'}`}>{r.short}</span>
+                      {r.is_current && <span className="text-[8px] px-1 py-px rounded bg-emerald-500/10 border-emerald-500/30 text-emerald-400">HEAD</span>}
+                    </div>
+                    <div className="text-[10px] text-slate-300 leading-snug">{r.message}</div>
+                    <div className="text-[8px] text-slate-500 font-mono">{formatRevisionDate(r.date)}</div>
+                  </button>
+                ))}
+              </aside>
+            )}
+
+            <div className="flex-1 min-w-0 overflow-y-auto p-8">
+
+            {showUninitState ? (
+              <div className="h-full flex items-center justify-center fade-in">
+                <div className="max-w-md text-center px-6">
+                  <div className="mx-auto w-14 h-14 rounded-2xl bg-borderDark/30 border border-borderDark/50 flex items-center justify-center text-slate-500 mb-4">
+                    <Database className="w-6 h-6" />
+                  </div>
+                  <h2 className="text-lg font-semibold text-slate-100">devtop is not initialized here</h2>
+                  <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                    Initialize <span className="font-mono text-slate-400">{activeRepoStatus?.path}</span> to scaffold
+                    <span className="font-mono text-slate-400"> .devtop/</span> — config, agents, and templates land in the repo, not on this instance.
+                  </p>
+                  <div className="flex items-center justify-center gap-2.5 mt-5">
+                    <button
+                      onClick={() => initActiveRepo()}
+                      disabled={repoInitBusy}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium bg-accentBlue text-slate-100 hover:bg-accentBlue/80 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {repoInitBusy ? 'Initializing…' : 'Init .devtop'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : isReposPage ? (
+              <div className="max-w-5xl mx-auto mt-8 fade-in">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h1 className="text-2xl font-bold text-slate-100">Repositories</h1>
+                    <p className="text-xs text-slate-400 mt-1">Registered on this instance only — each repo keeps its own <span className="font-mono">.devtop/</span>.</p>
+                  </div>
+                  <button
+                    onClick={() => setShowAddRepo(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-accentBlue text-slate-100 hover:bg-accentBlue/80 transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Add repo…
+                  </button>
+                </div>
+                <div className="mt-6 rounded-xl border border-borderDark/40 bg-surfaceDark/40 shadow-2xl overflow-hidden">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="text-[10px] uppercase tracking-widest text-slate-500 border-b border-borderDark/30">
+                        <th className="px-6 py-3 font-semibold">Repo</th>
+                        <th className="px-4 py-3 font-semibold">Branch</th>
+                        <th className="px-4 py-3 font-semibold">Status</th>
+                        <th className="px-4 py-3 font-semibold text-right">Docs</th>
+                        <th className="px-4 py-3 font-semibold text-right">Pending</th>
+                        <th className="px-4 py-3"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {repos.map(r => {
+                        const meta = REPO_STATUS_META[r.status] ?? REPO_STATUS_META.ready
+                        const active = r.name === activeRepo
+                        return (
+                          <tr key={r.name} className="border-b border-borderDark/30 last:border-b-0 hover:bg-bgDark/30 transition-colors group">
+                            <td className="px-6 py-3.5">
+                              <div className="flex items-center gap-2.5">
+                                <span className="flex items-center justify-center h-7 w-7 rounded-lg bg-borderDark/40 text-slate-400 flex-shrink-0">
+                                  <GitBranch className="w-3.5 h-3.5" />
+                                </span>
+                                <div className="min-w-0">
+                                  <div className="text-xs font-semibold text-slate-100 flex items-center gap-2">
+                                    {r.name}
+                                    {active && (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-px rounded text-[9px] font-medium uppercase tracking-wider bg-accentBlue/15 border border-accentBlue/30 text-accentBlue">
+                                        active <Check className="w-2.5 h-2.5" />
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[10px] font-mono text-slate-600 truncate">{r.path}</div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3.5">
+                              <span className="font-mono text-[10px] text-slate-400 bg-borderDark/40 px-1.5 py-0.5 rounded-md border border-borderDark/40">{r.branch || '—'}</span>
+                            </td>
+                            <td className="px-4 py-3.5">
+                              <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border capitalize ${
+                                r.status === 'ready' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                                : r.status === 'dirty' ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                                : r.status === 'uninit' ? 'border-slate-500/40 bg-slate-500/10 text-slate-400'
+                                : 'border-rose-500/30 bg-rose-500/10 text-rose-300'
+                              }`}>
+                                <span className={`w-1 h-1 rounded-full ${meta.dot}`} />
+                                {meta.label}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3.5 text-right font-mono text-xs text-slate-400">{r.docs || '—'}</td>
+                            <td className="px-4 py-3.5 text-right font-mono text-xs text-slate-500">{r.pending || '—'}</td>
+                            <td className="px-4 py-3.5 text-right flex items-center justify-end gap-2">
+                              {repoRemoveId === r.name ? (
+                                <>
+                                  <span className="text-[10px] text-slate-500">Remove?</span>
+                                  <button
+                                    onClick={() => removeRepo(r.name)}
+                                    className="px-2 py-1.5 rounded-lg text-[10px] font-medium text-rose-300 border border-rose-500/40 hover:bg-rose-500/10 transition-colors"
+                                  >
+                                    Yes
+                                  </button>
+                                  <button
+                                    onClick={() => setRepoRemoveId(null)}
+                                    className="px-2 py-1.5 rounded-lg text-[10px] font-medium text-slate-400 border border-borderDark hover:bg-borderDark/20 transition-colors"
+                                  >
+                                    No
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  onClick={() => { setRepoRemoveError(''); setRepoRemoveId(r.name) }}
+                                  disabled={repos.length <= 1}
+                                  title={repos.length <= 1 ? 'Keep at least one registered repo' : `Unregister ${r.name}`}
+                                  className="h-7 w-7 rounded-lg border border-borderDark/50 text-slate-500 hover:text-rose-300 hover:border-rose-500/40 hover:bg-rose-500/5 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100 disabled:opacity-0"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </td>
+                            <td className="px-4 py-3.5 text-right">
+                              <button
+                                onClick={() => selectRepo(r.name)}
+                                className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 border border-borderDark hover:bg-borderDark/20 transition-colors opacity-0 group-hover:opacity-100"
+                              >
+                                Open
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {repoRemoveError && (
+                  <p className="text-xs text-rose-300 mt-3 px-1 font-mono">{repoRemoveError}</p>
+                )}
+                <p className="text-xs text-slate-600 mt-3 px-1">
+                  Add repos as paths only. devtop never auto-discovers directories; a repo appears here only when you register it.
+                  Registrations persist in <span className="font-mono">~/.config/devtop/repos.json</span> and survive restarts.
+                </p>
+              </div>
+            ) : (
+            <Fragment>
+
             {/* 1. DOC / ARTIFACT DETAIL VIEW */}
             {isDocumentView && (
               <div className="max-w-3xl mx-auto prose prose-invert fade-in">
@@ -1388,12 +2079,69 @@ useEffect(() => {
                       Back to docs
                     </a>
                   </div>
+                ) : historyIdx >= 0 ? (
+                  <div>
+                    {!historyAt ? (
+                      <div className="p-10 text-center text-xs text-slate-500">Loading revision…</div>
+                    ) : (<>
+                    <div className="flex items-center justify-between mb-4">
+                      <p className="text-[11px] text-slate-500 whitespace-nowrap">
+                        <span className="text-accentBlue font-mono">{revisions[historyIdx]?.short}</span> · {formatRevisionDate(revisions[historyIdx]?.date || '')} ·{' '}
+                        <button onClick={showCurrent} className="text-accentBlue hover:text-blue-300 underline underline-offset-2">View current →</button>
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => selectRevision(historyIdx + 1)}
+                          disabled={historyIdx + 1 >= revisions.length}
+                          className="h-7 w-7 rounded-lg border border-borderDark/50 text-slate-400 hover:text-slate-100 hover:border-accentBlue/50 hover:bg-accentBlue/10 flex items-center justify-center transition-colors disabled:opacity-30 disabled:hover:border-borderDark/50 disabled:hover:text-slate-400 disabled:hover:bg-transparent"
+                          title="Older"
+                        >‹</button>
+                        <button
+                          onClick={() => selectRevision(historyIdx - 1)}
+                          disabled={historyIdx - 1 < 0}
+                          className="h-7 w-7 rounded-lg border border-borderDark/50 text-slate-400 hover:text-slate-100 hover:border-accentBlue/50 hover:bg-accentBlue/10 flex items-center justify-center transition-colors disabled:opacity-30 disabled:hover:border-borderDark/50 disabled:hover:text-slate-400 disabled:hover:bg-transparent"
+                          title="Newer"
+                        >›</button>
+                      </div>
+                    </div>
+
+                    {historyDiff && (
+                      <div className="mb-6 rounded-xl border border-borderDark/40 bg-surfaceDark/30 overflow-hidden not-prose">
+                        <div className="flex items-center justify-between px-4 py-2.5 border-b border-borderDark/40 bg-surfaceDark/50">
+                          <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">What this commit changed</span>
+                        </div>
+                        <div className="max-h-56 overflow-y-auto py-1">
+                          <DiffView
+                            data={{ hunks: [historyDiff] }}
+                            diffViewMode={DiffModeEnum.Unified}
+                            diffViewTheme="dark"
+                            diffViewHighlight={false}
+                            diffViewFontSize={12}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="text-slate-300 space-y-4 prose-custom prose-history">
+                      {historyAt.deleted ? (
+                        <p className="text-sm text-red-400">This file was deleted at this commit.</p>
+                      ) : (
+                        <RichMarkdown source={historyAt.content} />
+                      )}
+                    </div>
+                    </>)}
+                  </div>
                 ) : (
                   <div className="text-slate-300 space-y-4 prose-custom">
                     <RichMarkdown source={docContent} />
                   </div>
                 )}
               </div>
+            )}
+
+            {/* 1.45. DERIVATION PIPELINE VIEW — cross-kind, from /api/pipeline */}
+            {isPipelinePage && (
+              <PipelineView />
             )}
 
             {/* 1.5. LIST OVERVIEW VIEW — any config-declared "list" kind */}
@@ -1579,17 +2327,34 @@ useEffect(() => {
               </div>
             )}
 
+            </Fragment>
+            )}
+          </div>
           </div>
         </main>
 
         {/* ===== COPILOT CHAT PANEL ===== */}
         {chatReady ? (
-          <CopilotKit runtimeUrl="/api/copilotkit" threadId={activeThreadId}>
+          <CopilotKit runtimeUrl="/api/copilotkit" threadId={activeThreadId} renderToolCalls={[WildcardToolCallRender, ...toolCallRenderers]}>
             <PageContextProvider activePage={activePage} docTitle={docTitle} docContent={docContent} activeTicket={activeTicket} tickets={tickets} contextLabel={contextLabel} />
             {chatPanel}
           </CopilotKit>
         ) : (
           chatPanel
+        )}
+
+        {/* ===== DOC ACTION MENU (⋯) ===== */}
+        {menuAnchor && (
+          <DocActionsMenu
+            anchor={menuAnchor}
+            isFav={favSet.has(menuAnchor.slug)}
+            onToggleFav={(slug) => { toggleFavourite(slug); setMenuAnchor(null) }}
+            onHistory={openDocHistory}
+            onCopyPath={copyDocPath}
+            onExport={exportDoc}
+            onDelete={deleteDocFile}
+            onClose={() => setMenuAnchor(null)}
+          />
         )}
 
         {/* ===== SETTINGS DIALOG ===== */}
@@ -1611,8 +2376,24 @@ useEffect(() => {
           onSave={saveAiKey}
           onClear={clearAiKey}
         />
+
+      {showAddRepo && (
+        <AddRepoModal
+          onClose={() => setShowAddRepo(false)}
+          onAdded={() => { setShowAddRepo(false); refreshRepos() }}
+        />
+      )}
       </div>
   )
+}
+
+// Compact display form for git author dates (ISO 8601). The rail is narrow,
+// so a full toLocaleString is too wide; monospace "YYYY-MM-DD HH:MM" fits.
+function formatRevisionDate(iso: string): string {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return iso
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 function PageContextProvider({ activePage, docTitle, docContent, activeTicket, tickets, contextLabel }: {
@@ -1625,7 +2406,8 @@ function PageContextProvider({ activePage, docTitle, docContent, activeTicket, t
 }) {
   const contextValue = useMemo(() => {
     if (activePage.kind === 'docs') {
-      return `Title: ${docTitle}\n\nContent:\n${docContent}`
+      const slug = activePage.id ?? 'index'
+      return `Path: ${slug}\nTitle: ${docTitle}\n\nContent:\n${docContent}`
     }
     if (activePage.kind === 'tickets' && activePage.id && activeTicket) {
       return `Ticket dk-${activeTicket.id}: ${activeTicket.title}\nStatus: ${activeTicket.status}\nPriority: ${activeTicket.priority}\nAssignee: ${activeTicket.assignee || 'Unassigned'}\n\nDescription:\n${activeTicket.raw_description}`

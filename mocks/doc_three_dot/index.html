@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>devtop — doc ⋯ menu mock</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            bgDark: '#070a13',
+            surfaceDark: '#0c101f',
+            borderDark: '#1e293b',
+            accentBlue: '#3b82f6',
+            accentPurple: '#8b5cf6',
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'ui-monospace', 'Fira Code', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    * { scrollbar-width: thin; scrollbar-color: #1e293b transparent; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 9999px; }
+
+    .prose-custom h1 { font-size: 1.875rem; font-weight: 700; letter-spacing: -0.025em; margin-bottom: 1rem; color: #f8fafc; }
+    .prose-custom h2 { font-size: 1.25rem; font-weight: 600; letter-spacing: -0.02em; margin-top: 2rem; margin-bottom: 0.75rem; color: #f1f5f9; border-bottom: 1px solid #1e293b; padding-bottom: 0.5rem; }
+    .prose-custom p { margin-bottom: 1rem; line-height: 1.7; color: #cbd5e1; }
+    .prose-custom pre { background: #0b1220; border: 1px solid #1e293b; border-radius: 0.75rem; padding: 1rem 1.25rem; margin: 1rem 0; overflow-x: auto; }
+    .prose-custom pre code { font-family: 'JetBrains Mono', monospace; background: none; padding: 0; font-size: 0.8125rem; line-height: 1.6; color: #cbd5e1; }
+    .prose-custom code { font-family: 'JetBrains Mono', monospace; background: #1e293b; color: #e2e8f0; padding: 0.15em 0.4em; border-radius: 0.375rem; font-size: 0.84rem; }
+    .prose-custom table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+    .prose-custom th, .prose-custom td { border: 1px solid #334155; padding: 0.5em 0.75em; text-align: left; }
+    .prose-custom th { background-color: #1e293b; color: #e2e8f0; font-weight: 600; }
+    .prose-custom td { color: #cbd5e1; }
+    .prose-custom tr:nth-child(even) td { background-color: #0f172a; }
+    .prose-custom ul { list-style: none; padding-left: 0; margin-bottom: 1rem; }
+    .prose-custom ul li { position: relative; padding-left: 1.25rem; margin-bottom: 0.5rem; color: #cbd5e1; }
+    .prose-custom ul li::before { content: "•"; position: absolute; left: 0.25rem; color: #3b82f6; font-weight: bold; }
+
+    /* The evaluated interaction: dots only on hover (or when the row is active) */
+    .doc-row .dots { opacity: 0; }
+    .doc-row:hover .dots,
+    .doc-row:focus-within .dots,
+    .doc-row.active .dots,
+    .doc-row.menu-anchored .dots { opacity: 1; }
+    .doc-row.menu-anchored { background: rgba(30, 41, 59, 0.35); border-color: rgba(71, 85, 105, 0.5); color: #e2e8f0; }
+    .doc-row.menu-anchored .dots { color: #e2e8f0; }
+
+    /* Group chevron: folder file-icon normally, chevron on hover (matches prod) */
+    .doc-group .g-chev { display: none; }
+    .doc-group .g-folder { display: inline-flex; }
+    .doc-group:hover .g-chev, .doc-group:focus-within .g-chev { display: inline-flex; }
+    .doc-group:hover .g-folder, .doc-group:focus-within .g-folder { display: none; }
+    .doc-group.collapsed .g-chev { transform: rotate(-90deg); }
+    .doc-group .g-chev { transition: transform 0.15s ease; }
+    .doc-group.collapsed .group-children { display: none; }
+
+    /* Notion-style popover */
+    .menu-pop { animation: menuPop 0.14s cubic-bezier(0.2, 0.8, 0.3, 1); }
+    @keyframes menuPop { from { opacity: 0; transform: scale(0.97) translateY(-3px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+    .fade-in { animation: fadeIn 0.18s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  </style>
+</head>
+<body class="bg-bgDark text-slate-300 antialiased h-screen overflow-hidden selection:bg-accentBlue/30 selection:text-white">
+
+<div class="flex h-screen overflow-hidden">
+
+  <!-- ===== LEFT SIDEBAR (prod replica) ===== -->
+  <aside class="w-64 bg-[#05070d]/90 border-r border-borderDark/60 flex-shrink-0 flex flex-col z-10" aria-label="Sidebar">
+    <div class="h-[57px] px-4 border-b border-borderDark/40 flex items-center gap-2.5">
+      <div class="h-7 w-7 rounded-lg bg-gradient-to-tr from-accentBlue to-accentPurple flex items-center justify-center font-bold text-white text-sm">d</div>
+      <div>
+        <div class="flex items-center gap-1.5">
+          <span class="text-sm font-semibold text-slate-100 tracking-tight">devtop</span>
+          <span class="text-[10px] text-slate-500 font-mono bg-borderDark/40 px-1 py-0.2 rounded border border-borderDark/30">v0.1.0</span>
+        </div>
+        <div class="text-[10px] text-slate-500 leading-none">local environment</div>
+      </div>
+    </div>
+
+    <!-- Docs tree -->
+    <nav id="nav" class="flex-1 overflow-y-auto p-3.5 space-y-3" aria-label="Documentation">
+
+      <!-- Favourites: per-user additive layer on top of the config/Repo tree -->
+    <div id="fav-section" class="hidden">
+      <div class="flex items-center justify-between px-3 mb-1">
+        <span class="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Favourites</span>
+        <span id="fav-count" class="text-[10px] font-mono text-slate-500 bg-borderDark/40 px-1.5 py-0.2 rounded-full border border-borderDark/30"></span>
+      </div>
+      <div id="fav-list" class="space-y-px"></div>
+    </div>
+
+    <div id="tree-section">
+      <div class="text-[10px] font-semibold text-slate-500 uppercase tracking-widest px-3 mb-1">Docs</div>
+        <div class="space-y-px">
+
+          <!-- Home (file row, depth 0) -->
+          <div data-doc="home" tabindex="0" role="button" aria-label="Home"
+               class="doc-row group flex items-center gap-2.5 py-1.5 pl-3 pr-2 rounded-lg text-xs font-medium transition-all duration-150 border cursor-pointer">
+            <svg class="row-icon w-4 h-4 text-slate-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+            <span class="truncate flex-1 min-w-0">Home</span>
+            <button type="button" class="dots flex-shrink-0 h-6 w-6 rounded-md flex items-center justify-center transition-colors hover:bg-borderDark/40" aria-label="More actions for Home" aria-haspopup="menu">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4" d="M12 5.5h.01M12 12h.01M12 18.5h.01"/></svg>
+            </button>
+          </div>
+
+          <!-- Getting Started group -->
+          <div class="doc-group space-y-px" data-group="getting-started">
+            <div tabindex="0" role="button" class="doc-group-header group flex items-center gap-2.5 py-1.5 pl-3 rounded-lg text-xs font-medium transition-all duration-150 border border-transparent cursor-pointer text-slate-400 hover:text-slate-200 hover:bg-borderDark/20">
+              <button type="button" class="flex-shrink-0 rounded hover:bg-borderDark/40 flex items-center justify-center transition-colors" aria-label="Toggle Getting Started">
+                <svg class="g-folder w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+                <svg class="g-chev w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg>
+              </button>
+              <a href="#/docs/getting-started" class="truncate hover:text-slate-100 transition-colors">Getting Started</a>
+            </div>
+            <div class="group-children space-y-px">
+              <div data-doc="installation" tabindex="0" role="button" aria-label="Installation"
+                   class="doc-row group flex items-center gap-2.5 py-1.5 pl-7 pr-2 rounded-lg text-xs font-medium transition-all duration-150 border cursor-pointer">
+                <svg class="row-icon w-4 h-4 text-slate-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+                <span class="truncate flex-1 min-w-0">Installation</span>
+                <button type="button" class="dots flex-shrink-0 h-6 w-6 rounded-md flex items-center justify-center transition-colors hover:bg-borderDark/40" aria-label="More actions for Installation" aria-haspopup="menu">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4" d="M12 5.5h.01M12 12h.01M12 18.5h.01"/></svg>
+                </button>
+              </div>
+              <div data-doc="configuration" tabindex="0" role="button" aria-label="Configuration" data-active-on-load
+                   class="doc-row group flex items-center gap-2.5 py-1.5 pl-7 pr-2 rounded-lg text-xs font-medium transition-all duration-150 border cursor-pointer">
+                <svg class="row-icon w-4 h-4 text-slate-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+                <span class="truncate flex-1 min-w-0">Configuration</span>
+                <button type="button" class="dots flex-shrink-0 h-6 w-6 rounded-md flex items-center justify-center transition-colors hover:bg-borderDark/40" aria-label="More actions for Configuration" aria-haspopup="menu">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4" d="M12 5.5h.01M12 12h.01M12 18.5h.01"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Architecture group -->
+          <div class="doc-group space-y-px" data-group="architecture">
+            <div tabindex="0" role="button" class="doc-group-header group flex items-center gap-2.5 py-1.5 pl-3 rounded-lg text-xs font-medium transition-all duration-150 border border-transparent cursor-pointer text-slate-400 hover:text-slate-200 hover:bg-borderDark/20">
+              <button type="button" class="flex-shrink-0 rounded hover:bg-borderDark/40 flex items-center justify-center transition-colors" aria-label="Toggle Architecture">
+                <svg class="g-folder w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+                <svg class="g-chev w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg>
+              </button>
+              <a href="#/docs/architecture" class="truncate hover:text-slate-100 transition-colors">Architecture</a>
+            </div>
+            <div class="group-children space-y-px">
+              <div data-doc="agent-engine" tabindex="0" role="button" aria-label="Agent Engine"
+                   class="doc-row group flex items-center gap-2.5 py-1.5 pl-7 pr-2 rounded-lg text-xs font-medium transition-all duration-150 border cursor-pointer">
+                <svg class="row-icon w-4 h-4 text-slate-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+                <span class="truncate flex-1 min-w-0">Agent Engine</span>
+                <button type="button" class="dots flex-shrink-0 h-6 w-6 rounded-md flex items-center justify-center transition-colors hover:bg-borderDark/40" aria-label="More actions for Agent Engine" aria-haspopup="menu">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4" d="M12 5.5h.01M12 12h.01M12 18.5h.01"/></svg>
+                </button>
+              </div>
+              <div data-doc="data-layer" tabindex="0" role="button" aria-label="Data Layer"
+                   class="doc-row group flex items-center gap-2.5 py-1.5 pl-7 pr-2 rounded-lg text-xs font-medium transition-all duration-150 border cursor-pointer">
+                <svg class="row-icon w-4 h-4 text-slate-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+                <span class="truncate flex-1 min-w-0">Data Layer</span>
+                <button type="button" class="dots flex-shrink-0 h-6 w-6 rounded-md flex items-center justify-center transition-colors hover:bg-borderDark/40" aria-label="More actions for Data Layer" aria-haspopup="menu">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4" d="M12 5.5h.01M12 12h.01M12 18.5h.01"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Guides (section header, no children — like prod) -->
+          <button type="button" tabindex="0" class="flex items-center gap-1.5 w-full pl-3 py-1 rounded-lg text-xs font-semibold text-slate-500 uppercase tracking-widest hover:text-slate-300 transition-colors duration-150">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg>
+            Guides
+          </button>
+
+          <!-- Reference (section header) -->
+          <button type="button" tabindex="0" class="flex items-center gap-1.5 w-full pl-3 py-1 rounded-lg text-xs font-semibold text-slate-500 uppercase tracking-widest hover:text-slate-300 transition-colors duration-150">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg>
+            Reference
+          </button>
+        </div>
+      </div>
+
+      <!-- Tickets -->
+      <div>
+        <div class="flex items-center justify-between px-3 mb-1">
+          <span class="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Tickets</span>
+          <span class="text-[10px] font-mono text-slate-500 bg-borderDark/40 px-1.5 py-0.2 rounded-full border border-borderDark/30">7</span>
+        </div>
+        <div class="space-y-px">
+          <a href="#/tickets" class="flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-500 hover:text-slate-200 hover:bg-borderDark/20 border border-transparent transition-all duration-150">
+            <svg class="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+            Board
+          </a>
+        </div>
+      </div>
+    </nav>
+
+    <div class="p-2 border-t border-borderDark/40 bg-[#03050a]/40 space-y-1">
+      <div class="flex items-center justify-between px-1.5 py-1">
+        <div class="flex items-center gap-2">
+          <div class="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></div>
+          <span class="text-[11px] text-slate-400 font-medium">Local Server</span>
+        </div>
+        <code class="text-[10px] text-slate-500 font-mono bg-borderDark/30 px-1.5 py-0.5 rounded border border-borderDark/20">:8000</code>
+      </div>
+      <button type="button" class="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg border border-borderDark/40 text-slate-400 hover:text-slate-100 hover:bg-borderDark/20 text-[11px] font-medium transition-colors">
+        <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4.5 12a7.5 7.5 0 0015 0m-15 0a7.5 7.5 0 1115 0m-15 0H3m16.5 0H21m-1.5 0h-.008M12 12a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z"/></svg>
+        Settings
+      </button>
+    </div>
+  </aside>
+
+  <!-- ===== MAIN CONTENT ===== -->
+  <main class="flex-1 overflow-hidden bg-bgDark border-r border-borderDark/60 flex flex-col relative">
+    <header class="h-[57px] flex-shrink-0 border-b border-borderDark/40 px-8 flex items-center justify-between bg-bgDark/80 sticky top-0 z-10">
+      <div id="breadcrumb" class="flex items-center gap-2 text-xs font-medium text-slate-400"></div>
+      <div class="flex items-center gap-3">
+        <span class="text-[11px] text-slate-500 flex items-center gap-1.5 font-mono">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+          read-only viewport
+        </span>
+      </div>
+    </header>
+    <div class="flex-1 overflow-y-auto p-8">
+      <div id="doc-body" class="max-w-3xl mx-auto prose prose-custom prose-invert"></div>
+    </div>
+  </main>
+
+  <!-- ===== COPILOT CHAT PANEL (prod replica, trimmed) ===== -->
+  <aside class="w-96 bg-[#090c15] border-l border-borderDark/60 flex-shrink-0 flex flex-col z-10 shadow-2xl relative" aria-label="Chat">
+    <div class="h-[57px] px-4 border-b border-borderDark/40 flex items-center justify-between bg-surfaceDark/20 flex-shrink-0">
+      <div class="flex items-center gap-2">
+        <div class="h-7 w-7 rounded-lg border border-accentBlue/40 bg-accentBlue/20 flex items-center justify-center text-accentBlue">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
+        </div>
+        <span class="text-xs font-bold text-slate-300 uppercase tracking-wider font-mono">Threads</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <button type="button" aria-label="New thread" class="h-7 w-7 rounded-lg border border-borderDark/50 flex items-center justify-center text-slate-400"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg></button>
+      </div>
+    </div>
+    <div class="flex-1 overflow-y-auto p-4 space-y-4">
+      <div class="flex flex-col gap-1 items-start">
+        <div class="text-[9px] text-slate-500 font-mono">22:15</div>
+        <div class="max-w-[85%] rounded-2xl rounded-tl-sm bg-[#1a2332] border border-borderDark/40 px-3 py-2 text-[12px] text-slate-300 leading-relaxed">
+          I can read the repository and manage docs + tickets. Ask me to update a page — every write is committed to git.
+        </div>
+      </div>
+      <div class="flex flex-col gap-1 items-end">
+        <div class="text-[9px] text-slate-500 font-mono">22:16</div>
+        <div class="max-w-[85%] rounded-2xl rounded-tr-sm bg-accentBlue px-3 py-2 text-[12px] text-white leading-relaxed">
+          Reorganise the docs sidebar.
+        </div>
+      </div>
+    </div>
+    <div class="p-3 border-t border-borderDark/40 bg-[#06080e]/40 flex-shrink-0">
+      <div class="bg-[#0c101f] border border-borderDark/40 rounded-xl px-4 py-2.5 flex items-center gap-2">
+        <div class="flex-1 text-[11px] text-slate-500">Ask the agent to update this page…</div>
+        <div class="h-6 w-6 rounded-lg bg-accentBlue flex items-center justify-center text-white">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<!-- ===== NOTION-STYLE PAGE MENU (single instance, positioned on open) ===== -->
+<div id="menu" role="menu" aria-label="Page actions" class="hidden fixed z-50 w-60 rounded-xl border border-borderDark/60 bg-[#121826]/95 backdrop-blur-md shadow-2xl shadow-black/40 overflow-hidden">
+  <!-- Quick actions -->
+  <div class="flex items-stretch divide-x divide-borderDark/30 border-b border-borderDark/30">
+    <button type="button" id="qb-fav" title="Add to favourites" aria-label="Favourite"
+      class="quick-btn flex-1 flex items-center justify-center h-9 text-slate-300 hover:bg-borderDark/30 transition-colors"></button>
+    <button type="button" id="qb-history" title="Revision history" aria-label="Revision history"
+      class="quick-btn flex-1 flex items-center justify-center h-9 text-slate-300 hover:bg-borderDark/30 transition-colors">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    </button>
+    <button type="button" id="qb-delete" title="Delete" aria-label="Delete"
+      class="quick-btn flex-1 flex items-center justify-center h-9 text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/></svg>
+    </button>
+  </div>
+  <div id="menu-items" class="py-1.5 max-h-72 overflow-y-auto">
+    <button type="button" role="menuitem" data-id="duplicate" class="doc-menu-item group w-full flex items-center gap-2.5 px-2.5 py-1.5 text-[12px] text-left text-slate-300 hover:text-slate-100 hover:bg-borderDark/30 transition-colors">
+      <svg class="w-3.5 h-3.5 text-slate-500 group-hover:text-slate-200 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+      <span>Duplicate</span>
+    </button>
+    <button type="button" role="menuitem" data-id="move" class="doc-menu-item group w-full flex items-center gap-2.5 px-2.5 py-1.5 text-[12px] text-left text-slate-300 hover:text-slate-100 hover:bg-borderDark/30 transition-colors">
+      <svg class="w-3.5 h-3.5 text-slate-500 group-hover:text-slate-200 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+      <span>Move to…</span>
+    </button>
+    <button type="button" role="menuitem" data-id="copy-path" class="doc-menu-item group w-full flex items-center gap-2.5 px-2.5 py-1.5 text-[12px] text-left text-slate-300 hover:text-slate-100 hover:bg-borderDark/30 transition-colors">
+      <svg class="w-3.5 h-3.5 text-slate-500 group-hover:text-slate-200 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244"/></svg>
+      <span>Copy path</span>
+    </button>
+    <button type="button" role="menuitem" data-id="export" class="doc-menu-item group w-full flex items-center gap-2.5 px-2.5 py-1.5 text-[12px] text-left text-slate-300 hover:text-slate-100 hover:bg-borderDark/30 transition-colors">
+      <svg class="w-3.5 h-3.5 text-slate-500 group-hover:text-slate-200 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
+      <span>Export as</span>
+      <svg class="ml-auto w-3 h-3 text-slate-500 group-hover:text-slate-200 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
+    </button>
+  </div>
+</div>
+
+<!-- Export-as flyout (submenu of the page menu) -->
+<div id="export-sub" role="menu" aria-label="Export as" class="hidden fixed z-50 w-44 rounded-xl border border-borderDark/60 bg-[#121826]/95 backdrop-blur-md shadow-2xl shadow-black/40 overflow-hidden py-1">
+  <button type="button" role="menuitem" data-export="pdf" class="doc-menu-item group w-full flex items-center justify-between gap-2 px-2.5 py-1.5 text-[12px] text-left text-slate-300 hover:text-slate-100 hover:bg-borderDark/30 transition-colors">
+    <span>PDF</span><span class="text-[9px] font-mono text-slate-500">.pdf</span>
+  </button>
+  <button type="button" role="menuitem" data-export="docx" class="doc-menu-item group w-full flex items-center justify-between gap-2 px-2.5 py-1.5 text-[12px] text-left text-slate-300 hover:text-slate-100 hover:bg-borderDark/30 transition-colors">
+    <span>Word</span><span class="text-[9px] font-mono text-slate-500">.docx</span>
+  </button>
+  <button type="button" role="menuitem" data-export="mdx" class="doc-menu-item group w-full flex items-center justify-between gap-2 px-2.5 py-1.5 text-[12px] text-left text-slate-300 hover:text-slate-100 hover:bg-borderDark/30 transition-colors">
+    <span>Markdown</span><span class="text-[9px] font-mono text-slate-500">.mdx</span>
+  </button>
+  <button type="button" role="menuitem" data-export="txt" class="doc-menu-item group w-full flex items-center justify-between gap-2 px-2.5 py-1.5 text-[12px] text-left text-slate-300 hover:text-slate-100 hover:bg-borderDark/30 transition-colors">
+    <span>Plain text</span><span class="text-[9px] font-mono text-slate-500">.txt</span>
+  </button>
+</div>
+
+<!-- ===== PROTOTYPE LABEL (not part of the evaluated design) ===== -->
+<div class="fixed bottom-4 right-4 z-50 flex items-center gap-2 bg-[#0a0e18]/95 border border-borderDark/70 rounded-full px-3 py-1.5 shadow-2xl backdrop-blur">
+  <span class="text-[10px] font-mono text-slate-500 uppercase tracking-widest">doc ⋯ menu</span>
+  <span class="h-1 w-1 rounded-full bg-accentBlue"></span>
+  <span id="proto-action" class="text-[10px] font-semibold text-accentBlue whitespace-nowrap"></span>
+</div>
+
+<script>
+// ===========================================================================
+// Mock data — a small doc tree mirroring the prod sidebar
+// ===========================================================================
+const ICONS = {
+  file: '<svg class="w-4 h-4 text-slate-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>',
+  star: '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z"/></svg>',
+  starSolid: '<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z"/></svg>',
+  copy: '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>',
+  folder: '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>',
+  link: '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244"/></svg>',
+  clock: '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
+  trash: '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/></svg>',
+}
+
+const DOCS = {
+  home: {
+    title: 'Home',
+    path: 'docs/index.mdx',
+    crumb: [],
+    body: `<h1>Home</h1>
+<p>devtop is a local, AI-assisted workspace for a repository's documentation and tickets — a single Go backend serving the React app, the REST API, and the CopilotKit AI runtime on one port.</p>
+<h2>Try it</h2>
+<p>Hover any file in the sidebar to reveal its <span class="font-mono">⋯</span> menu — pin it to Favourites, duplicate it, or copy its path.</p>`,
+  },
+  installation: {
+    title: 'Installation',
+    path: 'docs/getting-started/installation.mdx',
+    crumb: ['Getting Started'],
+    body: `<h1>Installation</h1>
+<p>Run the container against any repository and open <span class="font-mono">http://localhost:8000</span> — devtop creates <span class="font-mono">.devtop/</span> (docs, tickets, threads) on first boot.</p>
+<pre><code>docker run --rm -it \\
+  -v "$PWD:/workspace" \\
+  -v devtop-ai-config:/etc/devtop \\
+  -p 8000:8000 \\
+  ghcr.io/synlace/devtop:latest</code></pre>`,
+  },
+  configuration: {
+    title: 'Configuration',
+    path: 'docs/getting-started/configuration.mdx',
+    crumb: ['Getting Started'],
+    body: `<h1>Configuration</h1>
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>PORT</td><td>8000</td><td>HTTP server port (via -port)</td></tr>
+    <tr><td>DEVTOP_DIR</td><td>./.devtop</td><td>Data directory — docs, tickets, threads</td></tr>
+    <tr><td>APP_DIR</td><td>executable dir</td><td>Directory containing frontend/dist</td></tr>
+    <tr><td>AI_API_KEY</td><td>—</td><td>OpenAI-compatible API key</td></tr>
+    <tr><td>AI_BASE_URL</td><td>https://openrouter.ai/api/v1</td><td>API base URL</td></tr>
+    <tr><td>AI_MODEL</td><td>deepseek/deepseek-v4-flash-0731</td><td>Model identifier</td></tr>
+  </tbody>
+</table>
+<p>A single <span class="font-mono">.env</span> format works in dev and prod. Keep it portable: KEY=value per line, # comments, no export prefix.</p>`,
+  },
+  'agent-engine': {
+    title: 'Agent Engine',
+    path: 'docs/architecture/agent-engine.mdx',
+    crumb: ['Architecture'],
+    body: `<h1>Agent Engine</h1>
+<p>The CopilotKit runtime runs in a Node process behind the Go API. It owns the agent loop, tool calls (docs, tickets, workspace reads), thread persistence, and the <span class="font-mono">ai-status</span> / <span class="font-mono">ai-key</span> endpoints.</p>`,
+  },
+  'data-layer': {
+    title: 'Data Layer',
+    path: 'docs/architecture/data-layer.mdx',
+    crumb: ['Architecture'],
+    body: `<h1>Data Layer</h1>
+<ul>
+  <li><strong>Docs</strong> — raw Markdown + frontmatter, served as-is; rendered client-side by RichMarkdown.</li>
+  <li><strong>Tickets</strong> — Markdown files with YAML frontmatter, parsed by the Go backend.</li>
+  <li><strong>Threads</strong> — chat history persisted as structured YAML.</li>
+</ul>
+<p>The source of truth is always the file on disk.</p>`,
+  },
+  // On disk, but config does not surface it in the nav tree — the only way it
+  // shows up is via a user favourite (Option B: favourites beat hidden).
+  'release-notes': {
+    title: 'Release Notes',
+    path: 'docs/notes/release-notes.mdx',
+    crumb: ['Notes'],
+    body: `<h1>Release Notes</h1>
+<p>This page exists but config does not render it in the sidebar. Favouriting it pins it above the tree via the user-scoped store.</p>`,
+  },
+}
+
+// ===========================================================================
+// Menu instance + state
+// ===========================================================================
+const menu = document.getElementById('menu')
+const menuItems = document.getElementById('menu-items')
+const protoAction = document.getElementById('proto-action')
+
+let openRow = null        // .doc-row the menu is anchored to
+let menuSlug = null       // slug the open menu refers to
+let toastTimer = null
+
+function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') }
+
+function refreshQuickBar(slug) {
+  const favBtn = document.getElementById('qb-fav')
+  const fav = isFav(slug)
+  favBtn.innerHTML = fav ? ICONS.starSolid : ICONS.star
+  favBtn.classList.toggle('text-amber-400', fav)
+  favBtn.classList.toggle('text-slate-300', !fav)
+  favBtn.title = fav ? 'Remove from favourites' : 'Add to favourites'
+}
+
+function toast(label) {
+  protoAction.textContent = '✓ ' + label
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => { protoAction.textContent = '' }, 2400)
+}
+
+function closeMenu() {
+  closeSub()
+  if (openRow) {
+    openRow.classList.remove('menu-anchored')
+    openRow.querySelector('.dots').setAttribute('aria-expanded', 'false')
+    openRow = null
+  }
+  menu.classList.add('hidden')
+}
+
+function positionMenu(dots) {
+  const r = dots.getBoundingClientRect()
+  const mw = menu.offsetWidth || 240
+  const mh = menu.offsetHeight || 0
+  let left = r.right + 6
+  let top = r.top
+  // Keep within the viewport: flip horizontally / vertically like Notion
+  if (left + mw > innerWidth - 8) left = Math.max(8, r.left - mw - 6)
+  if (top + mh > innerHeight - 8) top = Math.max(8, r.bottom - mh)
+  menu.style.left = left + 'px'
+  menu.style.top = top + 'px'
+}
+
+function openMenu(dots) {
+  const row = dots.closest('.doc-row')
+  if (!DOCS[row.dataset.doc]) return
+  menuSlug = row.dataset.doc
+
+  // Close any previous anchor first
+  if (openRow && openRow !== row) {
+    openRow.classList.remove('menu-anchored')
+    openRow.querySelector('.dots').setAttribute('aria-expanded', 'false')
+  }
+  openRow = row
+  row.classList.add('menu-anchored')
+  dots.setAttribute('aria-expanded', 'true')
+
+  refreshQuickBar(menuSlug)
+  menu.classList.remove('hidden')
+  positionMenu(dots)
+  menu.classList.remove('menu-pop'); void menu.offsetWidth; menu.classList.add('menu-pop')
+}
+
+// Favourites — Option B: a user-scoped additive layer beside config, stored
+// like .devtop/favourites.json (never committed). Rendered ABOVE the config
+// tree, deduped against it (tree rows get starred in place instead of being
+// duplicated), and stale slugs (doc gone) are dropped on load.
+const FAVOURITES_FILE = '.devtop/favourites.json'
+const FAVOURITES_KEY = 'devtop.favourites.v1'
+
+function loadFavourites() {
+  let list = null
+  try { list = JSON.parse(localStorage.getItem(FAVOURITES_KEY)) } catch (e) {}
+  if (!Array.isArray(list)) list = ['configuration', 'data-layer', 'release-notes']
+  const valid = list.filter(slug => DOCS[slug])
+  if (valid.length !== list.length) saveFavourites(valid)
+  return valid
+}
+function saveFavourites(list) {
+  try { localStorage.setItem(FAVOURITES_KEY, JSON.stringify(list)) } catch (e) {}
+}
+
+const favourites = loadFavourites()
+const isFav = slug => favourites.includes(slug)
+
+const treeRows = () => [...document.querySelectorAll('#tree-section .doc-row')]
+const treeSlugs = () => new Set(treeRows().map(r => r.dataset.doc))
+
+// Dedupe rule: a favourite already in the config tree is not rendered twice —
+// its tree row is starred in place instead.
+function paintStars() {
+  treeRows().forEach(r => {
+    const fav = isFav(r.dataset.doc)
+    let star = r.querySelector(':scope > .pin-star')
+    if (fav && !star) {
+      star = document.createElement('span')
+      star.className = 'pin-star flex-shrink-0 w-3 h-3 text-amber-400'
+      star.innerHTML = '<svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z"/></svg>'
+      r.insertBefore(star, r.querySelector('.dots'))
+    } else if (!fav && star) {
+      star.remove()
+    }
+  })
+}
+
+function renderFavourites() {
+  const section = document.getElementById('fav-section')
+  const list = document.getElementById('fav-list')
+  const count = document.getElementById('fav-count')
+  // Only favourites the config tree does not already show land in this section
+  const offTree = favourites.filter(slug => !treeSlugs().has(slug))
+  section.classList.toggle('hidden', offTree.length === 0)
+  count.textContent = favourites.length
+  list.innerHTML = offTree.map(slug => {
+    const doc = DOCS[slug]
+    if (!doc) return ''
+    return `<div data-doc="${slug}" tabindex="0" role="button" aria-label="${esc(doc.title)}"
+      class="doc-row group flex items-center gap-2.5 pl-3 pr-2 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 border cursor-pointer min-w-0">
+      <svg class="row-icon fav-star w-3.5 h-3.5 text-amber-400/80 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z"/></svg>
+      <span class="truncate flex-1 min-w-0">${esc(doc.title)}</span>
+      <button type="button" class="dots flex-shrink-0 h-6 w-6 rounded-md flex items-center justify-center transition-colors hover:bg-borderDark/40" aria-label="More actions for ${esc(doc.title)}" aria-haspopup="menu">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4" d="M12 5.5h.01M12 12h.01M12 18.5h.01"/></svg>
+      </button>
+    </div>`
+  }).join('')
+  list.querySelectorAll('.doc-row').forEach(paintRow)
+  paintStars()
+}
+
+function toggleFav(slug) {
+  const i = favourites.indexOf(slug)
+  if (i >= 0) favourites.splice(i, 1)
+  else favourites.unshift(slug)
+  saveFavourites(favourites)
+  renderFavourites()
+}
+
+// Menu item click — mock action, echoes into the prototype pill
+menuItems.addEventListener('click', (e) => {
+  const item = e.target.closest('[role="menuitem"]')
+  if (!item) return
+  if (item.dataset.id === 'export') {
+    openSub(item)
+    return
+  }
+  const label = item.querySelector('span').textContent
+  toast(label)
+  closeMenu()
+})
+
+// Quick actions bar — favourite / revision history / delete
+menu.addEventListener('click', (e) => {
+  const qb = e.target.closest('.quick-btn')
+  if (!qb || !openRow) return
+  e.stopPropagation()
+  if (qb.id === 'qb-fav') {
+    toggleFav(menuSlug)
+    refreshQuickBar(menuSlug)
+    toast(isFav(menuSlug) ? 'Added to favourites' : 'Removed from favourites')
+    closeMenu()
+  } else if (qb.id === 'qb-history') {
+    toast('Revision history')
+    closeMenu()
+  } else if (qb.id === 'qb-delete') {
+    toast('Delete')
+    closeMenu()
+  }
+})
+
+// Export-as flyout — second-level submenu
+const exportSub = document.getElementById('export-sub')
+const exportItem = menuItems.querySelector('[data-id="export"]')
+let subOpen = false
+let subTimer = null
+
+const cancelSubClose = () => { clearTimeout(subTimer); subTimer = null }
+
+function openSub(item) {
+  const ir = item.getBoundingClientRect()
+  const sw = exportSub.offsetWidth || 176
+  let left = ir.right + 4
+  if (left + sw > innerWidth - 8) left = Math.max(8, ir.left - sw - 4)
+  exportSub.style.left = left + 'px'
+  exportSub.style.top = Math.max(8, ir.top) + 'px'
+  exportSub.classList.remove('hidden')
+  exportSub.classList.remove('menu-pop'); void exportSub.offsetWidth; exportSub.classList.add('menu-pop')
+  item.classList.add('bg-borderDark/30')
+  subOpen = true
+  cancelSubClose()
+}
+
+function closeSub() {
+  if (!subOpen) return
+  const item = menuItems.querySelector('[data-id="export"]')
+  if (item) item.classList.remove('bg-borderDark/30')
+  exportSub.classList.add('hidden')
+  subOpen = false
+  cancelSubClose()
+}
+
+function scheduleSubClose() {
+  cancelSubClose()
+  subTimer = setTimeout(closeSub, 180)
+}
+
+exportItem.addEventListener('mouseenter', () => { if (!subOpen) openSub(exportItem) })
+exportItem.addEventListener('mouseleave', scheduleSubClose)
+exportSub.addEventListener('mouseenter', cancelSubClose)
+exportSub.addEventListener('mouseleave', scheduleSubClose)
+
+exportSub.addEventListener('click', (e) => {
+  const item = e.target.closest('[role="menuitem"]')
+  if (!item) return
+  toast('Export ' + item.dataset.export.toUpperCase())
+  closeMenu()
+})
+
+// Global handlers
+document.addEventListener('mousedown', (e) => {
+  if (!openRow) return
+  // Let a click on the SAME row's dots toggle (mousedown → click ordering)
+  if (e.target.closest('.dots') === openRow.querySelector('.dots')) return
+  if (menu.contains(e.target)) return
+  if (exportSub.contains(e.target)) return
+  closeMenu()
+})
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (subOpen) closeSub()
+    else closeMenu()
+    e.preventDefault()
+    return
+  }
+  if (menu.classList.contains('hidden')) return
+
+  const items = [
+    ...menuItems.querySelectorAll('[role="menuitem"]'),
+    ...(subOpen ? exportSub.querySelectorAll('[role="menuitem"]') : []),
+  ].filter(el => !el.classList.contains('hidden'))
+  if (items.length === 0) return
+  const idx = items.indexOf(document.activeElement)
+
+  if (e.key === 'ArrowRight') {
+    if (document.activeElement === exportItem) {
+      e.preventDefault()
+      openSub(exportItem)
+      const first = exportSub.querySelector('[role="menuitem"]')
+      if (first) first.focus()
+    }
+    return
+  }
+  if (e.key === 'ArrowLeft') {
+    if (subOpen) {
+      e.preventDefault()
+      closeSub()
+      exportItem.focus()
+    }
+    return
+  }
+  if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    items[(idx + 1) % items.length].focus()
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    items[(idx - 1 + items.length) % items.length].focus()
+  } else if (e.key === 'Enter') {
+    const a = document.activeElement
+    if (a && a.matches('[role="menuitem"]')) a.click()
+  }
+})
+
+// Close on resize / scroll so the anchor never drifts
+window.addEventListener('resize', closeMenu)
+document.getElementById('nav').addEventListener('scroll', closeMenu, true)
+
+// ===========================================================================
+// Sidebar interactions
+// ===========================================================================
+const nav = document.getElementById('nav')
+
+nav.addEventListener('click', (e) => {
+  const dots = e.target.closest('.dots')
+  if (dots) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (openRow && openRow.querySelector('.dots') === dots) closeMenu()
+    else openMenu(dots)
+    return
+  }
+  const groupBtn = e.target.closest('.doc-group-header')
+  if (groupBtn) {
+    groupBtn.closest('.doc-group').classList.toggle('collapsed')
+    return
+  }
+  const row = e.target.closest('.doc-row')
+  if (row) selectDoc(row.dataset.doc)
+})
+
+nav.addEventListener('contextmenu', (e) => {
+  const row = e.target.closest('.doc-row')
+  if (!row) return
+  e.preventDefault()
+  openMenu(row.querySelector('.dots'))
+})
+
+// ===========================================================================
+// Doc selection — mirrors prod navigation (active row + breadcrumb + prose)
+// ===========================================================================
+const crumbEl = document.getElementById('breadcrumb')
+const docBody = document.getElementById('doc-body')
+
+let currentDoc = null
+
+// Sync all active-dependent styles on one row. Keeps the border pinned to
+// transparent/accentBlue so rows never flash the default currentColor border
+// (Tailwind `border` with no colour class paints one).
+function paintRow(r) {
+  const on = r.dataset.doc === currentDoc
+  r.classList.toggle('active', on)
+  r.querySelector('span').className = 'truncate flex-1 min-w-0 ' + (on ? 'text-slate-100' : 'text-slate-500 group-hover:text-slate-200')
+  r.classList.toggle('bg-accentBlue/10', on)
+  r.classList.toggle('text-slate-100', on)
+  r.classList.toggle('border-accentBlue/20', on)
+  r.classList.toggle('border-transparent', !on)
+  r.querySelectorAll('.row-icon:not(.fav-star)').forEach(ic => {
+    ic.classList.toggle('text-accentBlue', on)
+    ic.classList.toggle('text-slate-600', !on)
+  })
+}
+
+function selectDoc(slug) {
+  const doc = DOCS[slug]
+  if (!doc) return
+  currentDoc = slug
+  document.querySelectorAll('.doc-row').forEach(paintRow)
+
+  const crumbs = ['Docs', ...doc.crumb, doc.title]
+  crumbEl.innerHTML = crumbs.map((c, i) => `
+    ${i > 0 ? '<svg class="w-3.5 h-3.5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>' : ''}
+    <span class="${i === crumbs.length - 1 ? 'text-slate-200 font-semibold' : 'text-slate-400'}">${esc(c)}</span>
+  `).join('')
+
+  docBody.innerHTML = `<div class="fade-in">${doc.body}</div>`
+}
+
+// ===========================================================================
+// Init — active doc on load keeps its dots visible (like the open page)
+// ===========================================================================
+selectDoc('configuration')
+renderFavourites()
+</script>
+</body>
+</html>

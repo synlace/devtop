@@ -13,6 +13,12 @@ List files and directories in the workspace repository. Path is relative to the 
 ### read_doc(path)
 Read a documentation file. Path is relative to docs/ (e.g. "architecture.mdx"). Files use the .mdx extension.
 
+### read_doc_at(path, commit)
+Read a documentation file as it existed at a given git commit. Commit may be a full or short sha, or HEAD. Returns the doc at that revision, or notes the file was deleted there.
+
+### list_doc_revisions(path)
+List the git history of a documentation file: each commit that changed it, newest first, with sha, message, author, and date. The most recent is marked current.
+
 ### write_doc(path, content)
 Write or overwrite a documentation file. Path is relative to docs/. Use .mdx extension. Content includes YAML frontmatter and markdown body.
 

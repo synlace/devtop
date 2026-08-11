@@ -116,6 +116,12 @@ func main() {
 		fmt.Printf("Warning: could not create welcome doc: %v\n", err)
 	}
 
+	// Repo registry: DEVTOP_REPOS=<root1>:<root2> serves multiple repos from
+	// one instance. Unset means the classic single-repo mode (no repo param).
+	if err := initRegistry(); err != nil {
+		fmt.Printf("Warning: could not build repo registry: %v\n", err)
+	}
+
 	// Connect MCP servers
 	mcpCfgs := parseMCPServers()
 	if len(mcpCfgs) > 0 {
@@ -152,6 +158,8 @@ func main() {
 	mux.HandleFunc("GET /api/docs/{slug...}", handleAPIDocPage)
 	mux.HandleFunc("GET /api/tickets", handleAPITickets)
 	mux.HandleFunc("GET /api/tickets/{id}", handleAPITicketDetail)
+	mux.HandleFunc("GET /api/revisions/docs/{slug...}", handleAPIDocRevisions)
+	mux.HandleFunc("GET /api/revisions/tickets/{id}", handleAPITicketRevisions)
 	mux.HandleFunc("GET /api/threads", handleAPIThreads)
 	mux.HandleFunc("POST /api/threads", handleAPICreateThread)
 	mux.HandleFunc("GET /api/threads/{id}", handleAPIGetThread)
@@ -160,10 +168,25 @@ func main() {
 	mux.HandleFunc("GET /api/models", handleAPIModels)
 	mux.HandleFunc("GET /api/config", handleAPIConfig)
 	mux.HandleFunc("GET /api/engine-config", handleAPIEngineConfig)
+	mux.HandleFunc("GET /api/pipeline", handleAPIPipeline)
+	mux.HandleFunc("POST /api/derive", handleAPIDerive)
+	mux.HandleFunc("POST /api/pipeline/prds/{slug}/status", handleAPIPRDStatus)
+	mux.HandleFunc("POST /api/pipeline/prospect", handleAPIProspect)
+	mux.HandleFunc("POST /api/pipeline/prospect/classify", handleAPIProspectClassify)
 	mux.HandleFunc("GET /api/artifacts/{kind}", handleAPIArtifacts)
 	mux.HandleFunc("GET /api/artifacts/{kind}/{id...}", handleAPIArtifactDetail)
 	mux.HandleFunc("GET /api/viewstate", handleAPIGetViewState)
 	mux.HandleFunc("PUT /api/viewstate", handleAPIPutViewState)
+	mux.HandleFunc("GET /api/favourites", handleAPIGetFavourites)
+	mux.HandleFunc("PUT /api/favourites", handleAPIPutFavourites)
+	mux.HandleFunc("DELETE /api/docs/{slug...}", handleAPIDeleteDoc)
+
+	// Repo scope: registry, init, and the folder browser for Add repo.
+	mux.HandleFunc("GET /api/repos", handleAPIRepos)
+	mux.HandleFunc("POST /api/repos", handleAPIRepos)
+	mux.HandleFunc("DELETE /api/repos/{name}", handleAPIRepoDelete)
+	mux.HandleFunc("POST /api/repos/init", handleAPIRepoInit)
+	mux.HandleFunc("/api/fs/list", handleAPIFSList)
 
 	// SPA routes — serve the built React app; any non-API path falls back to
 	// index.html (React hash routing handles the rest).
@@ -171,7 +194,15 @@ func main() {
 
 	addr := fmt.Sprintf("%s:%d", *host, *port)
 	fmt.Printf("  devtop — Go local dev server\n")
-	fmt.Printf("  Data: %s\n", DEVTOP_DIR)
+	repos := registry.List()
+	if len(repos) == 1 && repos[0].Single {
+		fmt.Printf("  Data: %s\n", DATA_DIR)
+	} else {
+		fmt.Printf("  Repos: %d registered (DEVTOP_REPOS)\n", len(repos))
+		for _, r := range repos {
+			fmt.Printf("    - %s (%s)\n", r.Name, r.Root)
+		}
+	}
 	fmt.Printf("  URL:  http://%s\n\n", addr)
 	if _, err := os.Stat(filepath.Join(STATIC_DIR, "index.html")); err == nil {
 		fmt.Printf("  Frontend: serving %s\n", STATIC_DIR)
@@ -202,9 +233,12 @@ func startFileWatcher() {
 	}
 	defer watcher.Close()
 
-	addDirRecursive(watcher, DOCS_DIR)
-	addDirRecursive(watcher, TICKETS_DIR)
-	addDirRecursive(watcher, THREADS_DIR)
+	// Watch every registered repo's storage dirs.
+	for _, repo := range registry.List() {
+		addDirRecursive(watcher, repo.paths.Docs)
+		addDirRecursive(watcher, repo.paths.Tickets)
+		addDirRecursive(watcher, repo.paths.Threads)
+	}
 
 	for {
 		select {

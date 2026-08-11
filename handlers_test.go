@@ -42,6 +42,8 @@ func initHTTPTestEnv(t *testing.T) (string, *http.ServeMux) {
 	mux.HandleFunc("GET /api/docs/{slug...}", handleAPIDocPage)
 	mux.HandleFunc("GET /api/tickets", handleAPITickets)
 	mux.HandleFunc("GET /api/tickets/{id}", handleAPITicketDetail)
+	mux.HandleFunc("GET /api/revisions/docs/{slug...}", handleAPIDocRevisions)
+	mux.HandleFunc("GET /api/revisions/tickets/{id}", handleAPITicketRevisions)
 	mux.HandleFunc("GET /api/threads", handleAPIThreads)
 	mux.HandleFunc("POST /api/threads", handleAPICreateThread)
 	mux.HandleFunc("GET /api/threads/{id}", handleAPIGetThread)
@@ -50,10 +52,16 @@ func initHTTPTestEnv(t *testing.T) (string, *http.ServeMux) {
 	mux.HandleFunc("GET /api/models", handleAPIModels)
 	mux.HandleFunc("GET /api/config", handleAPIConfig)
 	mux.HandleFunc("GET /api/engine-config", handleAPIEngineConfig)
+	mux.HandleFunc("GET /api/pipeline", handleAPIPipeline)
+	mux.HandleFunc("POST /api/derive", handleAPIDerive)
+	mux.HandleFunc("POST /api/pipeline/prds/{slug}/status", handleAPIPRDStatus)
 	mux.HandleFunc("GET /api/artifacts/{kind}", handleAPIArtifacts)
 	mux.HandleFunc("GET /api/artifacts/{kind}/{id...}", handleAPIArtifactDetail)
 	mux.HandleFunc("GET /api/viewstate", handleAPIGetViewState)
 	mux.HandleFunc("PUT /api/viewstate", handleAPIPutViewState)
+	mux.HandleFunc("GET /api/favourites", handleAPIGetFavourites)
+	mux.HandleFunc("PUT /api/favourites", handleAPIPutFavourites)
+	mux.HandleFunc("DELETE /api/docs/{slug...}", handleAPIDeleteDoc)
 
 	// SPA route
 	mux.HandleFunc("/{path...}", handleSPA)
@@ -240,6 +248,90 @@ func TestAPIRoutes_DocPageNotFound(t *testing.T) {
 	}
 }
 
+func TestAPIRoutes_FavouritesRoundtrip(t *testing.T) {
+	tempDir, mux := initHTTPTestEnv(t)
+	defer os.RemoveAll(tempDir)
+
+	// Empty by default
+	req := httptest.NewRequest("GET", "/api/favourites", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var got []string
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected no favourites, got %v", got)
+	}
+
+	// PUT persists (dupes and stale slugs are canonicalised on read)
+	body, _ := json.Marshal([]string{"architecture", "architecture", "missing"})
+	req = httptest.NewRequest("PUT", "/api/favourites", strings.NewReader(string(body)))
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest("GET", "/api/favourites", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	got = nil
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got) != 1 || got[0] != "architecture" {
+		t.Fatalf("expected [architecture] (dupes+stale dropped), got %v", got)
+	}
+
+	// Malformed body → 400
+	req = httptest.NewRequest("PUT", "/api/favourites", strings.NewReader(`{"not":"an array"}`))
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for malformed body, got %d", rec.Code)
+	}
+}
+
+func TestAPIDeleteDoc(t *testing.T) {
+	tempDir, mux := initHTTPTestEnv(t)
+	defer os.RemoveAll(tempDir)
+
+	req := httptest.NewRequest("DELETE", "/api/docs/architecture", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// Deleted file is gone
+	req = httptest.NewRequest("GET", "/api/docs/architecture", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 after delete, got %d", rec.Code)
+	}
+
+	// The index doc cannot be deleted
+	req = httptest.NewRequest("DELETE", "/api/docs/index", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 deleting index, got %d", rec.Code)
+	}
+
+	// Unknown doc → 404
+	req = httptest.NewRequest("DELETE", "/api/docs/nonexistent", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 deleting unknown doc, got %d", rec.Code)
+	}
+}
+
 func TestAPIRoutes_TicketsList(t *testing.T) {
 	tempDir, mux := initHTTPTestEnv(t)
 	defer os.RemoveAll(tempDir)
@@ -395,5 +487,100 @@ func TestAPIRoutes_Config(t *testing.T) {
 
 	if config.BaseURL == "" || config.Model == "" {
 		t.Errorf("expected non-empty config values: %+v", config)
+	}
+}
+
+// initRevisionHTTPEnv builds the standard git layout (repo at tmp root,
+// DEVTOP_DIR = <root>/.devtop) and returns a mux with the revision routes.
+func initRevisionHTTPEnv(t *testing.T) *http.ServeMux {
+	tmp, parent := setupGitHistory(t)
+	t.Cleanup(func() { os.RemoveAll(tmp) })
+	_ = parent
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/revisions/docs/{slug...}", handleAPIDocRevisions)
+	mux.HandleFunc("GET /api/revisions/tickets/{id}", handleAPITicketRevisions)
+	return mux
+}
+
+func TestAPIDocRevisionsList(t *testing.T) {
+	mux := initRevisionHTTPEnv(t)
+
+	req := httptest.NewRequest("GET", "/api/revisions/docs/architecture", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var revs []Revision
+	if err := json.Unmarshal(rec.Body.Bytes(), &revs); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+	if len(revs) != 2 {
+		t.Fatalf("expected 2 revisions, got %d", len(revs))
+	}
+	if !revs[0].IsCurrent {
+		t.Errorf("expected newest revision marked current")
+	}
+	// Router must be matched, so 404s probe routing not handler logic.
+	req = httptest.NewRequest("GET", "/api/revisions/docs/missing", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for missing doc, got %d", rec.Code)
+	}
+}
+
+func TestAPIDocRevisionsAt(t *testing.T) {
+	mux := initRevisionHTTPEnv(t)
+
+	// Deleted-at-commit simulation: request content at the parent commit.
+	req := httptest.NewRequest("GET", "/api/revisions/docs/architecture?at=HEAD~1", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+	if body["title"] != "System Architecture" {
+		t.Errorf("expected title, got %v", body["title"])
+	}
+	content, _ := body["content"].(string)
+	if !strings.Contains(content, "Go + Alpine") {
+		t.Errorf("expected old content, got %q", content)
+	}
+	if deleted, _ := body["deleted"].(bool); deleted {
+		t.Errorf("expected deleted=false at parent commit")
+	}
+
+	// Bad commit -> 400.
+	req = httptest.NewRequest("GET", "/api/revisions/docs/architecture?at=notarealsha", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid commit, got %d", rec.Code)
+	}
+}
+
+func TestAPIDocRevisionsDiff(t *testing.T) {
+	mux := initRevisionHTTPEnv(t)
+
+	req := httptest.NewRequest("GET", "/api/revisions/docs/architecture?a=HEAD~1&b=HEAD", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+	if !strings.Contains(body["diff"], "-Stack: Go + Alpine.") ||
+		!strings.Contains(body["diff"], "+Stack: Go + React.") {
+		t.Errorf("expected unified diff body, got %q", body["diff"])
 	}
 }

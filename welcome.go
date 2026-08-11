@@ -17,18 +17,26 @@ var welcomeDocContent string
 // on a fresh repository (no docs exist yet). Non-destructive: it never touches a
 // repo that already has any docs, and it is skipped if the file already exists.
 func ensureWelcomeDoc() error {
-	if _, err := os.Stat(filepath.Join(DOCS_DIR, "index.mdx")); err == nil {
+	return ensureWelcomeDocIn(defaultPaths())
+}
+
+// ensureWelcomeDocIn materializes the embedded welcome doc as
+// <devTop>/docs/index.mdx on a fresh repository (no docs exist yet).
+// Non-destructive: it never touches a repo that already has docs, and it is
+// skipped if the file already exists.
+func ensureWelcomeDocIn(p RepoPaths) error {
+	if _, err := os.Stat(filepath.Join(p.Docs, "index.mdx")); err == nil {
 		return nil
 	}
-	docs, err := listDocs()
+	docs, err := listDocsP(p)
 	if err != nil {
 		return err
 	}
 	if len(docs) > 0 {
 		return nil
 	}
-	_ = os.MkdirAll(DOCS_DIR, 0755)
-	if err := os.WriteFile(filepath.Join(DOCS_DIR, "index.mdx"), []byte(welcomeDocContent), 0644); err != nil {
+	_ = os.MkdirAll(p.Docs, 0755)
+	if err := os.WriteFile(filepath.Join(p.Docs, "index.mdx"), []byte(welcomeDocContent), 0644); err != nil {
 		return fmt.Errorf("writing welcome doc: %w", err)
 	}
 	return nil

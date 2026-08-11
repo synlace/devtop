@@ -1,9 +1,107 @@
 ---
-describe: "The project overview documentation"
-derive_prospects:
-  prds: not-eligible
-  prospect_by: model
+title: "Project Overview"
 ---
 
-## Project Overview
-This document provides an overview of the project, detailing its main components and objectives.
+# devtop — Docs + Tickets with AI
+
+A lightweight, file-backed documentation and ticket system with an embedded AI agent. All data is stored as plain MDX/MD files in your project's `.devtop/` directory — no database.
+
+## Quick Start
+
+```bash
+# Run the built app + API
+just devtop build
+just devtop serve
+
+# Dev loop with hot-reload (Go :8000, Vite :5173, CopilotKit :4000)
+just devtop dev
+
+# Or in Docker, against the current directory
+just devtop docker
+```
+
+## Why devtop?
+
+Traditional ticketing systems (Jira, Linear) and documentation tools (Confluence, GitBook) live outside your codebase. devtop lives inside it — docs and tickets are plain MDX/MD files in your repo, version-controllable via git.
+
+## MDX Format
+
+Documentation files use the [MDX](https://mdxjs.com) format — YAML frontmatter with a markdown body. This means they're compatible with Starlight, Next.js, Docusaurus, and other MDX-supporting tools.
+
+```mermaid
+graph LR
+    A[Write in devtop] --> B[MDX files in .devtop/]
+    B --> C[git commit]
+    C --> D[Push to GitHub]
+    D --> E[Starlight / Next.js docs site]
+```
+
+## Project Structure
+
+```
+.devtop/
+├── config.yml                 # Engine config: artifact kinds, derivation, replan
+├── viewstate.json             # UI view state
+├── docs/                      # MDX documentation files
+│   ├── index.mdx              # This file — project overview
+│   ├── getting-started/       # Installation & configuration
+│   │   ├── index.mdx
+│   │   ├── installation.mdx
+│   │   └── configuration.mdx
+│   ├── architecture/          # System design & internals
+│   │   ├── index.mdx
+│   │   ├── agent-engine.mdx
+│   │   ├── agents.mdx
+│   │   ├── skills.mdx
+│   │   ├── pipeline.mdx
+│   │   ├── data-layer.mdx
+│   │   └── frontend.mdx
+│   ├── guides/                # How-to guides
+│   │   ├── index.mdx
+│   │   ├── writing-docs.mdx
+│   │   ├── managing-tickets.mdx
+│   │   └── agent-workflow.mdx
+│   ├── reference/             # Technical reference
+│   │   ├── index.mdx
+│   │   ├── api.mdx
+│   │   ├── mcp-integration.mdx
+│   │   └── deployment.mdx
+│   └── tickets/               # Workflow & conventions
+│       ├── index.mdx
+│       └── TRIAGE.mdx
+├── agents/                    # Optional repo-owned agents (MDX frontmatter)
+├── skills/                    # Optional skill bundles (MDX frontmatter)
+├── tickets/                   # Markdown ticket files with YAML frontmatter
+├── prds/                      # PRD artifacts (derived from docs, approval-gated)
+├── threads/                   # Chat thread storage (JSON)
+└── data/                      # Cached models and metadata
+```
+
+## Core Stack
+
+- **Go 1.25** — backend server (`net/http` routing, file watcher, engine config)
+- **React 19 + TypeScript 6** — frontend UI (Vite, CopilotKit chat), the only frontend
+- **CopilotKit 1.64** — Node runtime for AI chat + agent tools (proxied at `/api/copilotkit/*`)
+- **File system** — the data store; no database
+- **AI/LLM** — OpenAI-compatible API (OpenRouter, LM Studio, etc.)
+
+## Agent Model
+
+Only the agent writes to disk. The web UI is read-only. Every change is automatically committed to git with a descriptive message after each write.
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `just devtop install` | Download Go + frontend dependencies |
+| `just devtop build` | Build the React app and `devtop-bin` |
+| `just devtop serve` | Run the built app + API on :8000 |
+| `just devtop dev` | Dev loop: Go :8000, CopilotKit :4000, Vite :5173 (HMR) |
+| `just devtop init` | Create .devtop/ directory structure |
+| `just devtop image` | Build `devtop:latest` image |
+| `just devtop docker` | Build image and run against the current dir |
+| `just devtop run` | Run existing image against the current dir |
+| `just devtop push` | Build + push the image to the registry |
+| `just devtop clean` | Remove build artifacts and .devtop/ |
+| `go test ./...` | Run Go tests |
+| `just test ui` | Hermetic Playwright specs (no model calls) |

@@ -1,0 +1,345 @@
+package main
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"testing"
+)
+
+func TestDocProspect_Parse(t *testing.T) {
+	setupPipelineEnv(t)
+	tests := []struct {
+		name   string
+		front  string
+		want   string
+		wantBy string
+	}{
+		{"unassessed", "---\ntitle: \"X\"\n---\n\nBody.\n", "", ""},
+		{"model eligible", "---\ntitle: \"X\"\nderive_prospects:\n  prds: eligible\nprospect_by: model\n---\n\nBody.\n", "eligible", "model"},
+		{"user not-eligible", "---\ntitle: \"X\"\nderive_prospects:\n  prds: not-eligible\nprospect_by: user\n---\n\nBody.\n", "not-eligible", "user"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			writeArtifact(t, "docs/d.mdx", tc.front)
+			meta := readMeta(t, "docs/d.mdx")
+			v, by := docProspect(meta, "prds")
+			if v != tc.want || by != tc.wantBy {
+				t.Errorf("docProspect = (%q, %q), want (%q, %q)", v, by, tc.want, tc.wantBy)
+			}
+		})
+	}
+}
+
+func readMeta(t *testing.T, rel string) map[string]interface{} {
+	t.Helper()
+	meta, _, err := readFrontmatterFile(joinPath(DEVTOP_DIR, rel))
+	if err != nil {
+		t.Fatalf("read frontmatter: %v", err)
+	}
+	return meta
+}
+
+func joinPath(dir, rel string) string {
+	return strings.TrimSuffix(dir, "/") + "/" + rel
+}
+
+func TestHandleProspect_VerdictFlip(t *testing.T) {
+	setupPipelineEnv(t)
+	writeArtifact(t, "docs/reference/deployment.mdx", "---\ntitle: \"Deployment\"\n---\n\n# Deployment\n\nOps doc.\n")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pipeline/prospect",
+		strings.NewReader(`{"kind":"docs","slug":"reference/deployment","verdict":"eligible"}`))
+	rr := httptest.NewRecorder()
+	handleAPIProspect(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["prospect"] != "eligible" || out["prospect_by"] != "user" {
+		t.Errorf("response = %+v", out)
+	}
+	meta := readMeta(t, "docs/reference/deployment.mdx")
+	v, by := docProspect(meta, "prds")
+	if v != "eligible" || by != "user" {
+		t.Errorf("persisted prospect = (%q, %q)", v, by)
+	}
+}
+
+func TestHandleProspect_VerdictRejectsUnsafeInput(t *testing.T) {
+	setupPipelineEnv(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/pipeline/prospect",
+		strings.NewReader(`{"kind":"docs","slug":"../evil","verdict":"eligible"}`))
+	rr := httptest.NewRecorder()
+	handleAPIProspect(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("unsafe slug status = %d", rr.Code)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/pipeline/prospect",
+		strings.NewReader(`{"kind":"docs","slug":"a","verdict":"maybe"}`))
+	rr = httptest.NewRecorder()
+	handleAPIProspect(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("bad verdict status = %d", rr.Code)
+	}
+}
+
+func TestHandleProspectClassify_UserVerdictWins(t *testing.T) {
+	setupPipelineEnv(t)
+	engineConfig.Derivation[0].Classifier = "classify-doc"
+	writeArtifact(t, "docs/reference/deployment.mdx", "---\ntitle: \"Deployment\"\nderive_prospects:\n  prds: not-eligible\nprospect_by: user\n---\n\nBody.\n")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pipeline/prospect/classify",
+		strings.NewReader(`{"kind":"docs","slug":"reference/deployment"}`))
+	rr := httptest.NewRecorder()
+	handleAPIProspectClassify(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Errorf("classify over user verdict status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandleProspectClassify_NoClassifierBound(t *testing.T) {
+	setupPipelineEnv(t)
+	writeArtifact(t, "prds/x/index.mdx", "---\ntitle: \"X\"\nstatus: \"draft\"\n---\n\nBody.\n")
+	req := httptest.NewRequest(http.MethodPost, "/api/pipeline/prospect/classify",
+		strings.NewReader(`{"kind":"prds","slug":"x"}`))
+	rr := httptest.NewRecorder()
+	handleAPIProspectClassify(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("no-classifier status = %d", rr.Code)
+	}
+}
+
+func TestHandleDerive_ProspectGate(t *testing.T) {
+	setupPipelineEnv(t)
+	engineConfig.Derivation[0].Classifier = "classify-doc"
+	t.Setenv("AI_API_KEY", "")
+	writeArtifact(t, "docs/reference/deployment.mdx", "---\ntitle: \"Deployment\"\nderive_prospects:\n  prds: not-eligible\nprospect_by: model\n---\n\nBody.\n")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/derive",
+		strings.NewReader(`{"from":"docs","to":"prds","slug":"reference/deployment"}`))
+	rr := httptest.NewRecorder()
+	handleAPIDerive(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("ineligible derive status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "not eligible") {
+		t.Errorf("missing gate message: %s", rr.Body.String())
+	}
+
+	req2 := httptest.NewRequest(http.MethodPost, "/api/pipeline/prospect",
+		strings.NewReader(`{"kind":"docs","slug":"reference/deployment","verdict":"eligible"}`))
+	rr2 := httptest.NewRecorder()
+	handleAPIProspect(rr2, req2)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("flip status = %d, body = %s", rr2.Code, rr2.Body.String())
+	}
+
+	// Eligible now: the gate passes and the handler reaches the API key
+	// check (502 without a key), never running a model.
+	req3 := httptest.NewRequest(http.MethodPost, "/api/derive",
+		strings.NewReader(`{"from":"docs","to":"prds","slug":"reference/deployment"}`))
+	rr3 := httptest.NewRecorder()
+	handleAPIDerive(rr3, req3)
+	if rr3.Code != http.StatusBadGateway {
+		t.Errorf("eligible derive status = %d, body = %s", rr3.Code, rr3.Body.String())
+	}
+}
+
+// TestWriteArtifact_ResolvesExistingDirectFile: a classify write to an id with
+// an existing direct file must land in place, not at <id>/index.mdx. This is
+// the "doc stayed unassessed" bug: the agent wrote, the pipeline read elsewhere.
+func TestWriteArtifact_ResolvesExistingDirectFile(t *testing.T) {
+	setupPipelineEnv(t)
+	writeArtifact(t, "docs/roadmap.mdx", "---\ntitle: \"Roadmap\"\n---\n\n# Roadmap\n\nV1.\n")
+	res := dispatchTool("write_artifact", map[string]interface{}{
+		"kind": "docs", "id": "roadmap",
+		"content": "---\ntitle: \"Roadmap\"\nderive_prospects:\n  prds: eligible\nprospect_by: model\n---\n\n# Roadmap\n\nV2.\n",
+	})
+	if strings.Contains(res, "Error") {
+		t.Fatalf("write_artifact failed: %s", res)
+	}
+	got, err := os.ReadFile(joinPath(DEVTOP_DIR, "docs/roadmap.mdx"))
+	if err != nil {
+		t.Fatalf("direct file missing: %v", err)
+	}
+	if !strings.Contains(string(got), "prds: eligible") {
+		t.Errorf("direct file not updated:\n%s", got)
+	}
+	if _, err := os.Stat(joinPath(DEVTOP_DIR, "docs/roadmap/index.mdx")); err == nil {
+		t.Error("index.mdx must not be created when the direct file exists")
+	}
+	// The classify output is parseable and un-gates the derive handler.
+	meta := readMeta(t, "docs/roadmap.mdx")
+	v, by := docProspect(meta, "prds")
+	if v != "eligible" || by != "model" {
+		t.Errorf("prospect = (%q, %q), want (eligible, model)", v, by)
+	}
+}
+
+// TestWriteArtifact_ResolvesExistingIndexFile: an id with an existing
+// <id>/index.mdx updates it in place and never creates a sibling direct file.
+func TestWriteArtifact_ResolvesExistingIndexFile(t *testing.T) {
+	setupPipelineEnv(t)
+	writeArtifact(t, "docs/guides/usage/index.mdx", "---\ntitle: \"Usage\"\n---\n\nV1.\n")
+	res := dispatchTool("write_artifact", map[string]interface{}{
+		"kind": "docs", "id": "guides/usage",
+		"content": "---\ntitle: \"Usage\"\n---\n\nV2.\n",
+	})
+	if strings.Contains(res, "Error") {
+		t.Fatalf("write_artifact failed: %s", res)
+	}
+	if _, err := os.Stat(joinPath(DEVTOP_DIR, "docs/guides/usage.mdx")); err == nil {
+		t.Error("sibling direct file must not be created when the index exists")
+	}
+	got, err := os.ReadFile(joinPath(DEVTOP_DIR, "docs/guides/usage/index.mdx"))
+	if err != nil {
+		t.Fatalf("index file missing: %v", err)
+	}
+	if !strings.Contains(string(got), "V2.") {
+		t.Errorf("index not updated:\n%s", got)
+	}
+}
+
+// TestWriteArtifact_CreatesByConvention: with no existing file, creation keeps
+// the placement convention (plain id -> <id>/index.mdx).
+func TestWriteArtifact_CreatesByConvention(t *testing.T) {
+	setupPipelineEnv(t)
+	res := dispatchTool("write_artifact", map[string]interface{}{
+		"kind": "docs", "id": "new-page", "content": "---\ntitle: \"New\"\n---\n\nBody.\n",
+	})
+	if strings.Contains(res, "Error") {
+		t.Fatalf("write_artifact failed: %s", res)
+	}
+	if _, err := os.Stat(joinPath(DEVTOP_DIR, "docs/new-page/index.mdx")); err != nil {
+		t.Errorf("convention index missing: %v", err)
+	}
+	if _, err := os.Stat(joinPath(DEVTOP_DIR, "docs/new-page.mdx")); err == nil {
+		t.Error("no-convention direct file must not exist")
+	}
+}
+
+// TestArtifactToolPath_MatchesExistingFile: the permission mapper and the
+// write tool must resolve to the same file (authorization == write target).
+func TestArtifactToolPath_MatchesExistingFile(t *testing.T) {
+	setupPipelineEnv(t)
+	writeArtifact(t, "docs/roadmap.mdx", "---\ntitle: R\n---\n\nB\n")
+	rel, ok := artifactToolPath(map[string]interface{}{"kind": "docs", "id": "roadmap"})
+	if rel == "" {
+		rel = "<empty>"
+	}
+	if !ok || rel != "docs/roadmap.mdx" {
+		t.Errorf("artifactToolPath = (%q, %v), want (docs/roadmap.mdx, true)", rel, ok)
+	}
+}
+
+// TestHandleDerive_ProspectViaWriteArtifact: after the classify agent writes an
+// eligible verdict through write_artifact, the derive gate passes (reaches the
+// API-key check with no key). This is the contract that a successful classify
+// "leaves the doc no longer unassessed".
+func TestHandleDerive_ProspectViaWriteArtifact(t *testing.T) {
+	setupPipelineEnv(t)
+	engineConfig.Derivation[0].Classifier = "classify-doc"
+	t.Setenv("AI_API_KEY", "")
+	writeArtifact(t, "docs/architecture.mdx", "---\ntitle: \"Architecture\"\n---\n\nBody.\n")
+	res := dispatchTool("write_artifact", map[string]interface{}{
+		"kind": "docs", "id": "architecture",
+		"content": "---\ntitle: \"Architecture\"\nderive_prospects:\n  prds: eligible\nprospect_by: model\n---\n\nBody.\n",
+	})
+	if strings.Contains(res, "Error") {
+		t.Fatalf("write_artifact failed: %s", res)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/derive",
+		strings.NewReader(`{"from":"docs","to":"prds","slug":"architecture"}`))
+	rr := httptest.NewRecorder()
+	handleAPIDerive(rr, req)
+	if rr.Code != http.StatusBadGateway {
+		t.Errorf("derive after agent write = %d (want 502: gate passed, no key)", rr.Code)
+	}
+}
+
+// Task message pins the target: writing anything else is an error.
+func TestClassifyTaskMessage_PinsTarget(t *testing.T) {
+	setupPipelineEnv(t)
+	writeArtifact(t, "docs/architecture/agent-engine.mdx", "---\ntitle: \"AE\"\n---\n\nBody.\n")
+	edge := engineConfig.Derivation[0]
+	msg := classifyTaskMessage(edge, "architecture/agent-engine")
+	for _, want := range []string{
+		".devtop/docs/architecture/agent-engine.mdx",
+		"The ONLY file you may write is",
+		"kind \"docs\"",
+		"top-level field prospect_by: model",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("classify task missing %q:\n%s", want, msg)
+		}
+	}
+}
+
+// classifyResult must fail closed: verdict absent, or verdict with a missing
+// or nested prospect_by, counts as "not written".
+func TestClassifyResult_FailClosed(t *testing.T) {
+	setupPipelineEnv(t)
+	edge := engineConfig.Derivation[0]
+
+	// Untouched doc: no verdict at all.
+	writeArtifact(t, "docs/a.mdx", "---\ntitle: \"A\"\n---\n\nBody.\n")
+	if _, _, written := classifyResult("docs", "a", edge); written {
+		t.Error("untouched doc must report written=false")
+	}
+
+	// Malformed model write: prospect_by nested inside derive_prospects.
+	writeArtifact(t, "docs/b.mdx", "---\ntitle: \"B\"\nderive_prospects:\n  prds: not-eligible\n  prospect_by: model\n---\n\nBody.\n")
+	v, by, written := classifyResult("docs", "b", edge)
+	if v != "not-eligible" || by != "" || written {
+		t.Errorf("nested prospect_by = (%q, %q, %v), want (not-eligible, \"\", false)", v, by, written)
+	}
+
+	// Correct model write: verdict + top-level prospect_by: model.
+	writeArtifact(t, "docs/c.mdx", "---\ntitle: \"C\"\nderive_prospects:\n  prds: eligible\nprospect_by: model\n---\n\nBody.\n")
+	v, by, written = classifyResult("docs", "c", edge)
+	if v != "eligible" || by != "model" || !written {
+		t.Errorf("valid model write = (%q, %q, %v), want (eligible, model, true)", v, by, written)
+	}
+}
+
+func TestBuildPipeline_ProspectFields(t *testing.T) {
+	setupPipelineEnv(t)
+	engineConfig.Derivation[0].Classifier = "classify-doc"
+	writeArtifact(t, "docs/architecture.mdx", "---\ntitle: \"Architecture\"\nsummary: \"S\"\nderive_prospects:\n  prds: eligible\nprospect_by: model\n---\n\nBody.\n")
+	writeArtifact(t, "docs/guides/usage.mdx", "---\ntitle: \"Usage\"\n---\n\nBody.\n")
+
+	res := buildPipeline()
+	if len(res.Items) != 2 {
+		t.Fatalf("items = %d", len(res.Items))
+	}
+	var arch, usage *PipelineItem
+	for i := range res.Items {
+		if res.Items[i].Slug == "architecture" {
+			arch = &res.Items[i]
+		}
+		if res.Items[i].Slug == "guides/usage" {
+			usage = &res.Items[i]
+		}
+	}
+	if arch == nil || arch.Prospect != "eligible" || arch.ProspectBy != "model" {
+		t.Errorf("arch prospect = %+v", arch)
+	}
+	if arch.Path != "architecture.mdx" || arch.Dir != "" {
+		t.Errorf("arch path/dir = %q/%q", arch.Path, arch.Dir)
+	}
+	if usage == nil || usage.Prospect != "" || usage.ProspectBy != "" {
+		t.Errorf("usage prospect = %+v", usage)
+	}
+	if usage.Path != "guides/usage.mdx" || usage.Dir != "guides" {
+		t.Errorf("usage path/dir = %q/%q", usage.Path, usage.Dir)
+	}
+	if res.Edges[0].Classifier != "classify-doc" {
+		t.Errorf("edge classifier = %q", res.Edges[0].Classifier)
+	}
+}
