@@ -140,8 +140,28 @@ test('classify failure surfaces instead of silently leaving the doc unassessed',
   await page.getByRole('button', { name: /Unassessed/ }).click()
   await page.getByRole('button', { name: 'Suggest eligibility' }).click()
 
-  // The failure is visible on the error panel, and nothing claims a sealed
-  // verdict: no verified chips appear.
-  await expect(page.getByText(/Pipeline error/)).toBeVisible()
-  expect(await page.getByText('eligible · verified', { exact: true }).count()).toBe(0)
+  // The failure is visible inline next to the row, and nothing claims a
+  // sealed verdict: the fixture's one pre-existing verified chip is all
+  // there is (the classify failure must not mint new provenance).
+  await expect(page.getByText(/AI_API_KEY not configured/).first()).toBeVisible()
+  expect(await page.getByText('eligible · verified', { exact: true }).count()).toBe(1)
+})
+
+test('Review PRD marks reviewing and opens the PRD for review', async ({ page }) => {
+  const items = baseItems()
+  items[0].prd = { ...items[0].prd!, status: 'draft' }
+  await page.route('**/api/pipeline', route => route.fulfill({ json: { edges: EDGES, items } }))
+  await page.route('**/api/pipeline/prds/*/status', route => route.fulfill({ json: { id: 'architecture/agent-engine', status: 'reviewing' } }))
+  await page.route('**/api/artifacts/prds/**', route =>
+    route.fulfill({ json: { id: 'architecture/agent-engine', title: 'Agent Engine PRD', content: '# Review\n\nBody.', frontmatter: { status: 'reviewing' } } }))
+
+  await page.goto('/#/pipeline')
+  await hideWebInspector(page)
+
+  await page.getByRole('button', { name: 'Review PRD' }).click()
+
+  // The nested slug navigates to the PRD page, which docks the next controls.
+  await expect(page).toHaveURL(/#\/prds\/architecture\/agent-engine/, { timeout: 15_000 })
+  await expect(page.getByRole('button', { name: 'Approve' }).first()).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Request changes' }).first()).toBeVisible()
 })

@@ -124,6 +124,10 @@ const BTN_GHOST = `${ACTION_BTN} text-slate-300 border border-borderDark hover:b
 export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
   const [data, setData] = useState<PipelineResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Action failures render inline next to the row they belong to and never
+  // replace the whole view; load() clears them, so a successful refetch
+  // means the underlying state moved on.
+  const [actionError, setActionError] = useState<{ slug: string; msg: string } | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [progress, setProgress] = useState('')
   const [closed, setClosed] = useState<Set<string>>(() => new Set(['unassessed', 'not-eligible']))
@@ -133,6 +137,7 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
       const r = await fetch(api('/api/pipeline'))
       if (!r.ok) throw new Error('pipeline ' + r.status)
       setData(await r.json())
+      setActionError(null)
     } catch (e) {
       setError(String(e))
     }
@@ -183,7 +188,7 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
       await stream(res)
       await load()
     } catch (e) {
-      setError(String(e))
+      setActionError({ slug, msg: String(e) })
     } finally {
       setBusy(null)
       setProgress('')
@@ -207,7 +212,7 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
       await stream(res)
       await load()
     } catch (e) {
-      setError(String(e))
+      setActionError({ slug: item.slug, msg: String(e) })
     } finally {
       setBusy(null)
       setProgress('')
@@ -229,17 +234,17 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
       }
       await load()
     } catch (e) {
-      setError(String(e))
+      setActionError({ slug: item.slug, msg: String(e) })
     } finally {
       setBusy(null)
     }
   }
 
-  const setStatus = async (slug: string, status: string) => {
+  const setStatus = async (slug: string, status: string, navigateToHash?: string) => {
     if (busy) return
     setBusy(slug + ':status')
     try {
-      const res = await fetch(api(`/api/pipeline/prds/${slug}/status`), {
+      const res = await fetch(api(`/api/pipeline/prds/${encodeURIComponent(slug)}/status`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
@@ -249,8 +254,9 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
         throw new Error(j?.error ?? ('status ' + res.status))
       }
       await load()
+      if (navigateToHash) window.location.hash = navigateToHash
     } catch (e) {
-      setError(String(e))
+      setActionError({ slug, msg: String(e) })
     } finally {
       setBusy(null)
     }
@@ -329,13 +335,13 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
       return <button onClick={() => void derive(item.slug, edge('docs', 'prds'))} className={BTN_PRIMARY}>Derive PRD</button>
     }
     if (prd.status === 'draft') {
-      return <button onClick={() => void setStatus(item.slug, 'reviewing')} className={BTN_GHOST}>Review PRD</button>
+      return <button onClick={() => void setStatus(prd.slug, 'reviewing', '#/prds/' + prd.slug)} className={BTN_GHOST}>Review PRD</button>
     }
     if (prd.status === 'reviewing') {
       return (
         <>
-          <button onClick={() => void setStatus(item.slug, 'approved')} className={BTN_PRIMARY}>Approve</button>
-          <button onClick={() => void setStatus(item.slug, 'draft')} className={BTN_GHOST}>Request changes</button>
+          <button onClick={() => void setStatus(prd.slug, 'approved')} className={BTN_PRIMARY}>Approve</button>
+          <button onClick={() => void setStatus(prd.slug, 'draft')} className={BTN_GHOST}>Request changes</button>
         </>
       )
     }
@@ -557,6 +563,9 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
                               <div className="mt-auto pt-2">{ticketActions(item)}</div>
                             </div>
                           </div>
+                          {actionError?.slug === item.slug && (
+                            <p className="text-xs text-rose-400 mt-2 px-1 font-mono">{actionError.msg}</p>
+                          )}
                         </div>
                       )
                     })}

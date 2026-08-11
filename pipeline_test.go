@@ -204,6 +204,26 @@ func TestHandleAPIPRDStatus_StateMachine(t *testing.T) {
 	}
 }
 
+func TestHandleAPIPRDStatus_NestedSlug(t *testing.T) {
+	setupPipelineEnv(t)
+	writeArtifact(t, "prds/deep/nested/index.mdx", "---\ntitle: \"Deep\"\nstatus: \"draft\"\n---\n\nBody.\n")
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/pipeline/prds/{slug}/status", handleAPIPRDStatus)
+
+	// The client percent-encodes nested slugs; ServeMux matches them as one
+	// segment and decodes the value back to a slash path.
+	req := httptest.NewRequest("POST", "/api/pipeline/prds/deep%2Fnested/status", strings.NewReader(`{"status":"reviewing"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("nested slug status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	meta := readMeta(t, "prds/deep/nested/index.mdx")
+	if s, _ := meta["status"].(string); s != "reviewing" {
+		t.Errorf("status after set = %q, want reviewing", s)
+	}
+}
+
 func TestCreateTicket_SourceField(t *testing.T) {
 	setupPipelineEnv(t)
 	dispatchTool("create_ticket", map[string]interface{}{

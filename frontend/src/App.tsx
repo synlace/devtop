@@ -201,6 +201,10 @@ function App() {
   const [docTitle, setDocTitle] = useState<string>('Home')
   const [docContent, setDocContent] = useState<string>('')
   const [docMissing, setDocMissing] = useState<boolean>(false)
+  // PRD detail page: the live status and any docked status-action error, so
+  // Approve / Request changes live next to the content being reviewed.
+  const [prdStatus, setPrdStatus] = useState<string | null>(null)
+  const [prdStatusErr, setPrdStatusErr] = useState<string | null>(null)
   const [docSlugs, setDocSlugs] = useState<DocSlug[]>([])
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
   // Favourites (user-scoped, never committed): slugs the user starred via the
@@ -929,12 +933,16 @@ function App() {
   }
 
   const fetchArtifactDetail = async (kind: string, id: string) => {
+    setPrdStatusErr(null)
     try {
       const r = await fetch(api(`/api/artifacts/${encodeURIComponent(kind)}/${id}`))
       if (r.ok) {
         const data = await r.json()
         setDocTitle(data.title)
         setDocContent(data.content)
+        if (kind === 'prds') {
+          setPrdStatus(typeof data.frontmatter?.status === 'string' ? data.frontmatter.status : null)
+        }
       } else {
         setDocTitle('Not Found')
         setDocContent('')
@@ -942,6 +950,30 @@ function App() {
       }
     } catch (e) {
       console.error('Failed to load artifact:', e)
+    }
+  }
+
+  // Docked PRD status actions: Approve / Request changes from the PRD itself.
+  // Same endpoint and transition rules as the pipeline row.
+  const prdSetStatus = async (status: string) => {
+    const id = activePage.id
+    if (!id) return
+    try {
+      const r = await fetch(api(`/api/pipeline/prds/${encodeURIComponent(id)}/status`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      })
+      if (r.ok) {
+        setPrdStatus(status)
+        await fetchArtifactDetail('prds', id)
+        await fetchArtifactList('prds')
+      } else {
+        const j = await r.json().catch(() => null)
+        setPrdStatusErr(j?.error ?? ('status ' + r.status))
+      }
+    } catch (e) {
+      setPrdStatusErr(String(e))
     }
   }
 
@@ -2158,6 +2190,30 @@ useEffect(() => {
             {/* 1. DOC / ARTIFACT DETAIL VIEW */}
             {isDocumentView && (
               <div className="max-w-3xl mx-auto prose prose-invert fade-in">
+                {activePage.kind === 'prds' && activePage.id && (
+                  <div className="mb-4 not-prose flex items-center gap-2 flex-wrap">
+                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border capitalize ${
+                      prdStatus === 'reviewing' ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' :
+                      prdStatus === 'approved' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' :
+                      'bg-blue-500/10 border-blue-500/20 text-blue-400'
+                    }`}>{prdStatus ?? 'draft'}</span>
+                    {prdStatus === 'reviewing' && (
+                      <>
+                        <button
+                          onClick={() => void prdSetStatus('approved')}
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-100 bg-accentBlue hover:bg-accentBlue/80 transition-colors"
+                        >Approve</button>
+                        <button
+                          onClick={() => void prdSetStatus('draft')}
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 border border-borderDark hover:bg-borderDark/20 transition-colors"
+                        >Request changes</button>
+                      </>
+                    )}
+                    {prdStatusErr && (
+                      <span className="text-xs text-rose-400 font-mono">{prdStatusErr}</span>
+                    )}
+                  </div>
+                )}
                 {docMissing && docSlugs.length === 0 ? (
                   <div className="p-10 text-center bg-surfaceDark/40 border border-borderDark/40 rounded-xl shadow-2xl">
                     <FileText className="w-8 h-8 mx-auto mb-2 text-slate-600" />
