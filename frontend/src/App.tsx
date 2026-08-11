@@ -493,6 +493,42 @@ function App() {
     }
   }, [])
 
+  // Agent writes happen server-side (chat tools, derivation): nothing in the
+  // UI knows when docs/tickets/PRDs changed. Poll the workspace revision
+  // counter per repo and refetch nav data only when it moves. Cheap, covers
+  // every writer, and never fires while the tab is hidden.
+  const navRevisionRef = useRef(-1)
+  const [navRevision, setNavRevision] = useState(0)
+  useEffect(() => {
+    navRevisionRef.current = -1
+    const tick = async () => {
+      if (document.hidden) return
+      try {
+        const r = await fetch(api('/api/workspace/revision'))
+        if (!r.ok) return
+        const data = await r.json()
+        const rev = Number(data.revision)
+        if (navRevisionRef.current === -1) {
+          navRevisionRef.current = rev
+          return
+        }
+        if (rev !== navRevisionRef.current) {
+          navRevisionRef.current = rev
+          setNavRevision(rev)
+          fetchDocSlugs()
+          fetchFavourites()
+          fetchTicketsList()
+        }
+      } catch {
+        // server unavailable (e.g. dev HMR restart): retry on the next tick
+      }
+    }
+    void tick()
+    const timer = setInterval(tick, 4000)
+    return () => clearInterval(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRepo])
+
   // Render Mermaid diagrams when content changes
   useEffect(() => {
     const renderMermaid = async () => {
@@ -1047,6 +1083,7 @@ function App() {
     if (!activeThreadId) return
     let el: HTMLElement | null = null
     let raf = 0
+    let stickyObserver: MutationObserver | null = null
 
     const findScroller = () => {
       const root = document.querySelector('[data-testid="copilot-chat"]')
@@ -1077,6 +1114,17 @@ function App() {
       if (el) {
         chatScrollerRef.current = el
         el.addEventListener('scroll', onScroll, { passive: true })
+        // Smart stick-to-bottom: while the user is already at the bottom,
+        // follow streamed content (new message nodes mutate the container).
+        // The moment they scroll up, onScroll flips atChatBottom and the
+        // observer stops re-anchoring — no CopilotKit autoScroll spring, so
+        // remounts/restores never fight the user.
+        stickyObserver = new MutationObserver(() => {
+          if (el && atChatBottomRef.current && el.scrollHeight > el.clientHeight) {
+            el.scrollTop = el.scrollHeight
+          }
+        })
+        stickyObserver.observe(el, { childList: true, subtree: true })
         // Seed the at-bottom indicator without recording a position: at mount
         // the container starts at scrollTop 0, and a probe here would overwrite
         // a hydrated saved position before restore runs.
@@ -1123,6 +1171,7 @@ function App() {
     return () => {
       cancelAnimationFrame(raf)
       el?.removeEventListener('scroll', onScroll)
+      stickyObserver?.disconnect()
       chatScrollerRef.current = null
     }
   }, [activeThreadId, saveViewState])
@@ -2188,7 +2237,7 @@ useEffect(() => {
 
             {/* 1.45. DERIVATION PIPELINE VIEW — cross-kind, from /api/pipeline */}
             {isPipelinePage && (
-              <PipelineView />
+              <PipelineView refreshKey={navRevision} />
             )}
 
             {/* 1.5. LIST OVERVIEW VIEW — any config-declared "list" kind */}

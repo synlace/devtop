@@ -72,6 +72,21 @@ func TestHandleInternalTool(t *testing.T) {
 	}
 	repo := registry.List()[0]
 
+	// The scaffolded default agent is the new chat policy (generic tools,
+	// docs-only writes). This endpoint test exercises repo-scoping mechanics,
+	// so pin the agent to the legacy kind-specific toolset.
+	agentsDir := filepath.Join(repo.paths.DevTop, "agents")
+	if err := os.WriteFile(filepath.Join(agentsDir, "docs.mdx"), []byte(`---
+title: "Docs"
+tools: [base, docs, tickets, workspace]
+permissions:
+  read: ["docs/**", "tickets/**"]
+  write: ["docs/**"]
+---
+You are the docs agent.`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
 	do := func(name string, args map[string]interface{}, header string) *httptest.ResponseRecorder {
 		body, _ := json.Marshal(map[string]interface{}{"name": name, "args": args})
 		req := httptest.NewRequest("POST", "/api/internal/tool", bytes.NewBuffer(body))
@@ -134,12 +149,44 @@ func TestDispatchRepoTool_AuthorizesAgainstDefaultAgent(t *testing.T) {
 	}
 	repo := registry.List()[0]
 
-	// The scaffolded docs agent allows tickets: creation works.
-	out := dispatchRepoTool(repo, "create_ticket", map[string]interface{}{
-		"title": "t", "description": "d", "priority": "medium",
-	})
-	if strings.Contains(out, "not allowed") || strings.Contains(out, "not configured") {
-		t.Fatalf("create_ticket should be allowed for the docs agent, got %q", out)
+	// The scaffolded docs agent writes docs only: ticket creation is denied
+	// by the write scope (even though the tickets group is in its tools).
+	for _, tt := range []struct {
+		name string
+		args map[string]interface{}
+		want string
+	}{
+		{"create_ticket", map[string]interface{}{"title": "t", "description": "d", "priority": "medium"}, "write scope"},
+		{"write_artifact", map[string]interface{}{"kind": "prds", "id": "x", "content": "c"}, "write scope"},
+	} {
+		out := dispatchRepoTool(repo, tt.name, tt.args)
+		if !strings.Contains(out, tt.want) {
+			t.Fatalf("%s should be denied for the docs agent, got %q", tt.name, out)
+		}
+	}
+
+	// Docs writes stay allowed via the generic writer, and the artifact
+	// reader reads any kind the agent's read scope covers.
+	out := dispatchRepoTool(repo, "write_artifact", map[string]interface{}{"kind": "docs", "id": "new.mdx", "content": "x"})
+	if strings.Contains(out, "not allowed") || strings.Contains(out, "outside") {
+		t.Fatalf("write_artifact to docs should be allowed for the docs agent, got %q", out)
+	}
+	prdDir := filepath.Join(repo.paths.DevTop, "prds")
+	if err := os.MkdirAll(prdDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(prdDir, "data-layer.mdx"), []byte("---\ntitle: DL\n---\nBody"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out = dispatchRepoTool(repo, "read_artifact", map[string]interface{}{"kind": "prds", "id": "data-layer"})
+	if !strings.Contains(out, "Body") {
+		t.Fatalf("read_artifact should read prds for the docs agent, got %q", out)
+	}
+	// A kind that resolves to nothing reads as not-found (fail-safe either at
+	// the permission mapper or in the tool).
+	out = dispatchRepoTool(repo, "read_artifact", map[string]interface{}{"kind": "bogus", "id": "x"})
+	if !strings.Contains(out, "cannot determine target path") && !strings.Contains(out, "not found") {
+		t.Fatalf("read_artifact of an unknown kind should fail, got %q", out)
 	}
 
 	// Tighten the agent: drop the tickets group from its tools.

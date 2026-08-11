@@ -210,6 +210,40 @@ func registerBuiltinTools() {
 		return fmt.Sprintf("Written to .devtop/%s", rel)
 	})
 
+	registerTool("read_artifact", map[string]interface{}{
+		"type": "function",
+		"function": map[string]interface{}{
+			"name":        "read_artifact",
+			"description": "Read an artifact of any config-declared kind (e.g. 'prds', 'docs', 'tickets') from the repository's .devtop/ directory. Use this for kinds without a dedicated reader.",
+			"parameters": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"kind": map[string]interface{}{"type": "string", "description": "Artifact kind, declared in config.yml (e.g. 'prds')"},
+					"id":   map[string]interface{}{"type": "string", "description": "Artifact id, e.g. 'architecture/migrations'"},
+				},
+				"required": []string{"kind", "id"},
+			},
+		},
+	}, func(args map[string]interface{}) string {
+		kind, _ := args["kind"].(string)
+		id, _ := args["id"].(string)
+
+		p := toolPaths()
+		cfg := toolConfig()
+		rel, ok := resolveArtifactReadTargetFor(cfg, p, kind, id)
+		if !ok {
+			return fmt.Sprintf("Error: artifact '%s/%s' not found", kind, id)
+		}
+		if _, err := guardPath(p.DevTop, rel); err != nil {
+			return fmt.Sprintf("Error: %v", err)
+		}
+		data, err := os.ReadFile(filepath.Join(p.DevTop, rel))
+		if err != nil {
+			return fmt.Sprintf("Error: artifact '%s/%s' not found", kind, id)
+		}
+		return string(data)
+	})
+
 	registerTool("list_docs", map[string]interface{}{
 		"type": "function",
 		"function": map[string]interface{}{
@@ -666,6 +700,15 @@ func dispatchToolForRepo(repo *Repo, rt *agentRuntime, name string, args map[str
 	result := def.Handler(args)
 	toolCtx.repo = prev
 	toolCtx.mu.Unlock()
+	if _, isWrite := writeToolPathers[name]; isWrite {
+		var root string
+		if repo != nil {
+			root = repo.Root
+		} else {
+			root = filepath.Dir(DEVTOP_DIR)
+		}
+		bumpWorkspaceRevision(root)
+	}
 	return result
 }
 

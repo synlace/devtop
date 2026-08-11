@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // Agent and skill model. Agents and skills are repo-owned artifacts under the
@@ -44,9 +45,13 @@ type SkillDef struct {
 	Body        string   `json:"-"`
 }
 
-// toolGroups expand a group name declared in an agent's `tools` list.
+// toolGroups expand a group name declared in an agent's `tools` list. The
+// generic `read`/`write` groups back the kind-parametric artifact tools; the
+// kind-specific `docs` group stays for legacy agents that name it directly.
 var toolGroups = map[string][]string{
 	"base":      {"git_commit", "ask_user", "list_docs"},
+	"read":      {"read_artifact"},
+	"write":     {"write_artifact"},
 	"docs":      {"read_doc", "read_doc_at", "list_doc_revisions", "write_doc"},
 	"tickets":   {"list_tickets", "read_ticket", "create_ticket", "update_ticket", "add_comment"},
 	"workspace": {"read_workspace_file", "list_workspace_files"},
@@ -331,6 +336,7 @@ var writeToolPathers = map[string]func(map[string]interface{}) (string, bool){
 }
 
 var readToolPathers = map[string]func(map[string]interface{}) (string, bool){
+	"read_artifact":      artifactReadToolPath,
 	"read_doc":           docToolPath,
 	"read_doc_at":        docToolPath,
 	"list_doc_revisions": docToolPath,
@@ -342,6 +348,13 @@ func artifactToolPath(args map[string]interface{}) (string, bool) {
 	kind, _ := args["kind"].(string)
 	id, _ := args["id"].(string)
 	return resolveArtifactWriteTarget(kind, id)
+}
+
+// artifactReadToolPath mirrors read_artifact placement rules for any kind.
+func artifactReadToolPath(args map[string]interface{}) (string, bool) {
+	kind, _ := args["kind"].(string)
+	id, _ := args["id"].(string)
+	return resolveArtifactReadTarget(kind, id)
 }
 
 // docToolPath mirrors writeDocToFileSystem's placement rules.
@@ -461,11 +474,26 @@ func handleAPIAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	tools := make([]string, 0, len(rt.allowlist))
+	if rt.allowlist != nil {
+		for name := range rt.allowlist {
+			tools = append(tools, name)
+		}
+		sort.Strings(tools)
+	} else {
+		// An undeclared tools list permits every registered tool.
+		for name := range toolRegistry {
+			tools = append(tools, name)
+		}
+		sort.Strings(tools)
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"slug":  rt.Slug,
-		"title": rt.Def.Title,
-		"model": rt.Def.Model,
-		"prompt": rt.prompt,
+		"slug":        rt.Slug,
+		"title":       rt.Def.Title,
+		"model":       rt.Def.Model,
+		"prompt":      rt.prompt,
+		"tools":       tools,
+		"permissions": rt.Def.Permissions,
 	})
 }
 
@@ -473,4 +501,38 @@ func handleAPIAgent(w http.ResponseWriter, r *http.Request) {
 // permission scopes (legacy global scope). A nil runtime skips all checks.
 func dispatchToolResolved(rt *agentRuntime, name string, args map[string]interface{}) string {
 	return dispatchToolForRepo(nil, rt, name, args)
+}
+
+// workspaceRevisions tracks per-repo write activity so the frontend can
+// refresh nav/boards after agent writes without an event channel. Bumped by
+// dispatchToolForRepo on every content write; keyed by repo root so repos
+// never cross-pollute. A monotone counter is all the UI needs to detect
+// change.
+var workspaceRevisions = struct {
+	mu sync.Mutex
+	m  map[string]int64
+}{m: map[string]int64{}}
+
+func bumpWorkspaceRevision(root string) {
+	workspaceRevisions.mu.Lock()
+	defer workspaceRevisions.mu.Unlock()
+	workspaceRevisions.m[root]++
+}
+
+func workspaceRevision(root string) int64 {
+	workspaceRevisions.mu.Lock()
+	defer workspaceRevisions.mu.Unlock()
+	return workspaceRevisions.m[root]
+}
+
+// handleAPIWorkspaceRevision serves the agent-write revision of the active
+// repo. The frontend polls it while the chat panel is open and refetches
+// nav data when it changes.
+func handleAPIWorkspaceRevision(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int64{"revision": workspaceRevision(repo.Root)})
 }

@@ -115,6 +115,9 @@ async function buildRuntimeFor(agent, name) {
   const paths = await repoPaths(name);
   if (paths?.threads) threadsDir = paths.threads;
 
+  const agentToolNames = new Set(Array.isArray(agent.tools) ? agent.tools : []);
+  const chatTools = agentToolNames.size === 0 ? tools : tools.filter((t) => agentToolNames.has(t.name));
+
   const provider = createOpenAI({
     apiKey: aiKey,
     baseURL: baseURL,
@@ -124,7 +127,7 @@ async function buildRuntimeFor(agent, name) {
     agents: {
       default: new BuiltInAgent({
         model: provider.chat(agent.model || model),
-        tools: tools,
+        tools: chatTools,
         maxSteps: 10,
         prompt: agent.prompt || undefined,
       }),
@@ -342,6 +345,25 @@ const tools = [
     execute: async () => delegateTool("list_docs", {})
   }),
   defineTool({
+    name: "read_artifact",
+    description: "Read an artifact of any config-declared kind (e.g. prds, docs, tickets) from the repo's .devtop/ directory.",
+    parameters: z.object({
+      kind: z.string().describe("Artifact kind, declared in config.yml (e.g. 'prds')"),
+      id: z.string().describe("Artifact id, e.g. 'architecture/migrations'")
+    }),
+    execute: async (args) => delegateTool("read_artifact", args)
+  }),
+  defineTool({
+    name: "write_artifact",
+    description: "Write or overwrite an artifact of a config-declared, agent-writable kind (e.g. prds). Content includes YAML frontmatter and a markdown body.",
+    parameters: z.object({
+      kind: z.string().describe("Artifact kind, declared in config.yml (e.g. 'prds')"),
+      id: z.string().describe("Artifact id, e.g. 'architecture/migrations'"),
+      content: z.string().describe("Full file content (YAML frontmatter + markdown body)")
+    }),
+    execute: async (args) => delegateTool("write_artifact", args)
+  }),
+  defineTool({
     name: "list_tickets",
     description: "List all tickets with their status, priority, and assignee.",
     parameters: z.object({}),
@@ -420,8 +442,9 @@ const tools = [
       try {
         const p = await repoPaths(currentRepoName);
         const cwd = (p && (p.git_root || p.root)) || path.dirname(DEVTOP_DIR);
-        const relFromRoot = path.relative(cwd, DEVTOP_DIR);
-        await execAsync(`git add ${relFromRoot || "."}`, { cwd });
+        const relFromRoot = path.relative(cwd, (p && p.devtop) || DEVTOP_DIR);
+        const relForAdd = relFromRoot === "" ? "." : relFromRoot;
+        await execAsync(`git add "${relForAdd.replace(/"/g, '\\"')}"`, { cwd });
         const { stdout } = await execAsync(`git commit -m "${message}" --allow-empty`, { cwd });
         return "Committed: " + stdout.split("\n")[0];
       } catch (err) {

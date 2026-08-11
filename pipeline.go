@@ -161,8 +161,7 @@ func resolveArtifactFileFor(cfg EngineConfig, p RepoPaths, kindName, id string) 
 func resolveArtifactWriteTarget(kindName, id string) (string, bool) {
 	return resolveArtifactWriteTargetFor(engineConfig, defaultPaths(), kindName, id)
 }
-
-func resolveArtifactWriteTargetFor(cfg EngineConfig, p RepoPaths, kindName, id string) (string, bool) {
+	func resolveArtifactWriteTargetFor(cfg EngineConfig, p RepoPaths, kindName, id string) (string, bool) {
 	k, ok := cfg.ArtifactKinds[kindName]
 	if !ok || !k.AgentWritable || k.View == "board" {
 		return "", false
@@ -187,6 +186,39 @@ func resolveArtifactWriteTargetFor(cfg EngineConfig, p RepoPaths, kindName, id s
 		return direct, true
 	}
 	return idx, true
+}
+
+// resolveArtifactReadTarget returns the DEVTOP-relative path of an existing
+// artifact of any configured kind. Unlike the write resolver it is open to
+// every kind (including `view: board` and non-agent-writable kinds): read
+// access is governed by the agent's permissions.read scope, not by the kind's
+// write affordances. Shared by read_artifact and its permission mapper.
+func resolveArtifactReadTarget(kindName, id string) (string, bool) {
+	return resolveArtifactReadTargetFor(engineConfig, defaultPaths(), kindName, id)
+}
+
+func resolveArtifactReadTargetFor(cfg EngineConfig, p RepoPaths, kindName, id string) (string, bool) {
+	k, ok := cfg.ArtifactKinds[kindName]
+	if !ok {
+		return "", false
+	}
+	if id == "" || strings.Contains(id, "..") || strings.Contains(id, "\\") {
+		return "", false
+	}
+	ext := k.Extension
+	if ext == "" {
+		ext = ".md"
+	}
+	id = strings.TrimSuffix(id, ext)
+	direct := filepath.Join(k.Path, id+ext)
+	idx := filepath.Join(k.Path, id, "index"+ext)
+	if _, err := os.Stat(filepath.Join(p.DevTop, direct)); err == nil {
+		return direct, true
+	}
+	if _, err := os.Stat(filepath.Join(p.DevTop, idx)); err == nil {
+		return idx, true
+	}
+	return "", false
 }
 
 func artifactMetaOf(kindName, id string) (map[string]interface{}, bool, error) {

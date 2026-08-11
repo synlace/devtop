@@ -188,6 +188,7 @@ func main() {
 	mux.HandleFunc("POST /api/repos/init", handleAPIRepoInit)
 	mux.HandleFunc("POST /api/internal/tool", handleAPIInternalTool)
 	mux.HandleFunc("GET /api/agent", handleAPIAgent)
+	mux.HandleFunc("GET /api/workspace/revision", handleAPIWorkspaceRevision)
 	mux.HandleFunc("/api/fs/list", handleAPIFSList)
 
 	// SPA routes — serve the built React app; any non-API path falls back to

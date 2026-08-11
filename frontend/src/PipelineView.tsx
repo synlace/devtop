@@ -121,7 +121,7 @@ const ACTION_BTN = 'px-3 py-1.5 rounded-lg text-xs font-medium transition-colors
 const BTN_PRIMARY = `${ACTION_BTN} bg-accentBlue text-slate-100 hover:bg-accentBlue/80`
 const BTN_GHOST = `${ACTION_BTN} text-slate-300 border border-borderDark hover:bg-borderDark/20`
 
-export default function PipelineView() {
+export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
   const [data, setData] = useState<PipelineResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -137,7 +137,7 @@ export default function PipelineView() {
       setError(String(e))
     }
   }, [])
-  useEffect(() => { void load() }, [load])
+  useEffect(() => { void load() }, [load, refreshKey])
 
   const edge = (from: string, to: string) => data?.edges.find(e => e.from === from && e.to === to)
 
