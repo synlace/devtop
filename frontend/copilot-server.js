@@ -105,7 +105,16 @@ async function agentForRepo(name) {
   }
 }
 
-async function buildRuntimeFor(agent) {
+async function buildRuntimeFor(agent, name) {
+  // Chat history persists into the active repo's own .devtop/threads — the
+  // same directory the Go thread list reads — so a conversation belongs to
+  // the repo it was started in and survives a restart there. repoPaths
+  // resolves per-repo from the Go server; in classic single-repo mode it
+  // returns the workspace's own paths (== THREADS_DIR).
+  let threadsDir = THREADS_DIR;
+  const paths = await repoPaths(name);
+  if (paths?.threads) threadsDir = paths.threads;
+
   const provider = createOpenAI({
     apiKey: aiKey,
     baseURL: baseURL,
@@ -120,7 +129,7 @@ async function buildRuntimeFor(agent) {
         prompt: agent.prompt || undefined,
       }),
     },
-    runner: new PersistentAgentRunner({ threadsDir: THREADS_DIR }),
+    runner: new PersistentAgentRunner({ threadsDir }),
   });
   return runtime;
 }
@@ -129,7 +138,7 @@ async function agentMiddlewareForRepo(name) {
   if (repoRuntimes.has(name)) return repoRuntimes.get(name);
   const agent = await agentForRepo(name);
   if (!agent) return null;
-  const runtime = await buildRuntimeFor(agent);
+  const runtime = await buildRuntimeFor(agent, name);
   const mw = createCopilotExpressHandler({
     runtime,
     basePath: "/api/copilotkit",
