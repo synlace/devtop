@@ -266,6 +266,13 @@ function App() {
   const activeRepoStatus: RepoStatus | undefined = activeRepo
     ? repos.find(r => r.name === activeRepo)
     : repos.length > 0 ? repos[0] : undefined
+  // CopilotKit is mounted only for an initialized repo: its runtime resolves
+  // /info with zero agents for a repo without a deployed agent, and
+  // useAgentContext (PageContextProvider) then throws "Agent 'default' not
+  // found after runtime sync". While the repo state is unknown the mount is
+  // deferred; the panel body shows a notice until then.
+  const repoUninitialized = repos.length > 0 && activeRepoStatus !== undefined && !activeRepoStatus.initialized
+  const repoBooting = repos.length > 0 && activeRepoStatus === undefined
   const isMultiRepo = repos.some(r => !r.single) || repos.length > 1
 
   useEffect(() => {
@@ -1183,11 +1190,17 @@ useEffect(() => {
       console.log('[effect] no saved state, will autoCreate')
       setActiveThreadId(undefined)
       setShowThreadList(false)
-      autoCreateThread(contextKey)
+      // An uninitialized repo has no thread store (the runtime and the
+      // backend both refuse it): don't fire the auto-create POST — the
+      // 409 would just add console noise. Once init lands, this effect
+      // re-runs (deps below) and creates the first thread.
+      if (!repoUninitialized && !repoBooting) {
+        autoCreateThread(contextKey)
+      }
     }
     setHistoryOpen(!!saved?.historyOpen)
     fetchThreads(contextKey)
-  }, [contextKey, viewStateLoaded, fetchThreads, saveChatScrollPos])
+  }, [contextKey, viewStateLoaded, fetchThreads, saveChatScrollPos, repoUninitialized, repoBooting])
 
   // ⋯ → clock from a nav row: once the target doc is the active page, open the
   // revision rail (and let it do its usual on-demand fetch).
@@ -1282,14 +1295,7 @@ useEffect(() => {
   const statusLoading = aiReachable === null
   const showAiWizard = aiReachable === true && !!aiStatus && !aiStatus.configured
   const chatReady = !statusLoading && !showAiWizard
-  // The chat panel needs a scaffolded repo: CopilotKit is mounted for every
-  // repo (its runtime answers info probes with 200 even without an agent),
-  // but the panel body shows a notice instead of CopilotChat when the repo is
-  // uninitialized — CopilotChat requires the provider context, and a repo
-  // without its deployed agent is refused by the runtime anyway.
-  const chatCanMount = chatReady && repos.length > 0
-  const repoUninitialized = repos.length > 0 && activeRepoStatus !== undefined && !activeRepoStatus.initialized
-  const repoBooting = repos.length > 0 && activeRepoStatus === undefined
+  const chatCanMount = chatReady && repos.length > 0 && activeRepoStatus?.initialized
 
   const chatPanel = (
         <aside 
