@@ -42,6 +42,12 @@ func TestScaffoldRepo_MaterializesDefaults(t *testing.T) {
 			t.Fatalf("%s not scaffolded: %v", f, err)
 		}
 	}
+	root := filepath.Dir(p.DevTop)
+	if data, err := os.ReadFile(filepath.Join(root, "AGENTS.md")); err != nil {
+		t.Fatalf("root AGENTS.md not scaffolded: %v", err)
+	} else if !strings.Contains(string(data), "implement the open tickets") {
+		t.Error("root AGENTS.md lacks the implementer entry line")
+	}
 	data, err := os.ReadFile(filepath.Join(p.DevTop, "config.yml"))
 	if err != nil {
 		t.Fatal(err)
@@ -63,6 +69,11 @@ func TestScaffoldRepo_KeepsRepoAuthoredFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(agents, "docs.mdx"), []byte("---\ntitle: Custom\n---\ncustom body"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	// A repo-authored root AGENTS.md must survive the scaffold untouched.
+	root := filepath.Dir(p.DevTop)
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("repo contract"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := scaffoldRepo(p); err != nil {
 		t.Fatal(err)
@@ -76,6 +87,13 @@ func TestScaffoldRepo_KeepsRepoAuthoredFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(agents, "prd-builder.mdx")); err != nil {
 		t.Error("missing default agent not scaffolded alongside repo files")
+	}
+	contract, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(contract)) != "repo contract" {
+		t.Error("repo-authored root AGENTS.md was overwritten by the scaffold")
 	}
 }
 

@@ -46,7 +46,27 @@ func scaffoldRepo(p RepoPaths) error {
 			return err
 		}
 	}
+	if err := ensureRootAgentsFile(p); err != nil {
+		return err
+	}
 	return ensureWelcomeDocIn(p)
+}
+
+// ensureRootAgentsFile writes the implementation contract to the repo root
+// (next to .devtop) when no AGENTS.md exists. External coding agents read it
+// to claim, implement, and close tickets. Repo-authored files win.
+func ensureRootAgentsFile(p RepoPaths) error {
+	dst := filepath.Join(filepath.Dir(p.DevTop), "AGENTS.md")
+	if fi, err := os.Stat(dst); err == nil && !fi.IsDir() {
+		return nil
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	data, err := fs.ReadFile(scaffoldFS, "templates/AGENTS.md")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, 0644)
 }
 
 // scaffoldKind materializes the default templates for one artifact kind

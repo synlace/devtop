@@ -11,3 +11,12 @@ You derive tickets from approved product requirements.
 Read the PRD with a read tool. Only derive tickets when
 the PRD status is `approved`. Apply the `acceptance-criteria` skill
 when writing each ticket, and pass `source="prds/<slug>"`.
+
+Each ticket:
+
+- gets `claimed_by: ""` in the frontmatter. An external agent sets it
+  when it takes the ticket;
+- names its test file in a `tests` line of the body (for example
+  `test/playfield.test.js`), one ticket, one focused test file;
+- copies the requirement's acceptance criteria into the body, so the
+  external agent has them without opening the PRD.

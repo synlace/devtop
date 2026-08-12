@@ -61,6 +61,7 @@ interface Ticket {
   status: string
   priority: string
   assignee: string
+  claimed_by?: string
   created: string
   description?: string
   raw_description?: string
@@ -2417,7 +2418,7 @@ useEffect(() => {
                               <span className="text-slate-400 capitalize text-[11px]">{tkt.priority}</span>
                             </div>
                           </td>
-                          <td className="px-5 py-3.5 font-mono text-[11px] text-slate-400">{tkt.assignee || '—'}</td>
+                          <td className="px-5 py-3.5 font-mono text-[11px] text-slate-400">{tkt.assignee || '—'}{tkt.claimed_by ? <span className="text-cyan-600 ml-1.5">claimed: {tkt.claimed_by}</span> : null}</td>
                           <td className="px-5 py-3.5 text-slate-500">{tkt.created}</td>
                         </tr>
                       ))}

@@ -42,6 +42,7 @@ artifact_kinds:
       status: [open, in-progress, done]
       priority: [urgent, high, medium, low]
       assignee: string?
+      claimed_by: string?
       created: date
 
 # ---------------------------------------------------------------------------
