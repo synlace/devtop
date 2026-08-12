@@ -317,9 +317,11 @@ func handleAPICreateThread(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	context := payload["context"]
-	if context == "" {
-		context = "global"
-	}
+	// Keep the empty context as-is: "" is the canonical single-repo scope key
+	// (threadInScope matches it exactly, and legacy page-scoped values still
+	// resolve). Never fall back to "global": it is the CopilotKit orphan
+	// marker the thread list deliberately excludes (store.go), and a thread
+	// written with it would be invisible for its whole life.
 	title := payload["title"]
 	if title == "" {
 		title = "New conversation"

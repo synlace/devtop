@@ -257,9 +257,9 @@ function App() {
   const [aiSaving, setAiSaving] = useState<boolean>(false)
   // Repo-declared artifact kinds; replaced by the backend config when available.
   const [engineConfig, setEngineConfig] = useState<EngineConfig>(BUILTIN_ENGINE_CONFIG)
-  // Repo scope: the registry as served by /api/repos. Single-repo mode has one
-  // entry with single=true and no switcher; multi-repo mode scopes every API
-  // call through the api() helper.
+  // Repo scope: the registry as served by /api/repos. Every API call is
+  // scoped through api() to the active repo's name; single-repo mode has one
+  // entry with single=true and no switcher.
   const [repos, setRepos] = useState<RepoStatus[]>([])
   const [activeRepo, setActiveRepoState] = useState<string>('')
   const [repoInitBusy, setRepoInitBusy] = useState(false)
@@ -309,9 +309,10 @@ function App() {
       .then((list: RepoStatus[]) => {
         if (cancelled || !Array.isArray(list) || list.length === 0) return
         setRepos(list)
-        const multi = list.some(r => !r.single) || list.length > 1
-        if (!multi) return
-        // Restore the last selected repo, falling back to the first.
+        // Always resolve an active repo, single-repo mode included: the
+        // classic entry is a registered repo like any other, and its name
+        // scopes threads, viewstate, and API calls through one code path —
+        // no empty-context special case to drift apart.
         const saved = localStorage.getItem('devtop.activeRepo')
         const next = saved && list.some(r => r.name === saved) ? saved : list[0].name
         setActiveRepoState(next)
@@ -621,14 +622,11 @@ function App() {
   }, [activePage, isHomePage, activeKindDef, activeKindLabel])
 
   // Generic context key: "<kind>" for a kind's overview, "<kind>/<id>" for an
-  // Threads and viewstate are scoped per repo, never per page: navigating
-  // between docs/kinds must not switch the chat. Multi-repo mode keys by the
-  // repo name so contexts do not collide; single-repo (no /api/repos) uses
-  // the empty context.
-  const contextKey = useMemo(() => {
-    if (!isMultiRepo) return ''
-    return activeRepo || ''
-  }, [isMultiRepo, activeRepo])
+  // item. Threads and viewstate are scoped per repo, never per page:
+  // navigating between docs/kinds must not switch the chat. The active repo
+  // name is the scope, single-repo mode included — the synthetic entry is a
+  // registered repo like any other.
+  const contextKey = activeRepo || ''
 
   const breadcrumbItems = useMemo(() => {
     if (activePage.kind === 'repos') {
@@ -2064,7 +2062,24 @@ useEffect(() => {
                     >
                       {repoInitBusy ? 'Initializing…' : 'Init .devtop'}
                     </button>
+                    <button
+                      onClick={() => removeRepo(activeRepo)}
+                      disabled={repos.length <= 1}
+                      title={repos.length <= 1 ? 'Keep at least one registered repo' : 'Unregister this repo'}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium text-rose-300 border border-rose-500/40 hover:bg-rose-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Remove
+                    </button>
+                    <button
+                      onClick={() => navigateTo('/repos')}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400 border border-borderDark hover:bg-borderDark/20 transition-colors"
+                    >
+                      Manage repos…
+                    </button>
                   </div>
+                  {repoRemoveError && (
+                    <p className="text-xs text-rose-300 mt-3 text-center font-mono">{repoRemoveError}</p>
+                  )}
                 </div>
               </div>
             ) : isReposPage ? (

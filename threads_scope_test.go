@@ -12,7 +12,10 @@ import (
 // TestListThreads_RepoScope verifies threads are repo-global after migration:
 // legacy page-scoped contexts (both repo-prefixed multi-repo and bare
 // single-repo values) are listed under the owning repo and rewritten to the
-// canonical key; CopilotKit's "global" orphan marker never surfaces.
+// canonical key. listThreadsP walks one repo's threads dir, so a bare key
+// found there — page-scoped, canonical-empty, or a rename artifact carrying an
+// earlier repo name — belongs to that repo. Only CopilotKit's "global" orphan
+// marker is excluded.
 func TestListThreads_RepoScope(t *testing.T) {
 	type tc struct {
 		name      string
@@ -41,12 +44,13 @@ func TestListThreads_RepoScope(t *testing.T) {
 			seeds: map[string]string{
 				"multi-legacy": "tetris:docs/index",
 				"canonical":    "tetris",
-				"other-repo":   "ferret",
+				"other-repo":   "ferret", // rename artifact: an earlier repo name
 				"orphan":       "global",
 			},
-			want: []string{"multi-legacy", "canonical"},
+			want: []string{"multi-legacy", "canonical", "other-repo"},
 			rewritten: map[string]string{
 				"multi-legacy": "tetris",
+				"other-repo":   "tetris",
 			},
 		},
 	}

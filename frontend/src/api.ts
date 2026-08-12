@@ -1,6 +1,7 @@
-// Active repo scope for API calls. Single-repo mode uses "" and never sends
-// the param (backwards compatible); multi-repo mode appends ?repo=<name> to
-// every request so the backend resolves the owning repo per call.
+// Active repo scope for API calls. The app always resolves an active repo —
+// single-repo mode included, where the classic entry is a registered repo like
+// any other — and every request carries ?repo=<name>, which the backend
+// resolves per call (Resolve("") stays the backwards-compatible default).
 let activeRepo = ''
 
 export function setActiveRepo(name: string) {

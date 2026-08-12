@@ -11,6 +11,7 @@ interface FSEntry {
   name: string
   dir: boolean
   has_git: boolean
+  has_devtop: boolean
   has_subdirs: boolean
 }
 
@@ -24,6 +25,8 @@ interface TreeNode {
   key: string
   title: string
   isLeaf: boolean
+  has_git?: boolean
+  has_devtop?: boolean
   children?: TreeNode[]
 }
 
@@ -34,6 +37,19 @@ interface AddRepoModalProps {
 
 const CHEVRON = 'M9 5l7 7-7 7'
 
+// findNodeByKey locates a tree node by its absolute path key. Module-level:
+// it is pure and used from a memoized lookup.
+function findNodeByKey(nodes: TreeNode[], key: string): TreeNode | undefined {
+  for (const n of nodes) {
+    if (n.key === key) return n
+    if (n.children) {
+      const hit = findNodeByKey(n.children, key)
+      if (hit) return hit
+    }
+  }
+  return undefined
+}
+
 function AddRepoModal({ onClose, onAdded }: AddRepoModalProps) {
   const [treeData, setTreeData] = useState<TreeNode[]>([])
   const [selected, setSelected] = useState('')
@@ -41,6 +57,10 @@ function AddRepoModal({ onClose, onAdded }: AddRepoModalProps) {
   const [error, setError] = useState('')
   const [adding, setAdding] = useState(false)
   const [justAdded, setJustAdded] = useState(false)
+  // A browsed folder with neither .git nor .devtop is most likely a subfolder
+  // pick — registering it as a repo root would surface an immediate "not
+  // initialized" dead end. Require an explicit second click for those.
+  const [addConfirm, setAddConfirm] = useState(false)
 
   const dataRef = useRef<TreeNode[]>(treeData)
   dataRef.current = treeData
@@ -58,7 +78,7 @@ function AddRepoModal({ onClose, onAdded }: AddRepoModalProps) {
       const resp: FSResponse = await r.json()
       return resp.entries
         .filter(e => e.dir)
-        .map(e => ({ key: resp.path === '/' ? '/' + e.name : resp.path + '/' + e.name, title: e.name, isLeaf: !e.has_subdirs, has_git: e.has_git }))
+        .map(e => ({ key: resp.path === '/' ? '/' + e.name : resp.path + '/' + e.name, title: e.name, isLeaf: !e.has_subdirs, has_git: e.has_git, has_devtop: e.has_devtop }))
     } catch {
       return []
     }
@@ -94,8 +114,21 @@ function AddRepoModal({ onClose, onAdded }: AddRepoModalProps) {
   const segments = useMemo(() => selected ? selected.split('/') : [], [selected])
   const canAdd = effectivePath.length > 0 && !adding
 
+  // The browsed node that matches the effective path, if any. A manual path
+  // has no metadata and is never gated.
+  const selectedNode = useMemo(() => findNodeByKey(treeData, effectivePath), [treeData, effectivePath])
+  const needsConfirm = !!selectedNode && !selectedNode.has_git && !selectedNode.has_devtop
+
+  // Any selection or path change resets the armed confirmation.
+  useEffect(() => { setAddConfirm(false) }, [selected, manualPath])
+
   const doAdd = async () => {
     if (!canAdd) return
+    if (needsConfirm && !addConfirm) {
+      setAddConfirm(true)
+      return
+    }
+    setAddConfirm(false)
     setAdding(true)
     setError('')
     try {
@@ -243,6 +276,10 @@ function AddRepoModal({ onClose, onAdded }: AddRepoModalProps) {
                   ? <span className="text-[10px] text-emerald-300 font-mono flex items-center gap-1">
                       <Database className="w-3 h-3" /> added
                     </span>
+                  : addConfirm
+                  ? <span className="flex-shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-medium border border-amber-500/40 bg-amber-500/10 text-amber-300">
+                      no git or .devtop — confirm?
+                    </span>
                   : <span className="flex-shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-medium border capitalize border-slate-500/40 bg-slate-500/10 text-slate-400">
                       will register
                     </span>}
@@ -263,7 +300,7 @@ function AddRepoModal({ onClose, onAdded }: AddRepoModalProps) {
               disabled={!canAdd}
               className="px-3 py-1.5 rounded-lg text-xs font-medium bg-accentBlue text-slate-100 hover:bg-accentBlue/80 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              {adding ? 'Adding…' : 'Add repo'}
+              {adding ? 'Adding…' : addConfirm ? 'Add anyway' : 'Add repo'}
             </button>
           </div>
         </div>

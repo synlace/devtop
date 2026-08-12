@@ -338,6 +338,14 @@ func initRegistry() error {
 			continue
 		}
 		seen[abs] = true
+		// A configured or persisted root that no longer resolves (a stale
+		// registry entry after a mount change, a deleted project) must not
+		// fabricate a phantom "uninitialized" repo the UI cannot escape.
+		// Skip it; the registry file self-cleans on the next add/remove.
+		if fi, err := os.Stat(abs); err != nil || !fi.IsDir() {
+			fmt.Printf("Warning: skipping repo root %s: not a directory\n", abs)
+			continue
+		}
 		registry.addLocked(newRepo(abs))
 	}
 	return nil
@@ -709,6 +717,7 @@ func handleAPIFSList(w http.ResponseWriter, r *http.Request) {
 		Name       string `json:"name"`
 		Dir        bool   `json:"dir"`
 		HasGit     bool   `json:"has_git"`
+		HasDevTop  bool   `json:"has_devtop"`
 		HasSubDirs bool   `json:"has_subdirs"`
 	}
 	entries, err := os.ReadDir(abs)
@@ -735,6 +744,10 @@ func handleAPIFSList(w http.ResponseWriter, r *http.Request) {
 		if _, err := os.Stat(filepath.Join(abs, e.Name(), ".git")); err == nil {
 			hasGit = true
 		}
+		hasDevTop := false
+		if fi, err := os.Stat(filepath.Join(abs, e.Name(), ".devtop")); err == nil && fi.IsDir() {
+			hasDevTop = true
+		}
 		// Cheap subdir probe: a directory is expandable when it has any
 		// subdirectory (checked up to a bound so giant dirs stay fast).
 		hasSubDirs := false
@@ -749,7 +762,7 @@ func handleAPIFSList(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		out = append(out, entry{Name: e.Name(), Dir: true, HasGit: hasGit, HasSubDirs: hasSubDirs})
+		out = append(out, entry{Name: e.Name(), Dir: true, HasGit: hasGit, HasDevTop: hasDevTop, HasSubDirs: hasSubDirs})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	w.Header().Set("Content-Type", "application/json")

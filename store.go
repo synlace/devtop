@@ -319,20 +319,22 @@ func listThreadsP(p RepoPaths, context string) ([]map[string]interface{}, error)
 }
 
 // threadInScope reports whether a thread's context belongs to the requested
-// repo context. Threads are repo-global. A scope-qualified value
-// ("tetris:docs/index") belongs to its prefix; a bare canonical key ("tetris"
-// in multi-repo, "" in single-repo) matches exactly; the unnamed workspace
-// (context == "") owns every other colon-less context — legacy single-repo
-// page keys like "docs/index" or "tickets". "global" is the CopilotKit
-// fallback marker and never matches.
+// repo context. Threads are repo-global, and listThreadsP walks one repo's
+// threads dir: a bare (colon-less) key found there was written while this
+// repo was served single-repo — under its current name, a previous name (a
+// registry root renamed by a mount change), or legacy page scoping
+// ("docs/index", ""). It belongs to this repo regardless. A repo-qualified
+// value ("tetris:docs/index") belongs to its prefix. The CopilotKit "global"
+// marker is a runtime fallback, never a repo-persisted scope, and never
+// matches.
 func threadInScope(ctx, context string) bool {
+	if ctx == "global" {
+		return false
+	}
 	if i := strings.Index(ctx, ":"); i >= 0 {
 		return ctx[:i] == context
 	}
-	if ctx == context {
-		return true
-	}
-	return context == "" && ctx != "global"
+	return true
 }
 
 func getThreadP(p RepoPaths, id string) (map[string]interface{}, error) {

@@ -830,6 +830,96 @@ func TestUninitializedRepoWritesNothingToWorkspace(t *testing.T) {
 	}
 }
 
+// TestSingleRepoThreadRoundTrip guards the classic single-repo chat path: the
+// UI creates threads with the (empty) context key and must see them again in
+// the thread list. A thread stored with the CopilotKit "global" marker would
+// be invisible forever — the bug this test pins.
+func TestSingleRepoThreadRoundTrip(t *testing.T) {
+	oldDir := DEVTOP_DIR
+	defer func() { DEVTOP_DIR = oldDir }()
+
+	root := t.TempDir()
+	devTop := filepath.Join(root, ".devtop")
+	if err := os.MkdirAll(filepath.Join(devTop, "threads"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(devTop, "config.yml"), []byte("artifact_kinds: {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	DEVTOP_DIR = devTop
+	cleanRegistry(t)
+	registry.addLocked(&Repo{
+		Name:   "workspace",
+		Root:   root,
+		Dir:    devTop,
+		Single: true,
+		paths:  newRepoPaths(devTop),
+	})
+
+	// Create with the empty context, as the frontend sends in classic mode.
+	req := httptest.NewRequest("POST", "/api/threads?repo=workspace", bytes.NewReader([]byte(`{"context":"","title":"Home discussion"}`)))
+	rr := httptest.NewRecorder()
+	handleAPICreateThread(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("create status %d: %s", rr.Code, rr.Body.String())
+	}
+	var created map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if ctx, _ := created["context"].(string); ctx != "" {
+		t.Fatalf("stored context = %q, want the canonical empty key, not %q", ctx, "global")
+	}
+
+	// The thread list (same scoped call the frontend makes) shows it again.
+	req = httptest.NewRequest("GET", "/api/threads?repo=workspace", nil)
+	rr = httptest.NewRecorder()
+	handleAPIThreads(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list status %d: %s", rr.Code, rr.Body.String())
+	}
+	var list []map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("listed %d threads, want 1: the created thread must be visible", len(list))
+	}
+}
+
+// TestInitRegistrySkipsMissingRoots pins the boot-time guard: a persisted
+// root that no longer resolves (stale registry entry after a mount change, a
+// deleted project) must not fabricate a phantom "uninitialized" repo.
+func TestInitRegistrySkipsMissingRoots(t *testing.T) {
+	cleanRegistry(t)
+	t.Setenv("DEVTOP_REPOS", "")
+
+	missing := filepath.Join(t.TempDir(), "gone")
+	okRoot := filepath.Join(t.TempDir(), "ok")
+	if err := os.MkdirAll(okRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := json.Marshal([]string{missing, okRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("DEVTOP_REPOS_FILE"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := initRegistry(); err != nil {
+		t.Fatal(err)
+	}
+	list := registry.List()
+	if len(list) != 1 {
+		t.Fatalf("registered %d repos, want 1 (missing root dropped)", len(list))
+	}
+	if list[0].Root != okRoot {
+		t.Fatalf("registered root = %q, want %q", list[0].Root, okRoot)
+	}
+}
+
 // TestEntrypointDoesNotSeedWorkspace guards the Docker entrypoint, which the
 // e2e and unit suites never execute directly: a boot-time mkdir there would
 // recreate the workspace .devtop no matter what the Go and Node layers do.
