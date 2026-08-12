@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -55,6 +56,7 @@ type PipelineItem struct {
 	PRD        *PipelinePRD     `json:"prd,omitempty"`
 	Tickets    []PipelineTicket `json:"tickets"`
 	Stale      bool             `json:"stale"`
+	Uncovered  int              `json:"uncovered"`
 }
 
 type PipelineResponse struct {
@@ -161,7 +163,7 @@ func resolveArtifactFileFor(cfg EngineConfig, p RepoPaths, kindName, id string) 
 func resolveArtifactWriteTarget(kindName, id string) (string, bool) {
 	return resolveArtifactWriteTargetFor(engineConfig, defaultPaths(), kindName, id)
 }
-	func resolveArtifactWriteTargetFor(cfg EngineConfig, p RepoPaths, kindName, id string) (string, bool) {
+func resolveArtifactWriteTargetFor(cfg EngineConfig, p RepoPaths, kindName, id string) (string, bool) {
 	k, ok := cfg.ArtifactKinds[kindName]
 	if !ok || !k.AgentWritable || k.View == "board" {
 		return "", false
@@ -362,6 +364,11 @@ func buildPipelineFor(r *Repo) (PipelineResponse, bool) {
 					item.Tickets = append(item.Tickets, PipelineTicket{ID: t.ID, Title: t.Title, Status: t.Status})
 				}
 				sort.Slice(item.Tickets, func(i, j int) bool { return item.Tickets[i].ID < item.Tickets[j].ID })
+				if e.To == "prds" || strings.Contains(e.Transform, "breakdown") {
+					if missing := uncoveredReqs(cfg, p, a.ID); missing != nil {
+						item.Uncovered = len(missing)
+					}
+				}
 			}
 			items = append(items, item)
 		}
@@ -442,6 +449,97 @@ func deriveTaskMessage(e DerivationEdge, slug string) string {
 	return deriveTaskMessageFor(engineConfig, e, slug)
 }
 
+// prdRequirementIDs extracts the requirement identifiers of a PRD: the
+// frontmatter `requirements` list (id fields) first, then `REQ-xxx` body
+// headings. Order is the PRD's; duplicates collapse.
+func prdRequirementIDs(cfg EngineConfig, p RepoPaths, slug string) []string {
+	path, ok := resolveArtifactFileFor(cfg, p, "prds", slug)
+	if !ok {
+		return nil
+	}
+	meta, body, err := readFrontmatterFile(path)
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	seen := map[string]bool{}
+	add := func(id string) {
+		id = strings.TrimSpace(strings.TrimSuffix(id, ":"))
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if raw, ok := meta["requirements"]; ok {
+		if list, ok := raw.([]interface{}); ok {
+			for _, it := range list {
+				var id string
+				switch m := it.(type) {
+				case map[string]interface{}:
+					id, _ = m["id"].(string)
+				case map[interface{}]interface{}:
+					id, _ = m["id"].(string)
+				}
+				if id != "" {
+					add(id)
+				}
+			}
+		}
+	}
+	re := regexp.MustCompile(`\bREQ-\d+\b`)
+	for _, m := range re.FindAllString(string(body), -1) {
+		add(m)
+	}
+	return ids
+}
+
+// ticketReqAnchors returns the REQ ids already anchored by tickets sourced
+// from the given artifact (e.g. "prds/calculator-app"). A ticket anchors a
+// requirement through its `req` frontmatter field.
+func ticketReqAnchors(cfg EngineConfig, p RepoPaths, from string) map[string]bool {
+	root := kindRootFor(cfg, p.DevTop, "tickets")
+	out := map[string]bool{}
+	if _, err := os.Stat(root); err != nil {
+		return out
+	}
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
+			return nil
+		}
+		var meta map[string]interface{}
+		if _, perr := parseFrontmatterFile(path, &meta); perr != nil {
+			return nil
+		}
+		if src, _ := meta["source"].(string); src != from {
+			return nil
+		}
+		if req, ok := meta["req"].(string); ok && req != "" {
+			out[req] = true
+		}
+		return nil
+	})
+	return out
+}
+
+// uncoveredReqs returns the PRD requirement ids that have no anchored ticket.
+// A nil/empty requirement list returns nil: the PRD is not delta-computable,
+// and the caller must fall back to a full agent run.
+func uncoveredReqs(cfg EngineConfig, p RepoPaths, slug string) []string {
+	reqs := prdRequirementIDs(cfg, p, slug)
+	if len(reqs) == 0 {
+		return nil
+	}
+	anchored := ticketReqAnchors(cfg, p, "prds/"+slug)
+	missing := []string{}
+	for _, id := range reqs {
+		if !anchored[id] {
+			missing = append(missing, id)
+		}
+	}
+	return missing
+}
+
 func deriveTaskMessageFor(cfg EngineConfig, e DerivationEdge, slug string) string {
 	toExt := kindExtensionFor(cfg, e.To)
 	toRoot := cfg.ArtifactKinds[e.To].Path
@@ -453,10 +551,12 @@ func deriveTaskMessageFor(cfg EngineConfig, e DerivationEdge, slug string) strin
 	fmt.Fprintf(&b, "Steps:\n1. Read the source artifact %q with a read tool.\n", slug)
 	if e.To == "tickets" {
 		fmt.Fprintf(&b, "2. Create one ticket per requirement from the PRD with create_ticket, passing source=\"prds/%s\".\n", slug)
+		fmt.Fprintf(&b, "3. Each ticket frontmatter carries req: <REQ id> (e.g. req: REQ-011), so the requirement stays anchored across re-derives.\n")
+		fmt.Fprintf(&b, "4. Call git_commit after every write.\n")
 	} else {
 		fmt.Fprintf(&b, "2. Write the draft with write_artifact: kind=%q, id=%q. The content has YAML frontmatter, including title and status: draft.\n", e.To, slug)
+		fmt.Fprintf(&b, "3. Call git_commit after every write.\n")
 	}
-	fmt.Fprintf(&b, "3. Call git_commit after every write.\n")
 	return b.String()
 }
 
@@ -514,6 +614,32 @@ func handleAPIDerive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Delta derivation: for tickets, compute which PRD requirements have no
+	// ticket yet (anchored by their `req` frontmatter). All covered means
+	// there is nothing to derive — no model call. Partial coverage hands the
+	// agent the exact list, turning the model's job into mechanical creation.
+	taskMsg := deriveTaskMessageFor(cfg, edge, body.Slug)
+	if edge.To == "tickets" {
+		missing := uncoveredReqs(cfg, p, body.Slug)
+		if missing != nil && len(missing) == 0 {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Connection", "keep-alive")
+			w.Header().Set("X-Accel-Buffering", "no")
+			if flusher, ok := w.(http.Flusher); ok {
+				note, _ := json.Marshal(map[string]string{"type": "text", "content": "All requirements already have tickets."})
+				fmt.Fprintf(w, "data: %s\n\n", note)
+				done, _ := json.Marshal(map[string]string{"type": "done"})
+				fmt.Fprintf(w, "data: %s\n\n", done)
+				flusher.Flush()
+			}
+			return
+		}
+		if missing != nil && len(missing) > 0 {
+			taskMsg += fmt.Sprintf("\n\nDelta: create tickets ONLY for these requirements, one ticket per id, with frontmatter req: <id> and source=\"prds/%s\", plus the acceptance criteria:\n%s\n", body.Slug, strings.Join(missing, ", "))
+		}
+	}
+
 	aiCfg := getAPIConfig()
 	if !aiCfg.HasKey {
 		w.Header().Set("Content-Type", "application/json")
@@ -543,7 +669,7 @@ func handleAPIDerive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msgs := []AgentMessage{{Role: "user", Content: deriveTaskMessageFor(cfg, edge, body.Slug)}}
+	msgs := []AgentMessage{{Role: "user", Content: taskMsg}}
 	outChan := make(chan AgentChunk, 100)
 	go func() {
 		_ = runAgentInRepo(context.Background(), repo, msgs, aiCfg.APIKey, aiCfg.BaseURL, aiCfg.Model, rt, outChan)

@@ -22,6 +22,7 @@ type DocSlug struct {
 type Ticket struct {
 	ID             string    `json:"id"`
 	Title          string    `json:"title"`
+	Req            string    `json:"req"`
 	Status         string    `json:"status"`
 	Priority       string    `json:"priority"`
 	Assignee       string    `json:"assignee"`
@@ -62,6 +63,7 @@ type DocMeta struct {
 type TicketMeta struct {
 	ID       string `yaml:"id"`
 	Title    string `yaml:"title"`
+	Req      string `yaml:"req"`
 	Status   string `yaml:"status"`
 	Priority string `yaml:"priority"`
 	Assignee string `yaml:"assignee"`
@@ -230,6 +232,7 @@ func listTicketsP(p RepoPaths) ([]Ticket, error) {
 		tickets = append(tickets, Ticket{
 			ID:             id,
 			Title:          meta.Title,
+			Req:            meta.Req,
 			Status:         status,
 			Priority:       priority,
 			Assignee:       meta.Assignee,

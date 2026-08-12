@@ -224,6 +224,83 @@ func TestHandleAPIPRDStatus_NestedSlug(t *testing.T) {
 	}
 }
 
+func TestPrdRequirementIDs(t *testing.T) {
+	setupPipelineEnv(t)
+	writeArtifact(t, "prds/x/index.mdx", "---\ntitle: X\nrequirements:\n  - id: REQ-001\n  - id: REQ-002\n---\n\n## REQ-003 — Cover\n\nBody.\n")
+	ids := prdRequirementIDs(engineConfig, defaultPaths(), "x")
+	want := []string{"REQ-001", "REQ-002", "REQ-003"}
+	if len(ids) != len(want) {
+		t.Fatalf("ids = %v, want %v", ids, want)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Errorf("ids[%d] = %q, want %q", i, ids[i], want[i])
+		}
+	}
+}
+
+func TestTicketReqAnchors_ScopeBySource(t *testing.T) {
+	setupPipelineEnv(t)
+	writeArtifact(t, "tickets/001.md", "---\nid: \"001\"\nreq: REQ-001\nsource: prds/x\n---\n\nB\n")
+	writeArtifact(t, "tickets/002.md", "---\nid: \"002\"\nreq: REQ-099\nsource: prds/other\n---\n\nB\n")
+	anchors := ticketReqAnchors(engineConfig, defaultPaths(), "prds/x")
+	if !anchors["REQ-001"] {
+		t.Error("REQ-001 from source prds/x not anchored")
+	}
+	if anchors["REQ-099"] {
+		t.Error("a ticket from another source leaked into the anchors")
+	}
+}
+
+func TestUncoveredReqs_Delta(t *testing.T) {
+	setupPipelineEnv(t)
+	writeArtifact(t, "prds/x/index.mdx", "---\ntitle: X\nrequirements:\n  - id: REQ-001\n  - id: REQ-011\n  - id: REQ-012\n---\n\nBody.\n")
+	writeArtifact(t, "tickets/001.md", "---\nid: \"001\"\nreq: REQ-001\nsource: prds/x\n---\n\nB\n")
+	missing := uncoveredReqs(engineConfig, defaultPaths(), "x")
+	if len(missing) != 2 || missing[0] != "REQ-011" || missing[1] != "REQ-012" {
+		t.Fatalf("missing = %v, want [REQ-011 REQ-012]", missing)
+	}
+}
+
+func TestHandleDerive_TicketsCoveredShortCircuits(t *testing.T) {
+	setupPipelineEnv(t)
+	// Route the request at the synthetic repo over the temp workspace: a
+	// stale registered repo from another test would skew cfg/p below.
+	registry.mu.Lock()
+	registry.repos = nil
+	registry.byName = map[string]*Repo{}
+	registry.mu.Unlock()
+
+	writeArtifact(t, "prds/x/index.mdx", "---\ntitle: X\nstatus: approved\nrequirements:\n  - id: REQ-001\n  - id: REQ-002\n---\n\nBody.\n")
+	writeArtifact(t, "tickets/001.md", "---\nid: \"001\"\nreq: REQ-001\nsource: prds/x\n---\n\nB\n")
+	writeArtifact(t, "tickets/002.md", "---\nid: \"002\"\nreq: REQ-002\nsource: prds/x\n---\n\nB\n")
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/derive", handleAPIDerive)
+	req := httptest.NewRequest("POST", "/api/derive", strings.NewReader(`{"from":"prds","to":"tickets","slug":"x"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("covered derive = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "All requirements already have tickets") {
+		t.Errorf("missing covered note: %s", rec.Body.String())
+	}
+}
+
+func TestPipelineRow_UncoveredDelta(t *testing.T) {
+	setupPipelineEnv(t)
+	writeArtifact(t, "docs/x.mdx", "---\ntitle: X\n---\n\nBody.\n")
+	writeArtifact(t, "prds/x/index.mdx", "---\ntitle: X\nrequirements:\n  - id: REQ-001\n  - id: REQ-002\n---\n\nBody.\n")
+	writeArtifact(t, "tickets/001.md", "---\nid: \"001\"\nreq: REQ-001\nsource: prds/x\n---\n\nB\n")
+	res := buildPipeline()
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(res.Items))
+	}
+	if res.Items[0].Uncovered != 1 {
+		t.Errorf("uncovered = %d, want 1", res.Items[0].Uncovered)
+	}
+}
+
 func TestCreateTicket_SourceField(t *testing.T) {
 	setupPipelineEnv(t)
 	dispatchTool("create_ticket", map[string]interface{}{

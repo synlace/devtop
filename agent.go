@@ -318,6 +318,7 @@ func registerBuiltinTools() {
 					"priority":    map[string]interface{}{"type": "string", "enum": []string{"urgent", "high", "medium", "low"}, "description": "Priority level"},
 					"assignee":    map[string]interface{}{"type": "string", "description": "Assignee username (optional)"},
 					"source":      map[string]interface{}{"type": "string", "description": "Origin artifact slug, e.g. prds/data-layer (optional)"},
+					"req":         map[string]interface{}{"type": "string", "description": "Origin requirement id, e.g. REQ-011 (optional)"},
 				},
 				"required": []string{"title", "description", "priority"},
 			},
@@ -328,12 +329,14 @@ func registerBuiltinTools() {
 		priority, _ := args["priority"].(string)
 		assignee, _ := args["assignee"].(string)
 		source, _ := args["source"].(string)
+		req, _ := args["req"].(string)
 
 		tid := getNextTicketIDP(toolPaths())
 		now := time.Now().UTC().Format("2006-01-02")
 		t := Ticket{
 			ID:             tid,
 			Title:          title,
+			Req:            req,
 			Status:         "open",
 			Priority:       priority,
 			Assignee:       assignee,

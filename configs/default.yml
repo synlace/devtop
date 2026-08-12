@@ -39,6 +39,7 @@ artifact_kinds:
     schema:
       id: string
       title: string
+      req: string
       status: [open, in-progress, done]
       priority: [urgent, high, medium, low]
       assignee: string?

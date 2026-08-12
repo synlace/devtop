@@ -16,7 +16,13 @@ Each ticket:
 
 - gets `claimed_by: ""` in the frontmatter. An external agent sets it
   when it takes the ticket;
+- anchors its requirement: `req: <REQ id>` (for example `req: REQ-011`)
+  in the frontmatter, so the delta between PRD and tickets is computable;
 - names its test file in a `tests` line of the body (for example
   `test/playfield.test.js`), one ticket, one focused test file;
 - copies the requirement's acceptance criteria into the body, so the
   external agent has them without opening the PRD.
+
+When the task names a delta list, create tickets only for those REQ ids.
+Never duplicate a requirement that already has a ticket. Do not recreate
+tickets for requirements the frontmatter already anchors.

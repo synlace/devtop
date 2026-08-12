@@ -34,6 +34,7 @@ interface PipelineItem {
   prd?: PipelinePRD
   tickets: PipelineTicket[]
   stale: boolean
+  uncovered?: number
 }
 interface PipelineResponse {
   edges: PipelineEdge[]
@@ -132,12 +133,12 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
   const [progress, setProgress] = useState('')
   const [closed, setClosed] = useState<Set<string>>(() => new Set(['unassessed', 'not-eligible']))
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (clearAction = true) => {
     try {
       const r = await fetch(api('/api/pipeline'))
       if (!r.ok) throw new Error('pipeline ' + r.status)
       setData(await r.json())
-      setActionError(null)
+      if (clearAction) setActionError(null)
     } catch (e) {
       setError(String(e))
     }
@@ -175,6 +176,7 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
     if (!e || busy) return
     setBusy(busyKey ?? slug)
     setProgress('requesting derivation…')
+    let ok = false
     try {
       const res = await fetch(api('/api/derive'), {
         method: 'POST',
@@ -186,10 +188,11 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
         throw new Error(j?.error ?? ('derive ' + res.status))
       }
       await stream(res)
-      await load()
+      ok = true
     } catch (e) {
       setActionError({ slug, msg: String(e) })
     } finally {
+      await load(ok)
       setBusy(null)
       setProgress('')
     }
@@ -199,6 +202,7 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
     if (busy) return
     setBusy(item.slug + ':classify')
     setProgress('classify-doc is reading…')
+    let ok = false
     try {
       const res = await fetch(api('/api/pipeline/prospect/classify'), {
         method: 'POST',
@@ -210,10 +214,11 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
         throw new Error(j?.error ?? ('classify ' + res.status))
       }
       await stream(res)
-      await load()
+      ok = true
     } catch (e) {
       setActionError({ slug: item.slug, msg: String(e) })
     } finally {
+      await load(ok)
       setBusy(null)
       setProgress('')
     }
@@ -222,6 +227,7 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
   const verdict = async (item: PipelineItem, v: 'eligible' | 'not-eligible') => {
     if (busy) return
     setBusy(item.slug + ':verdict')
+    let ok = false
     try {
       const res = await fetch(api('/api/pipeline/prospect'), {
         method: 'POST',
@@ -232,10 +238,11 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
         const j = await res.json().catch(() => null)
         throw new Error(j?.error ?? ('verdict ' + res.status))
       }
-      await load()
+      ok = true
     } catch (e) {
       setActionError({ slug: item.slug, msg: String(e) })
     } finally {
+      await load(ok)
       setBusy(null)
     }
   }
@@ -243,6 +250,7 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
   const setStatus = async (slug: string, status: string, navigateToHash?: string) => {
     if (busy) return
     setBusy(slug + ':status')
+    let ok = false
     try {
       const res = await fetch(api(`/api/pipeline/prds/${encodeURIComponent(slug)}/status`), {
         method: 'POST',
@@ -253,12 +261,13 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
         const j = await res.json().catch(() => null)
         throw new Error(j?.error ?? ('status ' + res.status))
       }
-      await load()
-      if (navigateToHash) window.location.hash = navigateToHash
+      ok = true
     } catch (e) {
       setActionError({ slug, msg: String(e) })
     } finally {
+      await load(ok)
       setBusy(null)
+      if (ok && navigateToHash) window.location.hash = navigateToHash
     }
   }
 
@@ -355,9 +364,14 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
     const prd = item.prd
     if (prd?.status !== 'approved') return null
     if (busy === item.slug + ':tickets') return spinner(progress || 'creating tickets…')
-    return item.tickets.length === 0
-      ? <button onClick={() => void derive(item.slug, edge('prds', 'tickets'), item.slug + ':tickets')} className={BTN_PRIMARY}>Create tickets</button>
-      : <button onClick={() => void derive(item.slug, edge('prds', 'tickets'), item.slug + ':tickets')} className={BTN_GHOST}>New ticket</button>
+    const label = item.tickets.length === 0
+      ? 'Create tickets'
+      : item.uncovered && item.uncovered > 0
+        ? `Cover delta (${item.uncovered})`
+        : 'New ticket'
+    return (
+      <button onClick={() => void derive(item.slug, edge('prds', 'tickets'), item.slug + ':tickets')} className={item.tickets.length === 0 ? BTN_PRIMARY : BTN_GHOST}>{label}</button>
+    )
   }
 
   const prospectActions = (item: PipelineItem) => {
@@ -551,6 +565,9 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
                                 <p className="text-xs text-slate-600">No tickets yet.</p>
                               ) : (
                                 <div className="max-h-36 overflow-y-auto -mr-2 pr-2 space-y-1.5">
+                                  {item.uncovered && item.uncovered > 0 && (
+                                    <p className="text-[10px] text-sky-500 font-medium">Δ {item.uncovered} requirements not yet ticketed</p>
+                                  )}
                                   {item.tickets.map(t => (
                                     <div key={t.id} className={`flex items-center gap-2.5 rounded-lg border px-2.5 py-1.5 min-w-0 ${t.status === 'done' ? 'border-borderDark/30 bg-transparent opacity-70' : 'border-borderDark/60 bg-bgDark/40'}`}>
                                       <span className="font-mono text-[10px] text-slate-600 flex-shrink-0">{t.id}</span>
