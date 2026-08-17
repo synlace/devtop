@@ -71,15 +71,15 @@ func TestLoadEngineConfig_ParsesDefault(t *testing.T) {
 	if err := loadEngineConfig(); err != nil {
 		t.Fatalf("loadEngineConfig: %v", err)
 	}
-	if len(engineConfig.ArtifactKinds) != 5 {
-		t.Fatalf("expected 5 default kinds, got %d", len(engineConfig.ArtifactKinds))
+	if len(engineConfig.ArtifactKinds) != 8 {
+		t.Fatalf("expected 8 default kinds, got %d", len(engineConfig.ArtifactKinds))
 	}
-	docs, ok := engineConfig.ArtifactKinds["docs"]
+	intents, ok := engineConfig.ArtifactKinds["intents"]
 	if !ok {
-		t.Fatal("missing docs kind")
+		t.Fatal("missing intents kind")
 	}
-	if docs.Nav == nil || docs.Nav.Label != "Docs" || docs.Nav.View != "tree" {
-		t.Errorf("docs nav misconfigured: %+v", docs.Nav)
+	if !intents.RequiresApproval || intents.AgentWritable {
+		t.Errorf("intents kind misconfigured: %+v", intents)
 	}
 	tickets, ok := engineConfig.ArtifactKinds["tickets"]
 	if !ok {
@@ -88,15 +88,20 @@ func TestLoadEngineConfig_ParsesDefault(t *testing.T) {
 	if tickets.Nav == nil || tickets.Nav.View != "board" {
 		t.Errorf("tickets nav misconfigured: %+v", tickets.Nav)
 	}
-	prds, ok := engineConfig.ArtifactKinds["prds"]
+	documentation, ok := engineConfig.ArtifactKinds["documentation"]
 	if !ok {
-		t.Fatal("missing prds kind")
+		t.Fatal("missing documentation kind")
 	}
-	if !prds.RequiresApproval || prds.View != "list" {
-		t.Errorf("prds kind misconfigured: %+v", prds)
+	if !documentation.RequiresApproval || !documentation.AgentWritable {
+		t.Errorf("documentation kind misconfigured: %+v", documentation)
 	}
-	if prds.Nav == nil || prds.Nav.Label != "PRDs" || prds.Nav.View != "list" {
-		t.Errorf("prds nav misconfigured: %+v", prds.Nav)
+	for _, k := range []string{"requirements", "decisions", "open_questions"} {
+		if _, ok := engineConfig.ArtifactKinds[k]; !ok {
+			t.Fatalf("missing %s kind", k)
+		}
+	}
+	if _, ok := engineConfig.ArtifactKinds["prds"]; ok {
+		t.Error("prds must be gone from the default config")
 	}
 	agents, ok := engineConfig.ArtifactKinds["agents"]
 	if !ok {
@@ -115,16 +120,20 @@ func TestLoadEngineConfig_ParsesDefault(t *testing.T) {
 	if engineConfig.AgentRuntime.Default != "docs" {
 		t.Errorf("agent_runtime.default = %q, want the scaffolded docs agent", engineConfig.AgentRuntime.Default)
 	}
-	if len(engineConfig.Derivation) != 2 {
-		t.Errorf("expected 2 derivation edges, got %d", len(engineConfig.Derivation))
+	if len(engineConfig.Derivation) != 5 {
+		t.Errorf("expected 5 derivation edges, got %d", len(engineConfig.Derivation))
 	}
-	if engineConfig.Derivation[0].Agent != "prd-builder" || engineConfig.Derivation[0].Transform != "breakdown" {
-		t.Errorf("docs->prds edge misconfigured: %+v", engineConfig.Derivation[0])
+	if engineConfig.Derivation[0].Agent != "doc-builder" || engineConfig.Derivation[0].Transform != "describe_feature" {
+		t.Errorf("intents->documentation edge misconfigured: %+v", engineConfig.Derivation[0])
 	}
-	if engineConfig.Derivation[1].Agent != "ticket-deriver" || engineConfig.Derivation[1].Gate != "prds.status == approved" {
-		t.Errorf("prds->tickets edge misconfigured: %+v", engineConfig.Derivation[1])
+	if engineConfig.Derivation[0].Gate != "intents.review == approved" {
+		t.Errorf("intents gate = %q", engineConfig.Derivation[0].Gate)
 	}
-	if engineConfig.Pipeline.Nav == nil || engineConfig.Pipeline.Nav.Label != "Pipeline" || engineConfig.Pipeline.Nav.View != "pipeline" {
+	last := engineConfig.Derivation[len(engineConfig.Derivation)-1]
+	if last.Agent != "ticket-deriver" || last.Gate != "requirements.review == approved" {
+		t.Errorf("requirements->tickets edge misconfigured: %+v", last)
+	}
+	if engineConfig.Pipeline.Nav == nil || engineConfig.Pipeline.Nav.Label != "Work items" || engineConfig.Pipeline.Nav.View != "pipeline" {
 		t.Errorf("pipeline nav misconfigured: %+v", engineConfig.Pipeline.Nav)
 	}
 	if engineConfig.Handoff.LifecycleOwner != "external" {
@@ -227,8 +236,14 @@ func TestAPIEngineConfig(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(out.ArtifactKinds) != 5 {
-		t.Errorf("expected 5 kinds in response, got %d", len(out.ArtifactKinds))
+	if len(out.ArtifactKinds) != 8 {
+		t.Errorf("expected 8 kinds in response, got %d", len(out.ArtifactKinds))
+	}
+	if _, ok := out.ArtifactKinds["intents"]; !ok {
+		t.Error("intents kind missing from response")
+	}
+	if _, ok := out.ArtifactKinds["requirements"]; !ok {
+		t.Error("requirements kind missing from response")
 	}
 	if _, ok := out.ArtifactKinds["agents"]; !ok {
 		t.Error("agents kind missing from response")
@@ -236,7 +251,7 @@ func TestAPIEngineConfig(t *testing.T) {
 	if _, ok := out.ArtifactKinds["skills"]; !ok {
 		t.Error("skills kind missing from response")
 	}
-	if out.Pipeline.Nav == nil || out.Pipeline.Nav.Label != "Pipeline" {
+	if out.Pipeline.Nav == nil || out.Pipeline.Nav.Label != "Work items" {
 		t.Error("pipeline nav missing from response")
 	}
 	if out.Handoff.LifecycleOwner != "external" {

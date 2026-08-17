@@ -489,43 +489,37 @@ func TestPipeline_RepoScopedConfig(t *testing.T) {
 	ra, _ := registry.Resolve("pipe-a")
 	rb, _ := registry.Resolve("pipe-b")
 
-	// Repo A: doc with eligible prospect for prds -> pipeline has the doc.
-	if err := writeDocToFileSystemP(ra.paths, "feat-a", "---\ntitle: Feat A\nderive_prospects:\n  prds: eligible\nprospect_by: user\n---\nbody\n"); err != nil {
-		t.Fatal(err)
+	writeIntent := func(r *Repo, id string) {
+		dir := filepath.Join(r.paths.DevTop, "intents")
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, id+".mdx"), []byte("---\ntitle: \""+id+"\"\nreview: pending\n---\nBody.\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	// Repo B: doc with not-eligible verdict.
-	if err := writeDocToFileSystemP(rb.paths, "feat-b", "---\ntitle: Feat B\nderive_prospects:\n  prds: not-eligible\nprospect_by: user\n---\nbody\n"); err != nil {
-		t.Fatal(err)
-	}
+	// Repo A owns an intent; repo B owns another. The pipeline view must
+	// reconstruct each repo's chain from its own artifacts only.
+	writeIntent(ra, "INT-A")
+	writeIntent(rb, "INT-B")
 
 	pa, _ := buildPipelineFor(ra)
 	pb, _ := buildPipelineFor(rb)
-	prospectOf := func(items []PipelineItem, slug string) string {
-		for _, it := range items {
-			if it.Slug == slug {
-				return it.Prospect
-			}
-		}
-		return ""
-	}
-	if got := prospectOf(pa.Items, "feat-a"); got != "eligible" {
-		t.Fatalf("repo A prospect = %q", got)
-	}
-	if got := prospectOf(pb.Items, "feat-b"); got != "not-eligible" {
-		t.Fatalf("repo B prospect = %q", got)
-	}
-	slugs := func(items []PipelineItem) map[string]bool {
+	ids := func(items []PipelineItem) map[string]bool {
 		m := map[string]bool{}
 		for _, it := range items {
-			m[it.Slug] = true
+			m[it.ID] = true
 		}
 		return m
 	}
-	sa, sb := slugs(pa.Items), slugs(pb.Items)
-	if !sa["feat-a"] || !sb["feat-b"] {
-		t.Fatalf("docs missing: A=%v B=%v", sa, sb)
+	ia, ib := ids(pa.Items), ids(pb.Items)
+	if !ia["INT-A"] || !ib["INT-B"] {
+		t.Fatalf("intents missing: A=%v B=%v", ia, ib)
 	}
-	if sa["feat-b"] || sb["feat-a"] {
+	if pa.Items[0].Review != "pending" {
+		t.Errorf("intent review = %q, want pending", pa.Items[0].Review)
+	}
+	if ia["INT-B"] || ib["INT-A"] {
 		t.Fatal("pipeline items leaked across repos")
 	}
 }

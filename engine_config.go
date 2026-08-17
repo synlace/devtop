@@ -38,6 +38,9 @@ type DerivationEdge struct {
 	Transform string `yaml:"transform" json:"transform"`
 	Gate      string `yaml:"gate" json:"gate,omitempty"`
 	Agent     string `yaml:"agent" json:"agent,omitempty"`
+	// Prompt is the derivation instruction for this edge, inlined in config.
+	// When empty, the engine falls back to a generic instruction.
+	Prompt string `yaml:"prompt" json:"prompt,omitempty"`
 	// Classifier names the agent that suggests whether a source artifact
 	// qualifies for this edge (derive_prospects in source frontmatter).
 	// When bound, derivation requires an `eligible` verdict for this edge.

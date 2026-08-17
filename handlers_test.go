@@ -54,7 +54,7 @@ func initHTTPTestEnv(t *testing.T) (string, *http.ServeMux) {
 	mux.HandleFunc("GET /api/engine-config", handleAPIEngineConfig)
 	mux.HandleFunc("GET /api/pipeline", handleAPIPipeline)
 	mux.HandleFunc("POST /api/derive", handleAPIDerive)
-	mux.HandleFunc("POST /api/pipeline/prds/{slug}/status", handleAPIPRDStatus)
+	mux.HandleFunc("POST /api/artifacts/{kind}/{id}/review", handleAPIArtifactReview)
 	mux.HandleFunc("GET /api/artifacts/{kind}", handleAPIArtifacts)
 	mux.HandleFunc("GET /api/artifacts/{kind}/{id...}", handleAPIArtifactDetail)
 	mux.HandleFunc("GET /api/viewstate", handleAPIGetViewState)

@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Devtop — Zoomable Work Items</title>
+<style>
+:root{
+  --bg:#f5f6f8; --panel:#fff; --line:#e4e7eb; --text:#17181b;
+  --muted:#727983; --soft:#eef1f4; --dark:#17181b; --ok:#2f7d58; --warn:#9a6b12;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; height:100vh; overflow:hidden; background:var(--bg); color:var(--text);
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+}
+button{font:inherit}
+.app{display:grid;grid-template-rows:56px 1fr;height:100vh}
+.topbar{
+  display:flex;align-items:center;justify-content:space-between;padding:0 18px;
+  background:#fff;border-bottom:1px solid var(--line)
+}
+.brand{display:flex;gap:12px;align-items:center;font-weight:700}
+.mark{width:28px;height:28px;border-radius:8px;background:var(--dark);color:#fff;display:grid;place-items:center}
+.breadcrumb{display:flex;gap:8px;align-items:center;color:var(--muted);font-size:13px}
+.breadcrumb button{border:0;background:transparent;color:inherit;cursor:pointer;padding:0}
+.breadcrumb .current{color:var(--text);font-weight:650}
+.top-actions{display:flex;gap:8px}
+.btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 11px;cursor:pointer}
+.btn.primary{background:var(--dark);color:white;border-color:var(--dark)}
+.main{display:grid;grid-template-columns:210px 1fr;min-height:0}
+.sidebar{background:#fff;border-right:1px solid var(--line);padding:14px 12px}
+.repo{padding:9px 10px 14px;border-bottom:1px solid var(--line);margin-bottom:10px}
+.repo small{display:block;color:var(--muted);margin-bottom:4px}
+.nav-label{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#9aa1aa;padding:11px 10px 5px}
+.nav{padding:9px 10px;border-radius:8px;color:#4f5660;margin:2px 0;cursor:pointer}
+.nav.active{background:#f0f2f5;color:#111;font-weight:650}
+.content{min-width:0;min-height:0;display:grid;grid-template-rows:auto 1fr}
+.head{padding:18px 22px 12px;display:flex;justify-content:space-between;align-items:flex-start}
+h1{font-size:20px;margin:0 0 5px}
+.sub{font-size:13px;color:var(--muted)}
+.viewport{overflow:auto;padding:0 22px 22px}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(260px,1fr));gap:14px}
+.work-card,.artifact-card{
+  background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;cursor:pointer;
+  box-shadow:0 1px 2px rgba(0,0,0,.03);transition:.15s ease;
+}
+.work-card:hover,.artifact-card:hover{transform:translateY(-2px);box-shadow:0 10px 28px rgba(0,0,0,.06)}
+.kicker{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#8d949d;font-weight:700;margin-bottom:8px}
+.work-card h3,.artifact-card h3{margin:0 0 8px;font-size:15px}
+.work-card p,.artifact-card p{margin:0 0 12px;color:#626a74;font-size:12px;line-height:1.45}
+.meta{display:flex;gap:6px;flex-wrap:wrap}
+.pill{font-size:10px;background:#f1f3f5;color:#5f6670;border-radius:999px;padding:4px 7px}
+.pill.ok{background:#eaf5ef;color:#2a704f}
+.pill.warn{background:#fff4dc;color:#865f10}
+.zoomhint{margin-top:14px;font-size:11px;color:#8a919a}
+.map{
+  display:grid;grid-template-columns:220px 1fr;gap:24px;align-items:start;
+  min-height:580px
+}
+.root-card{
+  background:#17181b;color:#fff;border-radius:16px;padding:18px;position:sticky;top:0
+}
+.root-card .kicker,.root-card p{color:#aeb5bd}
+.root-card h2{font-size:19px;margin:0 0 10px}
+.root-card p{font-size:12px;line-height:1.5}
+.flow{display:grid;gap:14px}
+.stage{
+  background:#eef1f4;border:1px solid #e0e4e8;border-radius:14px;padding:12px
+}
+.stage-head{display:flex;justify-content:space-between;align-items:center;padding:2px 3px 10px}
+.stage-title{font-size:13px;font-weight:750}
+.stage-meta{font-size:11px;color:var(--muted)}
+.stage-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.connector{
+  height:20px;display:flex;align-items:center;justify-content:center;color:#9ba2aa;font-size:18px
+}
+.detail{
+  display:grid;grid-template-columns:1fr 310px;gap:18px;min-height:560px
+}
+.detail-main,.detail-side{
+  background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px
+}
+.detail-main h2{margin:0 0 8px}
+.detail-main p{font-size:13px;line-height:1.55;color:#555d66}
+.detail-side h3{font-size:13px;margin:0 0 12px}
+.lineage{display:grid;gap:8px}
+.lineage-item{padding:10px;border-radius:9px;background:#f4f6f8;font-size:12px}
+.back{
+  border:0;background:transparent;color:#626a74;cursor:pointer;padding:0;font-size:12px;margin-bottom:12px
+}
+@media(max-width:1000px){.grid{grid-template-columns:1fr 1fr}.map{grid-template-columns:1fr}.root-card{position:static}}
+@media(max-width:760px){.main{grid-template-columns:1fr}.sidebar{display:none}.grid{grid-template-columns:1fr}.detail{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="mark">D</div><span>devtop</span>
+      <div class="breadcrumb" id="crumbs"></div>
+    </div>
+    <div class="top-actions">
+      <button class="btn">Project map</button>
+      <button class="btn primary">Review & publish</button>
+    </div>
+  </header>
+
+  <div class="main">
+    <aside class="sidebar">
+      <div class="repo"><small>Repository</small><strong>synlace/calculator</strong></div>
+      <div class="nav-label">Workspace</div>
+      <div class="nav active" onclick="showOverview()">Work items</div>
+      <div class="nav">Documents</div>
+      <div class="nav">Requirements</div>
+      <div class="nav">Decisions</div>
+      <div class="nav">Tickets</div>
+      <div class="nav-label">Project</div>
+      <div class="nav">System map</div>
+      <div class="nav">Workflows</div>
+    </aside>
+
+    <main class="content">
+      <div class="head">
+        <div>
+          <h1 id="title">Work items</h1>
+          <div class="sub" id="subtitle">Start broad. Zoom into a piece of work to reveal its intent and derived artifacts.</div>
+        </div>
+      </div>
+      <div class="viewport" id="view"></div>
+    </main>
+  </div>
+</div>
+
+<script>
+const workItems = [
+  {
+    id:'WI-014', title:'Calculation history', intent:'Users should be able to see and revisit previous calculations.',
+    status:'In progress', docs:1, reqs:2, decisions:1, tickets:3
+  },
+  {
+    id:'WI-015', title:'Dark mode', intent:'Users should be able to switch the calculator to a dark theme.',
+    status:'Draft', docs:1, reqs:2, decisions:0, tickets:0
+  },
+  {
+    id:'WI-016', title:'Keyboard shortcuts', intent:'Power users should be able to operate the calculator without a mouse.',
+    status:'Ready', docs:1, reqs:3, decisions:1, tickets:4
+  }
+];
+
+function setCrumbs(parts){
+  const c=document.getElementById('crumbs');
+  c.innerHTML='';
+  parts.forEach((p,i)=>{
+    if(i>0) c.append(' / ');
+    const b=document.createElement('button');
+    b.textContent=p.label;
+    if(p.action) b.onclick=p.action;
+    if(i===parts.length-1) b.className='current';
+    c.appendChild(b);
+  });
+}
+
+function showOverview(){
+  document.getElementById('title').textContent='Work items';
+  document.getElementById('subtitle').textContent='Start broad. Zoom into a piece of work to reveal its intent and derived artifacts.';
+  setCrumbs([{label:'calculator'},{label:'Work items'}]);
+  document.getElementById('view').innerHTML = `
+    <div class="grid">
+      ${workItems.map(w=>`
+        <article class="work-card" onclick="showWork('${w.id}')">
+          <div class="kicker">${w.id}</div>
+          <h3>${w.title}</h3>
+          <p>${w.intent}</p>
+          <div class="meta">
+            <span class="pill ${w.status==='Ready'?'ok':w.status==='Draft'?'warn':''}">${w.status}</span>
+            <span class="pill">${w.docs} doc</span>
+            <span class="pill">${w.reqs} reqs</span>
+            <span class="pill">${w.tickets} tickets</span>
+          </div>
+          <div class="zoomhint">Open to zoom into this work item →</div>
+        </article>
+      `).join('')}
+      <article class="work-card" onclick="alert('New work item')">
+        <div class="kicker">New work</div>
+        <h3>+ Capture intent</h3>
+        <p>Start with a title. Devtop can expand the intent before deriving documentation.</p>
+      </article>
+    </div>`;
+}
+
+function showWork(id){
+  const w=workItems.find(x=>x.id===id);
+  document.getElementById('title').textContent=w.title;
+  document.getElementById('subtitle').textContent='Zoomed into one work item. Each stage shows the artifacts derived from the previous level.';
+  setCrumbs([
+    {label:'calculator',action:showOverview},
+    {label:'Work items',action:showOverview},
+    {label:w.title}
+  ]);
+
+  document.getElementById('view').innerHTML = `
+  <div class="map">
+    <section class="root-card">
+      <div class="kicker">${w.id} · Work item</div>
+      <h2>${w.title}</h2>
+      <p>${w.intent}</p>
+      <div class="meta">
+        <span class="pill">${w.status}</span>
+      </div>
+      <div class="zoomhint">This is the stable container for the entire change.</div>
+    </section>
+
+    <div class="flow">
+      ${stage('Intent', 'Seed', [
+        card('INT-014','Intent','Users should be able to see and revisit previous calculations.','Accepted','showArtifact("Intent","INT-014","Users should be able to see and revisit previous calculations.")')
+      ])}
+      <div class="connector">↓</div>
+      ${stage('Documentation', 'Derived from intent', [
+        card('DOC-021','Feature document','Calculation history feature documentation.','Approved','showArtifact("Document","DOC-021","Calculation history feature documentation.")')
+      ])}
+      <div class="connector">↓</div>
+      ${stage('Semantic artifacts', 'Derived from documentation', [
+        card('REQ-021','Requirement','Display completed calculations.','Approved','showArtifact("Requirement","REQ-021","Display completed calculations.")'),
+        card('REQ-022','Requirement','Persist history locally.','Needs review','showArtifact("Requirement","REQ-022","Persist history locally.")'),
+        card('DEC-008','Decision','Use browser local storage.','Approved','showArtifact("Decision","DEC-008","Use browser local storage.")')
+      ])}
+      <div class="connector">↓</div>
+      ${stage('Implementation', 'Derived from requirements', [
+        card('DEV-118','Ticket','Add history state and persistence.','Proposed','showArtifact("Ticket","DEV-118","Add history state and persistence.")'),
+        card('DEV-119','Ticket','Build calculation history panel.','Proposed','showArtifact("Ticket","DEV-119","Build calculation history panel.")'),
+        card('DEV-120','Ticket','Add history behaviour tests.','Proposed','showArtifact("Ticket","DEV-120","Add history behaviour tests.")')
+      ])}
+    </div>
+  </div>`;
+}
+
+function stage(title,meta,cards){
+  return `<section class="stage">
+    <div class="stage-head"><div class="stage-title">${title}</div><div class="stage-meta">${meta}</div></div>
+    <div class="stage-grid">${cards.join('')}</div>
+  </section>`
+}
+
+function card(id,type,title,status,onclick){
+  const cls=status==='Approved'||status==='Accepted'?'ok':status==='Needs review'?'warn':'';
+  return `<article class="artifact-card" onclick='${onclick}'>
+    <div class="kicker">${id} · ${type}</div>
+    <h3>${title}</h3>
+    <div class="meta"><span class="pill ${cls}">${status}</span></div>
+  </article>`
+}
+
+function showArtifact(type,id,text){
+  document.getElementById('title').textContent=`${type} ${id}`;
+  document.getElementById('subtitle').textContent='Zoomed into an individual artifact with its lineage and downstream impact.';
+  setCrumbs([
+    {label:'calculator',action:showOverview},
+    {label:'Work items',action:showOverview},
+    {label:'Calculation history',action:()=>showWork('WI-014')},
+    {label:id}
+  ]);
+  document.getElementById('view').innerHTML = `
+    <div class="detail">
+      <section class="detail-main">
+        <button class="back" onclick="showWork('WI-014')">← Back to work item</button>
+        <div class="kicker">${id} · ${type}</div>
+        <h2>${text}</h2>
+        <p>This view is where the full artifact would live: content, metadata, review state, comments, diffs, and any structured fields defined by its artifact type.</p>
+        <p>The important part is that the user has zoomed from the project level, to the work item, to one concrete artifact without losing context.</p>
+      </section>
+      <aside class="detail-side">
+        <h3>Lineage</h3>
+        <div class="lineage">
+          <div class="lineage-item"><strong>Work item</strong><br>Calculation history</div>
+          <div class="lineage-item"><strong>Intent</strong><br>INT-014</div>
+          <div class="lineage-item"><strong>Source document</strong><br>DOC-021</div>
+          <div class="lineage-item"><strong>Current artifact</strong><br>${id}</div>
+        </div>
+      </aside>
+    </div>`;
+}
+
+showOverview();
+</script>
+</body>
+</html>

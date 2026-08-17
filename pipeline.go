@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -16,10 +15,11 @@ import (
 )
 
 // The cross-kind derivation view. It renders the `derivation` edges from
-// config.yml: for each root artifact (e.g. a doc), attach its derived PRD
-// and the tickets derived from it. devtop never drives the lifecycle; the
-// view and the user-initiated derive/approve actions are generation, and
-// the gate (`prds.status == approved`) is enforced here, deterministically.
+// config.yml: for each root artifact (e.g. an intent), attach its derived
+// artifacts from every other kind, reconstructing the chain through the
+// `work_item` frontmatter edge. devtop never drives the lifecycle; the
+// view and the user-initiated derive/review actions are generation, and the
+// gate (`intents.review == approved`) is enforced here, deterministically.
 
 type PipelineEdge struct {
 	From       string `json:"from"`
@@ -28,35 +28,26 @@ type PipelineEdge struct {
 	Gate       string `json:"gate,omitempty"`
 	Agent      string `json:"agent,omitempty"`
 	Classifier string `json:"classifier,omitempty"`
+	Prompt     string `json:"prompt,omitempty"`
 }
 
-type PipelineTicket struct {
+type PipelineArtifact struct {
 	ID     string `json:"id"`
+	Kind   string `json:"kind"`
 	Title  string `json:"title"`
-	Status string `json:"status"`
-}
-
-type PipelinePRD struct {
-	ID     string `json:"id"`
-	Title  string `json:"title"`
-	Status string `json:"status"`
-	Reqs   int    `json:"reqs"`
-	Slug   string `json:"slug"`
+	Review string `json:"review"`
+	Stale  bool   `json:"stale"`
 }
 
 type PipelineItem struct {
-	DocID      string           `json:"doc_id"`
-	Title      string           `json:"title"`
-	Slug       string           `json:"slug"`
-	Path       string           `json:"path"`
-	Dir        string           `json:"dir"`
-	Summary    string           `json:"summary,omitempty"`
-	Prospect   string           `json:"prospect,omitempty"`
-	ProspectBy string           `json:"prospect_by,omitempty"`
-	PRD        *PipelinePRD     `json:"prd,omitempty"`
-	Tickets    []PipelineTicket `json:"tickets"`
-	Stale      bool             `json:"stale"`
-	Uncovered  int              `json:"uncovered"`
+	ID        string                        `json:"id"`
+	Title     string                        `json:"title"`
+	Summary   string                        `json:"summary,omitempty"`
+	Review    string                        `json:"review"`
+	Stages    map[string][]PipelineArtifact `json:"stages"`
+	Ready     bool                          `json:"ready"`
+	Stale     bool                          `json:"stale"`
+	Uncovered int                           `json:"uncovered"`
 }
 
 type PipelineResponse struct {
@@ -277,6 +268,60 @@ func buildPipeline() PipelineResponse {
 	return resp
 }
 
+func metaReview(meta map[string]interface{}) string {
+	if r, ok := meta["review"].(string); ok && r != "" {
+		return r
+	}
+	return "pending"
+}
+
+// pipelineWorkItemOf returns the work item id an artifact belongs to: its
+// explicit `work_item` frontmatter, or (for a seed) its own id. Artifacts
+// without a work_item belong to no chain.
+func pipelineWorkItemOf(meta map[string]interface{}) string {
+	if wi, ok := meta["work_item"].(string); ok && wi != "" {
+		return wi
+	}
+	return ""
+}
+
+// staleArtifact reports whether a derived artifact is out of date relative to
+// its recorded source: the `derived_from` reference ("kind/id"), or — when
+// absent — its work item seed. mtime is the seam; a content hash recorded at
+// derive time supersedes it in the backend.
+func staleArtifact(cfg EngineConfig, p RepoPaths, c kindArtifact) bool {
+	fromRel, _ := c.Meta["derived_from"].(string)
+	if fromRel == "" {
+		if wi := pipelineWorkItemOf(c.Meta); wi != "" {
+			kindName, id := idParts(wi)
+			if kindName != "" {
+				if src, ok := resolveArtifactFileFor(cfg, p, kindName, id); ok {
+					return staleFromMtime(src, c.Path)
+				}
+			}
+		}
+		return false
+	}
+	kindName, id := idParts(fromRel)
+	if kindName == "" {
+		return false
+	}
+	src, ok := resolveArtifactFileFor(cfg, p, kindName, id)
+	if !ok {
+		return false
+	}
+	return staleFromMtime(src, c.Path)
+}
+
+// idParts splits a "kind/id" reference; malformed references return "".
+func idParts(ref string) (string, string) {
+	parts := strings.SplitN(ref, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", ""
+	}
+	return parts[0], parts[1]
+}
+
 // buildPipelineFor builds the derivation view for one repo. The second return
 // is false when the repo has no configured derivation (no pipeline).
 func buildPipelineFor(r *Repo) (PipelineResponse, bool) {
@@ -290,93 +335,87 @@ func buildPipelineFor(r *Repo) (PipelineResponse, bool) {
 	p := r.paths
 	edges := make([]PipelineEdge, 0, len(cfg.Derivation))
 	for _, e := range cfg.Derivation {
-		edges = append(edges, PipelineEdge{From: e.From, To: e.To, Transform: e.Transform, Gate: e.Gate, Agent: e.Agent, Classifier: e.Classifier})
+		edges = append(edges, PipelineEdge{From: e.From, To: e.To, Transform: e.Transform, Gate: e.Gate, Agent: e.Agent, Classifier: e.Classifier, Prompt: e.Prompt})
 	}
 
-	var items []PipelineItem
+	// Tickets once, keyed by the requirement each anchors, for cover counts.
 	tickets, _ := listTicketsP(p)
-	ticketBySource := map[string][]Ticket{}
+	ticketed := map[string]bool{}
 	for _, t := range tickets {
-		if t.Source != "" {
-			ticketBySource[t.Source] = append(ticketBySource[t.Source], t)
+		if t.Req != "" {
+			ticketed[t.Req] = true
 		}
 	}
 
+	var items []PipelineItem
 	for _, root := range pipelineRootKindsFor(cfg) {
 		arts, err := listArtifactsFor(cfg, p, root)
 		if err != nil {
 			continue
 		}
-		// The view prospect is the verdict for the first outgoing edge.
-		target := ""
-		for _, e := range cfg.Derivation {
-			if e.From == root {
-				target = e.To
-				break
-			}
-		}
 		for _, a := range arts {
-			item := PipelineItem{
-				DocID:      a.ID,
-				Title:      a.Title,
-				Slug:       a.ID,
-				Path:       a.Rel,
-				Tickets:    []PipelineTicket{},
-				Prospect:   "",
-				ProspectBy: "",
-			}
-			if target != "" {
-				item.Prospect, item.ProspectBy = docProspect(a.Meta, target)
-			}
-			item.Dir = ""
-			if i := strings.IndexByte(a.Rel, '/'); i >= 0 {
-				item.Dir = a.Rel[:i]
+			it := PipelineItem{
+				ID:     a.ID,
+				Title:  a.Title,
+				Review: metaReview(a.Meta),
+				Stages: map[string][]PipelineArtifact{},
 			}
 			if s, ok := a.Meta["summary"].(string); ok && s != "" {
-				item.Summary = s
-			} else if s, ok := a.Meta["description"].(string); ok && s != "" {
-				item.Summary = s
+				it.Summary = s
 			}
-			// First outgoing edge maps this artifact to a derived artifact.
-			for _, e := range cfg.Derivation {
-				if e.From != root {
+			// Attach the derived artifacts of every other kind whose
+			// work_item names this seed. The work_item edge reconstructs
+			// the chain without stored relations.
+			for kindName := range cfg.ArtifactKinds {
+				if kindName == root {
 					continue
 				}
-				if dpath, ok := resolveArtifactFileFor(cfg, p, e.To, a.ID); ok {
-					meta, _, _ := artifactMetaOfFor(cfg, p, e.To, a.ID)
-					prd := &PipelinePRD{ID: a.ID, Slug: a.ID}
-					if t, ok := meta["title"].(string); ok {
-						prd.Title = t
-					}
-					if s, ok := meta["status"].(string); ok {
-						prd.Status = s
-					}
-					if reqs, ok := meta["requirements"].([]interface{}); ok {
-						prd.Reqs = len(reqs)
-					}
-					item.PRD = prd
-					if e.To == "prds" || strings.Contains(e.Transform, "breakdown") {
-						item.Stale = staleFromMtime(a.Path, dpath)
-					}
+				kids, err := listArtifactsFor(cfg, p, kindName)
+				if err != nil {
+					continue
 				}
-				// Tickets derive from the PRD, keyed by its source slug.
-				for _, t := range ticketBySource["prds/"+a.ID] {
-					item.Tickets = append(item.Tickets, PipelineTicket{ID: t.ID, Title: t.Title, Status: t.Status})
-				}
-				sort.Slice(item.Tickets, func(i, j int) bool { return item.Tickets[i].ID < item.Tickets[j].ID })
-				if e.To == "prds" || strings.Contains(e.Transform, "breakdown") {
-					if missing := uncoveredReqs(cfg, p, a.ID); missing != nil {
-						item.Uncovered = len(missing)
+				for _, c := range kids {
+					if pipelineWorkItemOf(c.Meta) != a.ID {
+						continue
+					}
+					stale := staleArtifact(cfg, p, c)
+					it.Stages[kindName] = append(it.Stages[kindName], PipelineArtifact{
+						ID: c.ID, Title: c.Title, Review: metaReview(c.Meta), Stale: stale,
+					})
+					if stale {
+						it.Stale = true
 					}
 				}
 			}
-			items = append(items, item)
+			// Uncovered: requirements without an anchored ticket.
+			for _, c := range it.Stages["requirements"] {
+				if !ticketed[c.ID] {
+					it.Uncovered++
+				}
+			}
+			// Ready: the seed and every artifact approved, and tickets exist.
+			ready := it.Review == "approved" && len(it.Stages["tickets"]) > 0
+			if ready {
+				for _, stage := range it.Stages {
+					for _, c := range stage {
+						if c.Review != "approved" {
+							ready = false
+							break
+						}
+					}
+					if !ready {
+						break
+					}
+				}
+			}
+			it.Ready = ready
+			items = append(items, it)
 		}
 	}
 	if items == nil {
 		items = []PipelineItem{}
 	}
-	sort.Slice(items, func(i, j int) bool { return items[i].DocID < items[j].DocID })
+	sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
 	return PipelineResponse{Edges: edges, Items: items}, true
 }
 
@@ -449,88 +488,50 @@ func deriveTaskMessage(e DerivationEdge, slug string) string {
 	return deriveTaskMessageFor(engineConfig, e, slug)
 }
 
-// prdRequirementIDs extracts the requirement identifiers of a PRD: the
-// frontmatter `requirements` list (id fields) first, then `REQ-xxx` body
-// headings. Order is the PRD's; duplicates collapse.
-func prdRequirementIDs(cfg EngineConfig, p RepoPaths, slug string) []string {
-	path, ok := resolveArtifactFileFor(cfg, p, "prds", slug)
-	if !ok {
-		return nil
+// requirementWorkItem returns the work item id a requirement belongs to.
+func requirementWorkItem(cfg EngineConfig, p RepoPaths, reqID string) string {
+	meta, ok, err := artifactMetaOfFor(cfg, p, "requirements", reqID)
+	if err != nil || !ok {
+		return ""
 	}
-	meta, body, err := readFrontmatterFile(path)
+	return pipelineWorkItemOf(meta)
+}
+
+// requirementsOf returns the sorted requirement ids of one work item.
+func requirementsOf(cfg EngineConfig, p RepoPaths, wi string) []string {
+	arts, err := listArtifactsFor(cfg, p, "requirements")
 	if err != nil {
 		return nil
 	}
 	var ids []string
-	seen := map[string]bool{}
-	add := func(id string) {
-		id = strings.TrimSpace(strings.TrimSuffix(id, ":"))
-		if id == "" || seen[id] {
-			return
-		}
-		seen[id] = true
-		ids = append(ids, id)
-	}
-	if raw, ok := meta["requirements"]; ok {
-		if list, ok := raw.([]interface{}); ok {
-			for _, it := range list {
-				var id string
-				switch m := it.(type) {
-				case map[string]interface{}:
-					id, _ = m["id"].(string)
-				case map[interface{}]interface{}:
-					id, _ = m["id"].(string)
-				}
-				if id != "" {
-					add(id)
-				}
-			}
+	for _, a := range arts {
+		if pipelineWorkItemOf(a.Meta) == wi {
+			ids = append(ids, a.ID)
 		}
 	}
-	re := regexp.MustCompile(`\bREQ-\d+\b`)
-	for _, m := range re.FindAllString(string(body), -1) {
-		add(m)
-	}
+	sort.Strings(ids)
 	return ids
 }
 
-// ticketReqAnchors returns the REQ ids already anchored by tickets sourced
-// from the given artifact (e.g. "prds/calculator-app"). A ticket anchors a
-// requirement through its `req` frontmatter field.
-func ticketReqAnchors(cfg EngineConfig, p RepoPaths, from string) map[string]bool {
-	root := kindRootFor(cfg, p.DevTop, "tickets")
-	out := map[string]bool{}
-	if _, err := os.Stat(root); err != nil {
-		return out
-	}
-	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
-			return nil
-		}
-		var meta map[string]interface{}
-		if _, perr := parseFrontmatterFile(path, &meta); perr != nil {
-			return nil
-		}
-		if src, _ := meta["source"].(string); src != from {
-			return nil
-		}
-		if req, ok := meta["req"].(string); ok && req != "" {
-			out[req] = true
-		}
+// uncoveredReqIDs returns the requirements of the source requirement's work
+// item that have no ticket anchoring them. All covered returns nil, which the
+// caller treats as "nothing to derive" — no model run.
+func uncoveredReqIDs(cfg EngineConfig, p RepoPaths, reqID string) []string {
+	wi := requirementWorkItem(cfg, p, reqID)
+	if wi == "" {
 		return nil
-	})
-	return out
-}
-
-// uncoveredReqs returns the PRD requirement ids that have no anchored ticket.
-// A nil/empty requirement list returns nil: the PRD is not delta-computable,
-// and the caller must fall back to a full agent run.
-func uncoveredReqs(cfg EngineConfig, p RepoPaths, slug string) []string {
-	reqs := prdRequirementIDs(cfg, p, slug)
+	}
+	reqs := requirementsOf(cfg, p, wi)
 	if len(reqs) == 0 {
 		return nil
 	}
-	anchored := ticketReqAnchors(cfg, p, "prds/"+slug)
+	tickets, _ := listTicketsP(p)
+	anchored := map[string]bool{}
+	for _, t := range tickets {
+		if t.Req != "" {
+			anchored[t.Req] = true
+		}
+	}
 	missing := []string{}
 	for _, id := range reqs {
 		if !anchored[id] {
@@ -540,22 +541,34 @@ func uncoveredReqs(cfg EngineConfig, p RepoPaths, slug string) []string {
 	return missing
 }
 
+// unapprovedSiblings returns the requirements of the work item (including the
+// source) whose review is not approved. Ticket derivation must not run while
+// any requirement of the chain is unapproved — the agent would derive from
+// content the user has not accepted.
+func unapprovedSiblings(cfg EngineConfig, p RepoPaths, reqID string) []string {
+	wi := requirementWorkItem(cfg, p, reqID)
+	if wi == "" {
+		return nil
+	}
+	var bad []string
+	for _, id := range requirementsOf(cfg, p, wi) {
+		meta, ok, _ := artifactMetaOfFor(cfg, p, "requirements", id)
+		if !ok || metaReview(meta) != "approved" {
+			bad = append(bad, id)
+		}
+	}
+	return bad
+}
+
 func deriveTaskMessageFor(cfg EngineConfig, e DerivationEdge, slug string) string {
-	toExt := kindExtensionFor(cfg, e.To)
-	toRoot := cfg.ArtifactKinds[e.To].Path
 	var b strings.Builder
-	fmt.Fprintf(&b, "Derive a %s artifact from the %s artifact %q using the %q transform.\n\n", e.To, e.From, slug, e.Transform)
-	fmt.Fprintf(&b, "Target kind: %s\n", e.To)
-	fmt.Fprintf(&b, "Target id: %s\n", slug)
-	fmt.Fprintf(&b, "Target file: .devtop/%s/%s/%sindex%s (or .devtop/%s/%s%s)\n\n", toRoot, slug, "", toExt, toRoot, slug, toExt)
-	fmt.Fprintf(&b, "Steps:\n1. Read the source artifact %q with a read tool.\n", slug)
-	if e.To == "tickets" {
-		fmt.Fprintf(&b, "2. Create one ticket per requirement from the PRD with create_ticket, passing source=\"prds/%s\".\n", slug)
-		fmt.Fprintf(&b, "3. Each ticket frontmatter carries req: <REQ id> (e.g. req: REQ-011), so the requirement stays anchored across re-derives.\n")
-		fmt.Fprintf(&b, "4. Call git_commit after every write.\n")
+	fmt.Fprintf(&b, "Derive %s artifact(s) from the %s artifact %q using the %q transform.\n\n", e.To, e.From, slug, e.Transform)
+	fmt.Fprintf(&b, "Source: kind=%s id=%s\n", e.From, slug)
+	if strings.TrimSpace(e.Prompt) != "" {
+		b.WriteString(strings.TrimSpace(e.Prompt))
+		b.WriteString("\n")
 	} else {
-		fmt.Fprintf(&b, "2. Write the draft with write_artifact: kind=%q, id=%q. The content has YAML frontmatter, including title and status: draft.\n", e.To, slug)
-		fmt.Fprintf(&b, "3. Call git_commit after every write.\n")
+		b.WriteString("Read the source artifact with a read tool, then write the derived artifact(s) with write_artifact or create_ticket. Set review: pending in every frontmatter. Call git_commit after every write.\n")
 	}
 	return b.String()
 }
@@ -614,13 +627,20 @@ func handleAPIDerive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delta derivation: for tickets, compute which PRD requirements have no
-	// ticket yet (anchored by their `req` frontmatter). All covered means
-	// there is nothing to derive — no model call. Partial coverage hands the
-	// agent the exact list, turning the model's job into mechanical creation.
+	// Delta + whole-chain gate for tickets: the source requirement carries
+	// the work item; every sibling requirement must be approved before the
+	// agent derives from the chain. All covered means there is nothing to
+	// derive — no model call. Partial coverage hands the agent the exact
+	// list, turning the model's job into mechanical creation.
 	taskMsg := deriveTaskMessageFor(cfg, edge, body.Slug)
 	if edge.To == "tickets" {
-		missing := uncoveredReqs(cfg, p, body.Slug)
+		if blocked := unapprovedSiblings(cfg, p, body.Slug); len(blocked) > 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]string{"error": "approve first: " + strings.Join(blocked, ", ")})
+			return
+		}
+		missing := uncoveredReqIDs(cfg, p, body.Slug)
 		if missing != nil && len(missing) == 0 {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Cache-Control", "no-cache")
@@ -636,7 +656,7 @@ func handleAPIDerive(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if missing != nil && len(missing) > 0 {
-			taskMsg += fmt.Sprintf("\n\nDelta: create tickets ONLY for these requirements, one ticket per id, with frontmatter req: <id> and source=\"prds/%s\", plus the acceptance criteria:\n%s\n", body.Slug, strings.Join(missing, ", "))
+			taskMsg += fmt.Sprintf("\n\nDelta: create tickets ONLY for these requirements, one ticket per id, with frontmatter req: <id> and source=\"requirements/<id>\", plus the acceptance criteria:\n%s\n", strings.Join(missing, ", "))
 		}
 	}
 
@@ -695,15 +715,16 @@ func handleAPIDerive(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 }
 
-// prdStatusTransitions is the PRD state machine. Allowed: one step at a time,
-// plus returning to draft from anywhere except archived (not modeled).
-var prdStatusTransitions = map[string]map[string]bool{
-	"draft":     {"reviewing": true},
-	"reviewing": {"approved": true, "draft": true},
-	"approved":  {"draft": true},
-}
+// artifactReviewValues are the review states every artifact carries. The
+// reconcile of an artifact is direct (pending|approved|rejected); the mock's
+// toggle-to-pending is a client convenience, not an engine rule.
+var artifactReviewValues = map[string]bool{"pending": true, "approved": true, "rejected": true}
 
-func handleAPIPRDStatus(w http.ResponseWriter, r *http.Request) {
+// handleAPIArtifactReview sets the review state of any config-declared
+// artifact. It replaces the removed PRD status endpoint: the target model
+// reviews each artifact individually, and the gate names the review field.
+// The state change is committed to git, like every write.
+func handleAPIArtifactReview(w http.ResponseWriter, r *http.Request) {
 	repo, ok := repoFromRequest(w, r)
 	if !ok {
 		return
@@ -713,48 +734,50 @@ func handleAPIPRDStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	p := repo.paths
-	slug := strings.TrimSuffix(r.PathValue("slug"), ".mdx")
-	if slug == "" || strings.Contains(slug, "..") {
-		http.Error(w, "invalid slug", 400)
+	kindName := r.PathValue("kind")
+	kind, ok := cfg.ArtifactKinds[kindName]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	ext := kind.Extension
+	if ext == "" {
+		ext = ".md"
+	}
+	id := strings.TrimSuffix(r.PathValue("id"), ext)
+	if id == "" || strings.Contains(id, "..") || strings.Contains(id, "\\") {
+		http.Error(w, "invalid artifact id", 400)
 		return
 	}
 	var body struct {
-		Status string `json:"status"`
+		Review string `json:"review"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON body", 400)
 		return
 	}
-	path, ok := resolveArtifactFileFor(cfg, p, "prds", slug)
+	if !artifactReviewValues[body.Review] {
+		http.Error(w, "review must be one of pending, approved, rejected", 400)
+		return
+	}
+	path, ok := resolveArtifactFileFor(cfg, repo.paths, kindName, id)
 	if !ok {
-		http.Error(w, "PRD not found", 404)
+		http.Error(w, "artifact not found", 404)
 		return
 	}
 	meta, bodyBytes, err := readFrontmatterFile(path)
 	if err != nil {
-		http.Error(w, "PRD not found", 404)
+		http.Error(w, "artifact not found", 404)
 		return
 	}
-	prev, _ := meta["status"].(string)
-	if prev == "" {
-		prev = "draft"
-	}
-	if prev != body.Status && !prdStatusTransitions[prev][body.Status] {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("invalid transition %s -> %s", prev, body.Status)})
-		return
-	}
-	meta["status"] = body.Status
-	out := composeFrontmatter(meta, string(bodyBytes))
-	if err := os.WriteFile(path, []byte(out), 0644); err != nil {
+	meta["review"] = body.Review
+	if err := os.WriteFile(path, []byte(composeFrontmatter(meta, string(bodyBytes))), 0644); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	gitCommitIn(repo, fmt.Sprintf("prds: set %s status to %s", slug, body.Status))
+	gitCommitIn(repo, fmt.Sprintf("%s: set %s review to %s", kindName, id, body.Review))
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"id": slug, "status": body.Status})
+	json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "kind": kindName, "review": body.Review})
 }
 
 // readFrontmatterFile parses a frontmatter file into meta and body.

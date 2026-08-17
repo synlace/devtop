@@ -6,14 +6,17 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v2"
 )
 
-// setupPipelineEnv points DEVTOP_DIR at a temp workspace and engineConfig at the
-// kinds the pipeline renders, restoring both afterwards. Kinds live directly
-// under DEVTOP_DIR so the DOCS/TICKETS globals match kindRoot().
+// setupPipelineEnv points DEVTOP_DIR at a temp workspace and engineConfig at
+// the kinds the target workflow renders, restoring both afterwards. Kinds live
+// directly under DEVTOP_DIR so the DOCS/TICKETS globals match kindRoot().
 func setupPipelineEnv(t *testing.T) string {
 	prevDevtop := DEVTOP_DIR
 	prevCfg := engineConfig
@@ -26,22 +29,42 @@ func setupPipelineEnv(t *testing.T) string {
 	}
 	engineConfig = EngineConfig{
 		ArtifactKinds: map[string]ArtifactKind{
-			"docs":    {Path: "docs", Extension: ".mdx", AgentWritable: true},
-			"prds":    {Path: "prds", Extension: ".mdx", AgentWritable: true},
-			"tickets": {Path: "tickets", Extension: ".md"},
+			"intents":        {Path: "intents", Extension: ".mdx", AgentWritable: false},
+			"documentation":  {Path: "documentation", Extension: ".mdx", AgentWritable: true},
+			"requirements":   {Path: "requirements", Extension: ".mdx", AgentWritable: true},
+			"decisions":      {Path: "decisions", Extension: ".mdx", AgentWritable: true},
+			"open_questions": {Path: "open_questions", Extension: ".mdx", AgentWritable: true},
+			"tickets":        {Path: "tickets", Extension: ".md"},
 		},
 		Derivation: []DerivationEdge{
-			{From: "docs", To: "prds", Transform: "breakdown", Agent: "prd-builder"},
-			{From: "prds", To: "tickets", Transform: "derive_tickets", Agent: "ticket-deriver", Gate: "prds.status == approved"},
+			{From: "intents", To: "documentation", Transform: "describe_feature", Agent: "doc-builder", Gate: "intents.review == approved", Prompt: "Turn the intent into one feature document."},
+			{From: "documentation", To: "requirements", Transform: "derive_requirements", Agent: "semantics-builder", Gate: "documentation.review == approved", Prompt: "Break the documentation into requirements."},
+			{From: "documentation", To: "decisions", Transform: "derive_decisions", Agent: "semantics-builder", Gate: "documentation.review == approved"},
+			{From: "documentation", To: "open_questions", Transform: "derive_open_questions", Agent: "semantics-builder", Gate: "documentation.review == approved"},
+			{From: "requirements", To: "tickets", Transform: "derive_tickets", Agent: "ticket-deriver", Gate: "requirements.review == approved"},
 		},
-		Pipeline: PipelineConfig{Nav: &EngineNav{Label: "Pipeline", View: "pipeline", Order: 4}},
+		Pipeline: PipelineConfig{Nav: &EngineNav{Label: "Work items", View: "pipeline", Order: 1}},
 	}
 	t.Cleanup(func() {
 		DEVTOP_DIR = prevDevtop
 		engineConfig = prevCfg
 		os.RemoveAll(tempDir)
 	})
+	if err := writeEngineConfigFile(tempDir); err != nil {
+		t.Fatal(err)
+	}
 	return tempDir
+}
+
+// writeEngineConfigFile persists the fixture config as config.yml so
+// handler-based tests (which resolve their config from the repo file, falling
+// back to the bundled default) see the same kinds and edges as the globals.
+func writeEngineConfigFile(dir string) error {
+	data, err := yaml.Marshal(engineConfig)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "config.yml"), data, 0644)
 }
 
 func writeArtifact(t *testing.T, rel string, content string) {
@@ -55,110 +78,134 @@ func writeArtifact(t *testing.T, rel string, content string) {
 	}
 }
 
-func seedPipeline(t *testing.T) {
-	writeArtifact(t, "docs/architecture.mdx", "---\ntitle: \"Architecture\"\nsummary: \"How the agent works.\"\n---\n\n# Architecture\n\nDetail.\n")
-	writeArtifact(t, "prds/architecture/index.mdx", "---\ntitle: \"Architecture PRD\"\nstatus: \"reviewing\"\n---\n\nPRD body.\n")
-	writeArtifact(t, "tickets/001.md", "---\nid: \"001\"\ntitle: \"Do the thing\"\nstatus: \"open\"\npriority: \"high\"\nassignee: \"\"\ncreated: \"2026-08-10\"\nsource: \"prds/architecture\"\n---\n\nBody.\n")
-	writeArtifact(t, "tickets/002.md", "---\nid: \"002\"\ntitle: \"Other\"\nstatus: \"open\"\npriority: \"low\"\nassignee: \"\"\ncreated: \"2026-08-10\"\nsource: \"\"\n---\n\nBody.\n")
+func seedWorkItem(t *testing.T, id string) {
+	writeArtifact(t, "intents/"+id+".mdx", "---\ntitle: \""+id+"\"\nreview: approved\n---\n\nIntent body.\n")
 }
 
-func TestBuildPipeline_LinksDocPRDTickets(t *testing.T) {
+func stageOf(res PipelineResponse, kind string) []PipelineArtifact {
+	if len(res.Items) == 0 {
+		return nil
+	}
+	return res.Items[0].Stages[kind]
+}
+
+func TestBuildPipeline_LinksIntentStages(t *testing.T) {
 	setupPipelineEnv(t)
-	seedPipeline(t)
+	seedWorkItem(t, "INT-001")
+	writeArtifact(t, "documentation/DOC-001.mdx", "---\ntitle: \"Doc\"\nwork_item: INT-001\nderived_from: intents/INT-001\nreview: approved\n---\n\nDoc body.\n")
+	writeArtifact(t, "requirements/REQ-001.mdx", "---\ntitle: \"R1\"\nwork_item: INT-001\nderived_from: documentation/DOC-001\nreview: approved\n---\n\nR1.\n")
+	writeArtifact(t, "requirements/REQ-002.mdx", "---\ntitle: \"R2\"\nwork_item: INT-001\nderived_from: documentation/DOC-001\nreview: approved\n---\n\nR2.\n")
+	writeArtifact(t, "decisions/DEC-001.mdx", "---\ntitle: \"D1\"\nwork_item: INT-001\nderived_from: documentation/DOC-001\nreview: approved\n---\n\nD1.\n")
+	writeArtifact(t, "open_questions/OQ-001.mdx", "---\ntitle: \"Q1\"\nwork_item: INT-001\nderived_from: documentation/DOC-001\nreview: approved\n---\n\nQ1.\n")
+	writeArtifact(t, "tickets/001.md", "---\nid: \"001\"\ntitle: \"T1\"\nwork_item: INT-001\nreq: REQ-001\nreview: approved\n---\n\nT1.\n")
 
 	res := buildPipeline()
-	if len(res.Edges) != 2 {
-		t.Fatalf("expected 2 edges, got %d", len(res.Edges))
+	if len(res.Edges) != 5 {
+		t.Fatalf("expected 5 edges, got %d", len(res.Edges))
 	}
 	if len(res.Items) != 1 {
 		t.Fatalf("expected 1 root item, got %d", len(res.Items))
 	}
 	it := res.Items[0]
-	if it.Slug != "architecture" {
-		t.Errorf("slug = %q", it.Slug)
+	if it.ID != "INT-001" || it.Review != "approved" {
+		t.Errorf("item = %q review=%q", it.ID, it.Review)
 	}
-	if it.Summary != "How the agent works." {
-		t.Errorf("summary = %q", it.Summary)
+	if got := stageOf(res, "documentation"); len(got) != 1 || got[0].ID != "DOC-001" {
+		t.Errorf("documentation stage = %+v", got)
 	}
-	if it.PRD == nil || it.PRD.Status != "reviewing" || it.PRD.Slug != "architecture" {
-		t.Errorf("prd = %+v", it.PRD)
+	if got := stageOf(res, "requirements"); len(got) != 2 {
+		t.Errorf("requirements stage = %+v", got)
 	}
-	if len(it.Tickets) != 1 || it.Tickets[0].ID != "001" {
-		t.Errorf("tickets = %+v", it.Tickets)
+	if got := stageOf(res, "tickets"); len(got) != 1 || got[0].ID != "001" {
+		t.Errorf("tickets stage = %+v", got)
+	}
+	// REQ-002 has no ticket: uncovered, and the chain is complete otherwise.
+	if it.Uncovered != 1 {
+		t.Errorf("uncovered = %d, want 1", it.Uncovered)
+	}
+	if !it.Ready {
+		t.Error("ready should be true: every artifact, including tickets, is approved")
+	}
+}
+
+func TestBuildPipeline_StopsAtPendingStage(t *testing.T) {
+	setupPipelineEnv(t)
+	seedWorkItem(t, "INT-001")
+	writeArtifact(t, "documentation/DOC-001.mdx", "---\ntitle: \"Doc\"\nwork_item: INT-001\nderived_from: intents/INT-001\nreview: pending\n---\n\nDoc body.\n")
+
+	res := buildPipeline()
+	if len(res.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(res.Items))
+	}
+	if res.Items[0].Ready {
+		t.Error("a work item with pending artifacts must not be ready")
 	}
 }
 
 func TestBuildPipeline_StaleWhenSourceNewer(t *testing.T) {
 	setupPipelineEnv(t)
-	seedPipeline(t)
-	prd := filepath.Join(DEVTOP_DIR, "prds/architecture/index.mdx")
+	seedWorkItem(t, "INT-001")
+	writeArtifact(t, "documentation/DOC-001.mdx", "---\ntitle: \"Doc\"\nwork_item: INT-001\nderived_from: intents/INT-001\nreview: approved\n---\n\nDoc body.\n")
+	doc := filepath.Join(DEVTOP_DIR, "documentation/DOC-001.mdx")
 	past := time.Now().Add(-time.Hour)
-	if err := os.Chtimes(prd, past, past); err != nil {
+	if err := os.Chtimes(doc, past, past); err != nil {
 		t.Fatal(err)
 	}
-	// Docs file just seeded has a current mtime; the PRD is older.
-	if res := buildPipeline(); !res.Items[0].Stale {
-		t.Error("expected stale=true when the source is newer than the PRD")
+	// The intent file just seeded has a current mtime; the doc is older.
+	res := buildPipeline()
+	if !res.Items[0].Stale {
+		t.Error("expected stale=true when the source is newer than the derived artifact")
+	}
+	if !stageOf(res, "documentation")[0].Stale {
+		t.Error("expected the documentation artifact itself to be flagged stale")
 	}
 }
 
 func TestEvalGate(t *testing.T) {
 	setupPipelineEnv(t)
-	seedPipeline(t)
+	seedWorkItem(t, "INT-001")
 
-	// "reviewing" PRD: the approve gate must fail.
-	if evalGate("prds.status == approved", "prds", "architecture") {
-		t.Error("gate should fail for a reviewing PRD")
+	// "approved" intent: the gate must pass; wrong review value must fail.
+	if !evalGate("intents.review == approved", "intents", "INT-001") {
+		t.Error("gate should pass for an approved intent")
+	}
+	// A second, unapproved intent fails closed.
+	writeArtifact(t, "intents/INT-002.mdx", "---\ntitle: \"B\"\nreview: pending\n---\n\nX.\n")
+	if evalGate("intents.review == approved", "intents", "INT-002") {
+		t.Error("gate should fail for a pending intent")
 	}
 	// Wrong kind and malformed gates fail closed.
-	if evalGate("docs.status == approved", "prds", "architecture") {
+	if evalGate("documentation.review == approved", "intents", "INT-001") {
 		t.Error("gate on the wrong kind must fail")
 	}
-	if evalGate("garbage", "prds", "architecture") {
+	if evalGate("garbage", "intents", "INT-001") {
 		t.Error("malformed gate must fail")
-	}
-	// Set approved and recheck.
-	path, _ := resolveArtifactFile("prds", "architecture")
-	meta, body, err := readFrontmatterFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	meta["status"] = "approved"
-	writeArtifact(t, "prds/architecture/index.mdx", string(composeFrontmatter(meta, string(body))))
-	if !evalGate("prds.status == approved", "prds", "architecture") {
-		t.Error("gate should pass for an approved PRD")
 	}
 }
 
 func TestHandleAPIDerive_GateEnforcedBeforeModel(t *testing.T) {
 	setupPipelineEnv(t)
-	seedPipeline(t)
+	t.Setenv("AI_API_KEY", "")
+	t.Setenv("DEVTOP_AI_ENV_FILE", filepath.Join(t.TempDir(), "no-ai"))
+	// A pending intent: documentation derivation must stop at the gate.
+	writeArtifact(t, "intents/INT-001.mdx", "---\ntitle: \"INT-001\"\nreview: pending\n---\n\nIntent body.\n")
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/derive", handleAPIDerive)
-
-	send := func(prd string) *httptest.ResponseRecorder {
-		payload := strings.NewReader(`{"from":"prds","to":"tickets","slug":"architecture"}`)
-		req := httptest.NewRequest("POST", "/api/derive", payload)
-		// Force the PRD status here for the second call.
-		if prd == "approved" {
-			path, _ := resolveArtifactFile("prds", "architecture")
-			meta, b, _ := readFrontmatterFile(path)
-			meta["status"] = "approved"
-			writeArtifact(t, "prds/architecture/index.mdx", string(composeFrontmatter(meta, string(b))))
-		}
+	send := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/api/derive", strings.NewReader(`{"from":"intents","to":"documentation","slug":"INT-001"}`))
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 		return rec
 	}
 
-	// Reviewing PRD: blocked at the gate, before the key check.
-	if rec := send("reviewing"); rec.Code != http.StatusConflict {
-		t.Errorf("expected 409 for unmet gate, got %d", rec.Code)
+	// Pending intent: the derivation gate fails before the key check.
+	if rec := send(); rec.Code != http.StatusConflict {
+		t.Errorf("expected 409 for an unapproved intent, got %d", rec.Code)
 	}
-
-	// Approved PRD: gate passes; next failure is the missing AI key (502),
-	// proving the gate did not stop it.
-	if rec := send("approved"); rec.Code != http.StatusBadGateway {
+	// Approve the intent: the gate passes; the next failure is the missing
+	// AI key (502), proving the gate did not stop it.
+	writeArtifact(t, "intents/INT-001.mdx", "---\ntitle: \"INT-001\"\nreview: approved\n---\n\nIntent body.\n")
+	if rec := send(); rec.Code != http.StatusBadGateway {
 		t.Errorf("expected 502 for missing key after gate pass, got %d", rec.Code)
 	}
 }
@@ -167,7 +214,7 @@ func TestHandleAPIDerive_UnknownEdge(t *testing.T) {
 	setupPipelineEnv(t)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/derive", handleAPIDerive)
-	req := httptest.NewRequest("POST", "/api/derive", strings.NewReader(`{"from":"docs","to":"nope","slug":"x"}`))
+	req := httptest.NewRequest("POST", "/api/derive", strings.NewReader(`{"from":"intents","to":"nope","slug":"INT-001"}`))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -175,90 +222,72 @@ func TestHandleAPIDerive_UnknownEdge(t *testing.T) {
 	}
 }
 
-func TestHandleAPIPRDStatus_StateMachine(t *testing.T) {
+func TestHandleAPIArtifactReview(t *testing.T) {
 	setupPipelineEnv(t)
-	seedPipeline(t)
+	seedWorkItem(t, "INT-001")
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/pipeline/prds/{slug}/status", handleAPIPRDStatus)
+	mux.HandleFunc("POST /api/artifacts/{kind}/{id}/review", handleAPIArtifactReview)
 
-	post := func(status string) int {
-		req := httptest.NewRequest("POST", "/api/pipeline/prds/architecture/status", strings.NewReader(`{"status":"`+status+`"}`))
+	post := func(id, review string) int {
+		req := httptest.NewRequest("POST", "/api/artifacts/intents/"+id+"/review", strings.NewReader(`{"review":"`+review+`"}`))
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 		return rec.Code
 	}
 
-	// seeding leaves the PRD "reviewing": draft is skipped.
-	if code := post("approved"); code != http.StatusOK {
-		t.Errorf("reviewing -> approved expected 200, got %d", code)
+	if code := post("INT-001", "pending"); code != http.StatusOK {
+		t.Errorf("set pending expected 200, got %d", code)
 	}
-	// Back to draft, then forward again.
-	if code := post("draft"); code != http.StatusOK {
-		t.Errorf("approved -> draft expected 200, got %d", code)
+	if code := post("INT-001", "approved"); code != http.StatusOK {
+		t.Errorf("set approved expected 200, got %d", code)
 	}
-	if code := post("approved"); code != http.StatusConflict {
-		t.Errorf("draft -> approved expected 409, got %d", code)
+	if code := post("INT-001", "bogus"); code != http.StatusBadRequest {
+		t.Errorf("invalid review value expected 400, got %d", code)
 	}
-	if code := post("reviewing"); code != http.StatusOK {
-		t.Errorf("draft -> reviewing expected 200, got %d", code)
+	if code := post("INT-999", "approved"); code != http.StatusNotFound {
+		t.Errorf("missing artifact expected 404, got %d", code)
+	}
+	meta := readMeta(t, "intents/INT-001.mdx")
+	if r, _ := meta["review"].(string); r != "approved" {
+		t.Errorf("review after last write = %q, want approved", r)
 	}
 }
 
-func TestHandleAPIPRDStatus_NestedSlug(t *testing.T) {
+func TestHandleAPIArtifactReview_KnownKindOnly(t *testing.T) {
 	setupPipelineEnv(t)
-	writeArtifact(t, "prds/deep/nested/index.mdx", "---\ntitle: \"Deep\"\nstatus: \"draft\"\n---\n\nBody.\n")
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/pipeline/prds/{slug}/status", handleAPIPRDStatus)
-
-	// The client percent-encodes nested slugs; ServeMux matches them as one
-	// segment and decodes the value back to a slash path.
-	req := httptest.NewRequest("POST", "/api/pipeline/prds/deep%2Fnested/status", strings.NewReader(`{"status":"reviewing"}`))
+	mux.HandleFunc("POST /api/artifacts/{kind}/{id}/review", handleAPIArtifactReview)
+	req := httptest.NewRequest("POST", "/api/artifacts/no-such/abc/review", strings.NewReader(`{"review":"approved"}`))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("nested slug status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	meta := readMeta(t, "prds/deep/nested/index.mdx")
-	if s, _ := meta["status"].(string); s != "reviewing" {
-		t.Errorf("status after set = %q, want reviewing", s)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("unknown kind expected 404, got %d", rec.Code)
 	}
 }
 
-func TestPrdRequirementIDs(t *testing.T) {
+func TestUncoveredReqIDs_Delta(t *testing.T) {
 	setupPipelineEnv(t)
-	writeArtifact(t, "prds/x/index.mdx", "---\ntitle: X\nrequirements:\n  - id: REQ-001\n  - id: REQ-002\n---\n\n## REQ-003 — Cover\n\nBody.\n")
-	ids := prdRequirementIDs(engineConfig, defaultPaths(), "x")
-	want := []string{"REQ-001", "REQ-002", "REQ-003"}
-	if len(ids) != len(want) {
-		t.Fatalf("ids = %v, want %v", ids, want)
-	}
-	for i := range want {
-		if ids[i] != want[i] {
-			t.Errorf("ids[%d] = %q, want %q", i, ids[i], want[i])
-		}
+	seedWorkItem(t, "INT-001")
+	writeArtifact(t, "requirements/REQ-001.mdx", "---\ntitle: \"R1\"\nwork_item: INT-001\nreview: approved\n---\n\nB\n")
+	writeArtifact(t, "requirements/REQ-011.mdx", "---\ntitle: \"R2\"\nwork_item: INT-001\nreview: approved\n---\n\nB\n")
+	writeArtifact(t, "requirements/REQ-012.mdx", "---\ntitle: \"R3\"\nwork_item: INT-001\nreview: approved\n---\n\nB\n")
+	writeArtifact(t, "tickets/001.md", "---\nid: \"001\"\nreq: REQ-001\nwork_item: INT-001\n---\n\nB\n")
+	missing := uncoveredReqIDs(engineConfig, defaultPaths(), "REQ-001")
+	want := []string{"REQ-011", "REQ-012"}
+	sort.Strings(missing)
+	if strings.Join(missing, ",") != strings.Join(want, ",") {
+		t.Fatalf("missing = %v, want %v", missing, want)
 	}
 }
 
-func TestTicketReqAnchors_ScopeBySource(t *testing.T) {
+func TestUnapprovedSiblings_BlockDelta(t *testing.T) {
 	setupPipelineEnv(t)
-	writeArtifact(t, "tickets/001.md", "---\nid: \"001\"\nreq: REQ-001\nsource: prds/x\n---\n\nB\n")
-	writeArtifact(t, "tickets/002.md", "---\nid: \"002\"\nreq: REQ-099\nsource: prds/other\n---\n\nB\n")
-	anchors := ticketReqAnchors(engineConfig, defaultPaths(), "prds/x")
-	if !anchors["REQ-001"] {
-		t.Error("REQ-001 from source prds/x not anchored")
-	}
-	if anchors["REQ-099"] {
-		t.Error("a ticket from another source leaked into the anchors")
-	}
-}
-
-func TestUncoveredReqs_Delta(t *testing.T) {
-	setupPipelineEnv(t)
-	writeArtifact(t, "prds/x/index.mdx", "---\ntitle: X\nrequirements:\n  - id: REQ-001\n  - id: REQ-011\n  - id: REQ-012\n---\n\nBody.\n")
-	writeArtifact(t, "tickets/001.md", "---\nid: \"001\"\nreq: REQ-001\nsource: prds/x\n---\n\nB\n")
-	missing := uncoveredReqs(engineConfig, defaultPaths(), "x")
-	if len(missing) != 2 || missing[0] != "REQ-011" || missing[1] != "REQ-012" {
-		t.Fatalf("missing = %v, want [REQ-011 REQ-012]", missing)
+	seedWorkItem(t, "INT-001")
+	writeArtifact(t, "requirements/REQ-001.mdx", "---\ntitle: \"R1\"\nwork_item: INT-001\nreview: approved\n---\n\nB\n")
+	writeArtifact(t, "requirements/REQ-002.mdx", "---\ntitle: \"R2\"\nwork_item: INT-001\nreview: pending\n---\n\nB\n")
+	bad := unapprovedSiblings(engineConfig, defaultPaths(), "REQ-001")
+	if len(bad) != 1 || bad[0] != "REQ-002" {
+		t.Fatalf("unapproved siblings = %v, want [REQ-002]", bad)
 	}
 }
 
@@ -271,12 +300,14 @@ func TestHandleDerive_TicketsCoveredShortCircuits(t *testing.T) {
 	registry.byName = map[string]*Repo{}
 	registry.mu.Unlock()
 
-	writeArtifact(t, "prds/x/index.mdx", "---\ntitle: X\nstatus: approved\nrequirements:\n  - id: REQ-001\n  - id: REQ-002\n---\n\nBody.\n")
-	writeArtifact(t, "tickets/001.md", "---\nid: \"001\"\nreq: REQ-001\nsource: prds/x\n---\n\nB\n")
-	writeArtifact(t, "tickets/002.md", "---\nid: \"002\"\nreq: REQ-002\nsource: prds/x\n---\n\nB\n")
+	seedWorkItem(t, "INT-001")
+	writeArtifact(t, "requirements/REQ-001.mdx", "---\ntitle: \"R1\"\nwork_item: INT-001\nreview: approved\n---\n\nB\n")
+	writeArtifact(t, "requirements/REQ-002.mdx", "---\ntitle: \"R2\"\nwork_item: INT-001\nreview: approved\n---\n\nB\n")
+	writeArtifact(t, "tickets/001.md", "---\nid: \"001\"\nreq: REQ-001\nwork_item: INT-001\n---\n\nB\n")
+	writeArtifact(t, "tickets/002.md", "---\nid: \"002\"\nreq: REQ-002\nwork_item: INT-001\n---\n\nB\n")
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/derive", handleAPIDerive)
-	req := httptest.NewRequest("POST", "/api/derive", strings.NewReader(`{"from":"prds","to":"tickets","slug":"x"}`))
+	req := httptest.NewRequest("POST", "/api/derive", strings.NewReader(`{"from":"requirements","to":"tickets","slug":"REQ-001"}`))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -287,31 +318,68 @@ func TestHandleDerive_TicketsCoveredShortCircuits(t *testing.T) {
 	}
 }
 
-func TestPipelineRow_UncoveredDelta(t *testing.T) {
+func TestHandleDerive_TicketsBlockedByUnapprovedSibling(t *testing.T) {
 	setupPipelineEnv(t)
-	writeArtifact(t, "docs/x.mdx", "---\ntitle: X\n---\n\nBody.\n")
-	writeArtifact(t, "prds/x/index.mdx", "---\ntitle: X\nrequirements:\n  - id: REQ-001\n  - id: REQ-002\n---\n\nBody.\n")
-	writeArtifact(t, "tickets/001.md", "---\nid: \"001\"\nreq: REQ-001\nsource: prds/x\n---\n\nB\n")
-	res := buildPipeline()
-	if len(res.Items) != 1 {
-		t.Fatalf("items = %d, want 1", len(res.Items))
+	seedWorkItem(t, "INT-001")
+	writeArtifact(t, "requirements/REQ-001.mdx", "---\ntitle: \"R1\"\nwork_item: INT-001\nreview: approved\n---\n\nB\n")
+	writeArtifact(t, "requirements/REQ-002.mdx", "---\ntitle: \"R2\"\nwork_item: INT-001\nreview: pending\n---\n\nB\n")
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/derive", handleAPIDerive)
+	req := httptest.NewRequest("POST", "/api/derive", strings.NewReader(`{"from":"requirements","to":"tickets","slug":"REQ-001"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("sibling gate expected 409, got %d", rec.Code)
 	}
-	if res.Items[0].Uncovered != 1 {
-		t.Errorf("uncovered = %d, want 1", res.Items[0].Uncovered)
+	if !strings.Contains(rec.Body.String(), "REQ-002") {
+		t.Errorf("blocking message should name REQ-002: %s", rec.Body.String())
+	}
+}
+
+func TestDeriveMessage_UsesEdgePrompt(t *testing.T) {
+	setupPipelineEnv(t)
+	e := engineConfig.Derivation[0]
+	msg := deriveTaskMessageFor(engineConfig, e, "INT-001")
+	if !strings.Contains(msg, "Turn the intent into one feature document") {
+		t.Errorf("edge prompt missing from message: %s", msg)
+	}
+	if !strings.Contains(msg, "intents") || !strings.Contains(msg, "INT-001") {
+		t.Errorf("source context missing from message: %s", msg)
+	}
+	// An edge without a prompt falls back to a generic instruction.
+	e.Prompt = ""
+	msg = deriveTaskMessageFor(engineConfig, e, "INT-001")
+	if !strings.Contains(msg, "write_artifact") {
+		t.Errorf("generic fallback missing from message: %s", msg)
 	}
 }
 
 func TestCreateTicket_SourceField(t *testing.T) {
 	setupPipelineEnv(t)
 	dispatchTool("create_ticket", map[string]interface{}{
-		"title": "From PRD", "description": "D", "priority": "low", "source": "prds/architecture",
+		"title": "From requirement", "description": "D", "priority": "low", "source": "requirements/REQ-001",
 	})
 	tickets, err := listTickets()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tickets) != 1 || tickets[0].Source != "prds/architecture" {
+	if len(tickets) != 1 || tickets[0].Source != "requirements/REQ-001" {
 		t.Errorf("ticket source not persisted: %+v", tickets)
+	}
+}
+
+func TestPipelineRow_UncoveredDelta(t *testing.T) {
+	setupPipelineEnv(t)
+	seedWorkItem(t, "INT-001")
+	writeArtifact(t, "requirements/REQ-001.mdx", "---\ntitle: \"R1\"\nwork_item: INT-001\nreview: approved\n---\n\nB\n")
+	writeArtifact(t, "requirements/REQ-002.mdx", "---\ntitle: \"R2\"\nwork_item: INT-001\nreview: approved\n---\n\nB\n")
+	writeArtifact(t, "tickets/001.md", "---\nid: \"001\"\nreq: REQ-001\nwork_item: INT-001\n---\n\nB\n")
+	res := buildPipeline()
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(res.Items))
+	}
+	if res.Items[0].Uncovered != 1 {
+		t.Errorf("uncovered = %d, want 1", res.Items[0].Uncovered)
 	}
 }
 

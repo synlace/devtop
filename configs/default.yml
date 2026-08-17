@@ -5,27 +5,80 @@
 # for external orchestrators. Materialized into $DEVTOP_DIR/config.yml on
 # first run so a repo owns its copy (edit, commit, and external tools read it).
 #
-# The shipped default is intentionally identical to devtop's classic behavior:
-# docs (tree nav + MDX) and tickets (board). Adding kinds is a config edit plus
-# an engine-supported view — no code change.
+# The target workflow: intent (the seed, entered by a human) -> documentation
+# -> requirements/decisions/open questions -> tickets. Every artifact is
+# reviewable on its own (review: pending|approved|rejected), and a derived
+# artifact feeds the next stage only after the user approves it. The PRD
+# concept is gone; "docs" is no longer the seed.
+#
+# Adding a kind is a config edit plus an engine-supported view — no code
+# change. A repo overrides this file after materialization.
 
 artifact_kinds:
-  docs:
-    path: docs
+  # The seed. A work item IS an intent artifact: derived artifacts reference it
+  # through their `work_item` frontmatter, and the pipeline view reconstructs
+  # the chain from those edges. Not agent-writable: a prompt never creates it.
+  intents:
+    path: intents
     extension: .mdx
-    agent_writable: true
-    view: mdx
-    nav:
-      label: Docs
-      icon: file
-      order: 1
-      view: tree
+    agent_writable: false
+    requires_approval: true
+    view: list
     schema:
       title: string
-      description: string
-      tags: [string]
-      derive_prospects: { prds: [eligible, not-eligible] }
-      prospect_by: [model, user]
+      review: [pending, approved, rejected]
+  # Documentation derived from an approved intent.
+  documentation:
+    path: documentation
+    extension: .mdx
+    agent_writable: true
+    requires_approval: true
+    view: list
+    schema:
+      work_item: string
+      derived_from: string
+      title: string
+      review: [pending, approved, rejected]
+  # Requirements derived from approved documentation. One documentation
+  # artifact derives many REQ artifacts; each ticket anchors one of them.
+  requirements:
+    path: requirements
+    extension: .mdx
+    agent_writable: true
+    requires_approval: true
+    view: list
+    schema:
+      work_item: string
+      derived_from: string
+      title: string
+      acceptance: string
+      review: [pending, approved, rejected]
+  # Decisions derived from approved documentation.
+  decisions:
+    path: decisions
+    extension: .mdx
+    agent_writable: true
+    requires_approval: true
+    view: list
+    schema:
+      work_item: string
+      derived_from: string
+      title: string
+      review: [pending, approved, rejected]
+  # Open questions derived from approved documentation; approving one closes
+  # it for the purposes of the work item.
+  open_questions:
+    path: open_questions
+    extension: .mdx
+    agent_writable: true
+    requires_approval: true
+    view: list
+    schema:
+      work_item: string
+      derived_from: string
+      title: string
+      review: [pending, approved, rejected]
+  # Tickets derived from approved requirements, one ticket per requirement.
   tickets:
     path: tickets
     extension: .md
@@ -38,40 +91,21 @@ artifact_kinds:
       view: board
     schema:
       id: string
-      title: string
+      work_item: string
       req: string
+      title: string
       status: [open, in-progress, done]
       priority: [urgent, high, medium, low]
       assignee: string?
       claimed_by: string?
       created: date
 
-# ---------------------------------------------------------------------------
-# PRDs + derivation: the doc -> prd -> ticket pipeline. The engine computes
-# staleness/re-plan generically from the derivation edges.
-# ---------------------------------------------------------------------------
-  prds:
-    path: prds
-    extension: .mdx
-    agent_writable: true
-    requires_approval: true
-    view: list
-    nav:
-      label: PRDs
-      icon: doc
-      order: 3
-      view: list
-    schema:
-      title: string
-      status: [draft, reviewing, approved, archived]
-      requirements: [{ id, description, acceptance }]
-
-# ---------------------------------------------------------------------------
-# Agents and skills: repo-owned, devtop-consumed. init materializes the
-# bundled templates (templates/agents, templates/skills) into .devtop/agents/
-# and .devtop/skills/ once; those files, not the templates, are the source of
-# truth afterwards. Remove or edit them to change the workflow.
-# ---------------------------------------------------------------------------
+  # ---------------------------------------------------------------------------
+  # Agents and skills: repo-owned, devtop-consumed. init materializes the
+  # bundled templates (templates/agents, templates/skills) into .devtop/agents/
+  # and .devtop/skills/ once; those files, not the templates, are the source of
+  # truth afterwards. Remove or edit them to change the workflow.
+  # ---------------------------------------------------------------------------
   agents:
     path: agents
     extension: .mdx
@@ -95,25 +129,105 @@ artifact_kinds:
       description: string
       triggers: [string]
 
+# The transformation chain. Each edge applies the configured agent with the
+# configured prompt to the source artifact(s); the gate (a review field on the
+# source) is enforced deterministically before any model runs. Deriving a kind
+# produces ONE or MORE artifacts of that kind — the agent creates REQ-001,
+# REQ-002, ... from a single documentation artifact, and one ticket per
+# approved requirement.
 derivation:
-  - from: docs
-    to: prds
-    transform: breakdown
-    agent: prd-builder
-    classifier: classify-doc
-  - from: prds
+  - from: intents
+    to: documentation
+    transform: describe_feature
+    agent: doc-builder
+    gate: "intents.review == approved"
+    prompt: |
+      Turn the intent into one feature documentation artifact.
+      Read the intent artifact with a read tool (kind=intents).
+      Write the documentation with write_artifact: kind=documentation.
+      The id is a new ID you generate (convention DOC-<n>).
+      The file has YAML frontmatter: title, work_item: <intent id>,
+      derived_from: intents/<intent id>, and review: pending.
+      Body: user-facing behaviour, scope, storage notes, acceptance surfaces.
+      Call git_commit after every write.
+
+  - from: documentation
+    to: requirements
+    transform: derive_requirements
+    agent: semantics-builder
+    gate: "documentation.review == approved"
+    prompt: |
+      Break the documentation into requirements.
+      Read the documentation artifact with a read tool (kind=documentation).
+      Write one requirements artifact per behaviour with
+      write_artifact: kind=requirements.
+      Generate each id yourself following REQ-<n>.
+      Each file has YAML frontmatter: title, work_item: <intent id>,
+      derived_from: documentation/<documentation id>, acceptance, and
+      review: pending.
+      Each requirement is independently implementable: one behaviour, one
+      acceptance statement a test can assert.
+      Call git_commit after every write.
+
+  - from: documentation
+    to: decisions
+    transform: derive_decisions
+    agent: semantics-builder
+    gate: "documentation.review == approved"
+    prompt: |
+      Extract the technical decisions the documentation implies.
+      Read the documentation artifact with a read tool (kind=documentation).
+      Write one decisions artifact per decision with write_artifact:
+      kind=decisions, generating ids DEC-<n>.
+      Each file has YAML frontmatter: title, work_item: <intent id>,
+      derived_from: documentation/<documentation id>, and review: pending.
+      State the decision and its rationale; do not restate requirements.
+      Call git_commit after every write.
+
+  - from: documentation
+    to: open_questions
+    transform: derive_open_questions
+    agent: semantics-builder
+    gate: "documentation.review == approved"
+    prompt: |
+      List the open questions the documentation leaves unanswered.
+      Read the documentation artifact with a read tool (kind=documentation).
+      Write one open_questions artifact per question with write_artifact:
+      kind=open_questions, generating ids OQ-<n>.
+      Each file has YAML frontmatter: title, work_item: <intent id>,
+      derived_from: documentation/<documentation id>, and review: pending.
+      Call git_commit after every write.
+
+  - from: requirements
     to: tickets
     transform: derive_tickets
     agent: ticket-deriver
-    gate: "prds.status == approved"
+    gate: "requirements.review == approved"
+    prompt: |
+      Derive the ticket(s) for the named requirement(s).
+      Read each requirement with a read tool (kind=requirements) before
+      writing its ticket.
+      Create one ticket PER REQUIREMENT with create_ticket.
+      Each ticket frontmatter carries:
+      - work_item: <intent id>
+      - req: <requirement id>
+      - source: requirements/<requirement id>
+      - claimed_by: ""
+      - priority and status
+      Copy the requirement's acceptance criteria into the body, so the
+      implementer has them without opening the requirement. Name a focused
+      test file in a `tests` line of the body.
+      When the task names a delta list, create tickets ONLY for those ids.
+      Never duplicate a requirement that already has a ticket.
+      Call git_commit after every write.
 
-# The cross-kind derivation view. Renders the `derivation` edges above;
-# the nav entry is what surfaces it in the UI.
+# The cross-kind derivation view. Renders the `derivation` edges above as a
+# work-item flow: each intent is a chain of artifacts grouped by kind.
 pipeline:
   nav:
-    label: Pipeline
+    label: Work items
     icon: flow
-    order: 4
+    order: 1
     view: pipeline
 
 # How changed source artifacts affect derived artifacts. Computed generically
@@ -127,7 +241,9 @@ replan:
     in_flight: delta_only
     shipped: absorb_to_docs
 
-# The AI half — judgment stays in the agent; config declares prompts + triggers.
+# The AI half — judgment stays in the agent; config declares prompts. The
+# derivation prompts live on each edge above; the classify prompt stays for
+# the (optional) classifier edge machinery.
 prompts:
   classify:
     prompt: prompts/classify.md
@@ -143,7 +259,7 @@ agent_runtime:
 # parse to know the artifact vocabulary, which states are grabbable, and how
 # results are reported back. devtop never drives the lifecycle.
 handoff:
-  contract: "tickets/*.md + this config"
+  contract: "intents/*.mdx + each derived artifact's work_item/review fields + this config"
   grabbable: []
   report_back:
     - comment

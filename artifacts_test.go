@@ -10,16 +10,16 @@ import (
 	"testing"
 )
 
-// writeFixturePRD seeds a prds dir with a sample PRD so the generic artifact
-// endpoints have something to serve.
-func writeFixturePRD(t *testing.T, id, frontmatter, body string) {
+// writeFixtureIntent seeds an intents dir with a sample intent so the generic
+// artifact endpoints have something to serve.
+func writeFixtureIntent(t *testing.T, id, frontmatter, body string) {
 	t.Helper()
-	prdsDir := filepath.Join(DEVTOP_DIR, "prds")
-	if err := os.MkdirAll(prdsDir, 0755); err != nil {
+	intentsDir := filepath.Join(DEVTOP_DIR, "intents")
+	if err := os.MkdirAll(intentsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	content := "---\n" + frontmatter + "---\n\n" + body
-	if err := os.WriteFile(filepath.Join(prdsDir, id+".mdx"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(intentsDir, id+".mdx"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -28,10 +28,10 @@ func TestAPIArtifacts_List(t *testing.T) {
 	tempDir, mux := initHTTPTestEnv(t)
 	defer os.RemoveAll(tempDir)
 
-	writeFixturePRD(t, "onboarding", "title: \"Onboarding Flow\"\nstatus: draft\n", "# Onboarding\n\nBody.")
-	writeFixturePRD(t, "billing", "title: \"Billing v2\"\nstatus: approved\n", "# Billing\n\nBody.")
+	writeFixtureIntent(t, "onboarding", "title: \"Onboarding Flow\"\nstatus: draft\n", "# Onboarding\n\nBody.")
+	writeFixtureIntent(t, "billing", "title: \"Billing v2\"\nstatus: approved\n", "# Billing\n\nBody.")
 
-	req := httptest.NewRequest("GET", "/api/artifacts/prds", nil)
+	req := httptest.NewRequest("GET", "/api/artifacts/intents", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -43,7 +43,7 @@ func TestAPIArtifacts_List(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(items) != 2 {
-		t.Fatalf("expected 2 prds, got %d", len(items))
+		t.Fatalf("expected 2 intents, got %d", len(items))
 	}
 	if items[0]["id"] != "billing" || items[0]["title"] != "Billing v2" || items[0]["status"] != "approved" {
 		t.Errorf("unexpected first item: %+v", items[0])
@@ -57,9 +57,9 @@ func TestAPIArtifacts_Detail(t *testing.T) {
 	tempDir, mux := initHTTPTestEnv(t)
 	defer os.RemoveAll(tempDir)
 
-	writeFixturePRD(t, "onboarding", "title: \"Onboarding Flow\"\nstatus: draft\n", "# Onboarding\n\nAcceptance body.")
+	writeFixtureIntent(t, "onboarding", "title: \"Onboarding Flow\"\nstatus: draft\n", "# Onboarding\n\nAcceptance body.")
 
-	req := httptest.NewRequest("GET", "/api/artifacts/prds/onboarding", nil)
+	req := httptest.NewRequest("GET", "/api/artifacts/intents/onboarding", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -105,7 +105,7 @@ func TestAPIArtifacts_DetailNotFound(t *testing.T) {
 	tempDir, mux := initHTTPTestEnv(t)
 	defer os.RemoveAll(tempDir)
 
-	req := httptest.NewRequest("GET", "/api/artifacts/prds/missing", nil)
+	req := httptest.NewRequest("GET", "/api/artifacts/intents/missing", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
@@ -120,9 +120,9 @@ func TestAPIArtifacts_ListMissingDir(t *testing.T) {
 	// Simulate a fresh repo where the kind's directory hasn't been created
 	// (main.go's ensureKindDirs normally creates it at startup). An empty
 	// kind is a valid state: the engine must return [] instead of 500.
-	_ = os.RemoveAll(filepath.Join(DEVTOP_DIR, "prds"))
+	_ = os.RemoveAll(filepath.Join(DEVTOP_DIR, "intents"))
 
-	req := httptest.NewRequest("GET", "/api/artifacts/prds", nil)
+	req := httptest.NewRequest("GET", "/api/artifacts/intents", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -139,11 +139,11 @@ func TestAPIArtifacts_ListEmptyDir(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	// An existing but empty kind dir must still yield [], not null.
-	if err := os.MkdirAll(filepath.Join(DEVTOP_DIR, "prds"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(DEVTOP_DIR, "intents"), 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest("GET", "/api/artifacts/prds", nil)
+	req := httptest.NewRequest("GET", "/api/artifacts/intents", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -161,7 +161,7 @@ func TestAPIArtifacts_DetailTraversalGuard(t *testing.T) {
 
 	// Encoded traversal: ServeMux redirects literal ".." before the handler,
 	// so exercise the handler's own guard with %2e%2e.
-	req := httptest.NewRequest("GET", "/api/artifacts/prds/%2e%2e/config.yml", nil)
+	req := httptest.NewRequest("GET", "/api/artifacts/intents/%2e%2e/config.yml", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {

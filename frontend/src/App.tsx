@@ -142,12 +142,40 @@ interface PageLocation {
 // nav rendering is deterministic regardless of backend availability.
 const BUILTIN_ENGINE_CONFIG: EngineConfig = {
   artifact_kinds: {
-    docs: {
-      path: 'docs',
+    intents: {
+      path: 'intents',
+      extension: '.mdx',
+      agent_writable: false,
+      requires_approval: true,
+      view: 'list',
+    },
+    documentation: {
+      path: 'documentation',
       extension: '.mdx',
       agent_writable: true,
-      view: 'mdx',
-      nav: { label: 'Docs', icon: 'file', order: 1, view: 'tree' },
+      requires_approval: true,
+      view: 'list',
+    },
+    requirements: {
+      path: 'requirements',
+      extension: '.mdx',
+      agent_writable: true,
+      requires_approval: true,
+      view: 'list',
+    },
+    decisions: {
+      path: 'decisions',
+      extension: '.mdx',
+      agent_writable: true,
+      requires_approval: true,
+      view: 'list',
+    },
+    open_questions: {
+      path: 'open_questions',
+      extension: '.mdx',
+      agent_writable: true,
+      requires_approval: true,
+      view: 'list',
     },
     tickets: {
       path: 'tickets',
@@ -156,22 +184,17 @@ const BUILTIN_ENGINE_CONFIG: EngineConfig = {
       view: 'board',
       nav: { label: 'Tickets', icon: 'board', order: 2, view: 'board' },
     },
-    prds: {
-      path: 'prds',
-      extension: '.mdx',
-      agent_writable: true,
-      requires_approval: true,
-      view: 'list',
-      nav: { label: 'PRDs', icon: 'doc', order: 3, view: 'list' },
-    },
   },
   derivation: [
-    { from: 'docs', to: 'prds', transform: 'breakdown' },
-    { from: 'prds', to: 'tickets', transform: 'derive_tickets', gate: 'prds.status == approved' },
+    { from: 'intents', to: 'documentation', transform: 'describe_feature' },
+    { from: 'documentation', to: 'requirements', transform: 'derive_requirements' },
+    { from: 'documentation', to: 'decisions', transform: 'derive_decisions' },
+    { from: 'documentation', to: 'open_questions', transform: 'derive_open_questions' },
+    { from: 'requirements', to: 'tickets', transform: 'derive_tickets', gate: 'requirements.review == approved' },
   ],
   replan: { detect: 'git_diff', stale_badge: true },
-  pipeline: { nav: { label: 'Pipeline', icon: 'flow', order: 4, view: 'pipeline' } },
-  handoff: { contract: 'tickets/*.md + this config', grabbable: [], lifecycle_owner: 'external' },
+  pipeline: { nav: { label: 'Work items', icon: 'flow', order: 1, view: 'pipeline' } },
+  handoff: { contract: 'intents/*.mdx + each derived artifact work_item/review + this config', grabbable: [], lifecycle_owner: 'external' },
 }
 
 // Provider presets shown in the AI config wizard. LM Studio is keyless (the

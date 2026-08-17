@@ -10,8 +10,39 @@ import (
 	"testing"
 )
 
+// setupClassifyEnv provides the docs -> prds classifier fixture the prospect
+// machinery still supports. The default workflow dropped the classifier; these
+// tests exercise the generic classifier code, so they define their own kinds.
+func setupClassifyEnv(t *testing.T) string {
+	prevDevtop := DEVTOP_DIR
+	prevCfg := engineConfig
+	tempDir := setupTestDirs(t)
+	DEVTOP_DIR = tempDir
+	engineConfig = EngineConfig{
+		ArtifactKinds: map[string]ArtifactKind{
+			"docs":    {Path: "docs", Extension: ".mdx", AgentWritable: true},
+			"prds":    {Path: "prds", Extension: ".mdx", AgentWritable: true},
+			"tickets": {Path: "tickets", Extension: ".md"},
+		},
+		Derivation: []DerivationEdge{
+			{From: "docs", To: "prds", Transform: "breakdown", Agent: "prd-builder", Classifier: "classify-doc"},
+			{From: "prds", To: "tickets", Transform: "derive_tickets", Agent: "ticket-deriver"},
+		},
+		Pipeline: PipelineConfig{},
+	}
+	t.Cleanup(func() {
+		DEVTOP_DIR = prevDevtop
+		engineConfig = prevCfg
+		os.RemoveAll(tempDir)
+	})
+	if err := writeEngineConfigFile(tempDir); err != nil {
+		t.Fatal(err)
+	}
+	return tempDir
+}
+
 func TestDocProspect_Parse(t *testing.T) {
-	setupPipelineEnv(t)
+	setupClassifyEnv(t)
 	tests := []struct {
 		name   string
 		front  string
@@ -56,7 +87,7 @@ func testRepo() *Repo {
 }
 
 func TestAssessmentTarget(t *testing.T) {
-	setupPipelineEnv(t)
+	setupClassifyEnv(t)
 	writeArtifact(t, "docs/architecture.mdx", "---\ntitle: A\n---\n\nB\n")
 	repo := testRepo()
 
@@ -134,7 +165,7 @@ func joinPath(dir, rel string) string {
 }
 
 func TestHandleProspect_VerdictFlip(t *testing.T) {
-	setupPipelineEnv(t)
+	setupClassifyEnv(t)
 	writeArtifact(t, "docs/reference/deployment.mdx", "---\ntitle: \"Deployment\"\n---\n\n# Deployment\n\nOps doc.\n")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/pipeline/prospect",
@@ -159,7 +190,7 @@ func TestHandleProspect_VerdictFlip(t *testing.T) {
 }
 
 func TestHandleProspect_VerdictRejectsUnsafeInput(t *testing.T) {
-	setupPipelineEnv(t)
+	setupClassifyEnv(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/pipeline/prospect",
 		strings.NewReader(`{"kind":"docs","slug":"../evil","verdict":"eligible"}`))
 	rr := httptest.NewRecorder()
@@ -177,7 +208,7 @@ func TestHandleProspect_VerdictRejectsUnsafeInput(t *testing.T) {
 }
 
 func TestHandleProspectClassify_UserVerdictWins(t *testing.T) {
-	setupPipelineEnv(t)
+	setupClassifyEnv(t)
 	engineConfig.Derivation[0].Classifier = "classify-doc"
 	writeArtifact(t, "docs/reference/deployment.mdx", "---\ntitle: \"Deployment\"\nderive_prospects:\n  prds: not-eligible\nprospect_by: user\n---\n\nBody.\n")
 
@@ -191,7 +222,7 @@ func TestHandleProspectClassify_UserVerdictWins(t *testing.T) {
 }
 
 func TestHandleProspectClassify_NoClassifierBound(t *testing.T) {
-	setupPipelineEnv(t)
+	setupClassifyEnv(t)
 	writeArtifact(t, "prds/x/index.mdx", "---\ntitle: \"X\"\nstatus: \"draft\"\n---\n\nBody.\n")
 	req := httptest.NewRequest(http.MethodPost, "/api/pipeline/prospect/classify",
 		strings.NewReader(`{"kind":"prds","slug":"x"}`))
@@ -203,7 +234,7 @@ func TestHandleProspectClassify_NoClassifierBound(t *testing.T) {
 }
 
 func TestHandleDerive_ProspectGate(t *testing.T) {
-	setupPipelineEnv(t)
+	setupClassifyEnv(t)
 	engineConfig.Derivation[0].Classifier = "classify-doc"
 	t.Setenv("AI_API_KEY", "")
 	t.Setenv("DEVTOP_AI_ENV_FILE", filepath.Join(t.TempDir(), "no-ai"))
@@ -243,7 +274,7 @@ func TestHandleDerive_ProspectGate(t *testing.T) {
 // an existing direct file must land in place, not at <id>/index.mdx. This is
 // the "doc stayed unassessed" bug: the agent wrote, the pipeline read elsewhere.
 func TestWriteArtifact_ResolvesExistingDirectFile(t *testing.T) {
-	setupPipelineEnv(t)
+	setupClassifyEnv(t)
 	writeArtifact(t, "docs/roadmap.mdx", "---\ntitle: \"Roadmap\"\n---\n\n# Roadmap\n\nV1.\n")
 	res := dispatchTool("write_artifact", map[string]interface{}{
 		"kind": "docs", "id": "roadmap",
@@ -273,7 +304,7 @@ func TestWriteArtifact_ResolvesExistingDirectFile(t *testing.T) {
 // TestWriteArtifact_ResolvesExistingIndexFile: an id with an existing
 // <id>/index.mdx updates it in place and never creates a sibling direct file.
 func TestWriteArtifact_ResolvesExistingIndexFile(t *testing.T) {
-	setupPipelineEnv(t)
+	setupClassifyEnv(t)
 	writeArtifact(t, "docs/guides/usage/index.mdx", "---\ntitle: \"Usage\"\n---\n\nV1.\n")
 	res := dispatchTool("write_artifact", map[string]interface{}{
 		"kind": "docs", "id": "guides/usage",
@@ -297,7 +328,7 @@ func TestWriteArtifact_ResolvesExistingIndexFile(t *testing.T) {
 // TestWriteArtifact_CreatesByConvention: with no existing file, creation keeps
 // the placement convention (plain id -> <id>/index.mdx).
 func TestWriteArtifact_CreatesByConvention(t *testing.T) {
-	setupPipelineEnv(t)
+	setupClassifyEnv(t)
 	res := dispatchTool("write_artifact", map[string]interface{}{
 		"kind": "docs", "id": "new-page", "content": "---\ntitle: \"New\"\n---\n\nBody.\n",
 	})
@@ -315,7 +346,7 @@ func TestWriteArtifact_CreatesByConvention(t *testing.T) {
 // TestArtifactToolPath_MatchesExistingFile: the permission mapper and the
 // write tool must resolve to the same file (authorization == write target).
 func TestArtifactToolPath_MatchesExistingFile(t *testing.T) {
-	setupPipelineEnv(t)
+	setupClassifyEnv(t)
 	writeArtifact(t, "docs/roadmap.mdx", "---\ntitle: R\n---\n\nB\n")
 	rel, ok := artifactToolPath(map[string]interface{}{"kind": "docs", "id": "roadmap"})
 	if rel == "" {
@@ -331,7 +362,7 @@ func TestArtifactToolPath_MatchesExistingFile(t *testing.T) {
 // API-key check with no key). This is the contract that a successful classify
 // "leaves the doc no longer unassessed".
 func TestHandleDerive_ProspectViaWriteArtifact(t *testing.T) {
-	setupPipelineEnv(t)
+	setupClassifyEnv(t)
 	engineConfig.Derivation[0].Classifier = "classify-doc"
 	t.Setenv("AI_API_KEY", "")
 	t.Setenv("DEVTOP_AI_ENV_FILE", filepath.Join(t.TempDir(), "no-ai"))
@@ -354,7 +385,7 @@ func TestHandleDerive_ProspectViaWriteArtifact(t *testing.T) {
 
 // Task message pins the target: writing anything else is an error.
 func TestClassifyTaskMessage_PinsTarget(t *testing.T) {
-	setupPipelineEnv(t)
+	setupClassifyEnv(t)
 	writeArtifact(t, "docs/architecture/agent-engine.mdx", "---\ntitle: \"AE\"\n---\n\nBody.\n")
 	edge := engineConfig.Derivation[0]
 	msg := classifyTaskMessage(edge, "architecture/agent-engine")
@@ -373,7 +404,7 @@ func TestClassifyTaskMessage_PinsTarget(t *testing.T) {
 // classifyResult must fail closed: verdict absent, or verdict with a missing
 // or nested prospect_by, counts as "not written".
 func TestClassifyResult_FailClosed(t *testing.T) {
-	setupPipelineEnv(t)
+	setupClassifyEnv(t)
 	edge := engineConfig.Derivation[0]
 
 	// Untouched doc: no verdict at all.
@@ -394,41 +425,5 @@ func TestClassifyResult_FailClosed(t *testing.T) {
 	v, by, written = classifyResult("docs", "c", edge)
 	if v != "eligible" || by != "model" || !written {
 		t.Errorf("valid model write = (%q, %q, %v), want (eligible, model, true)", v, by, written)
-	}
-}
-
-func TestBuildPipeline_ProspectFields(t *testing.T) {
-	setupPipelineEnv(t)
-	engineConfig.Derivation[0].Classifier = "classify-doc"
-	writeArtifact(t, "docs/architecture.mdx", "---\ntitle: \"Architecture\"\nsummary: \"S\"\nderive_prospects:\n  prds: eligible\nprospect_by: model\n---\n\nBody.\n")
-	writeArtifact(t, "docs/guides/usage.mdx", "---\ntitle: \"Usage\"\n---\n\nBody.\n")
-
-	res := buildPipeline()
-	if len(res.Items) != 2 {
-		t.Fatalf("items = %d", len(res.Items))
-	}
-	var arch, usage *PipelineItem
-	for i := range res.Items {
-		if res.Items[i].Slug == "architecture" {
-			arch = &res.Items[i]
-		}
-		if res.Items[i].Slug == "guides/usage" {
-			usage = &res.Items[i]
-		}
-	}
-	if arch == nil || arch.Prospect != "eligible" || arch.ProspectBy != "model" {
-		t.Errorf("arch prospect = %+v", arch)
-	}
-	if arch.Path != "architecture.mdx" || arch.Dir != "" {
-		t.Errorf("arch path/dir = %q/%q", arch.Path, arch.Dir)
-	}
-	if usage == nil || usage.Prospect != "" || usage.ProspectBy != "" {
-		t.Errorf("usage prospect = %+v", usage)
-	}
-	if usage.Path != "guides/usage.mdx" || usage.Dir != "guides" {
-		t.Errorf("usage path/dir = %q/%q", usage.Path, usage.Dir)
-	}
-	if res.Edges[0].Classifier != "classify-doc" {
-		t.Errorf("edge classifier = %q", res.Edges[0].Classifier)
 	}
 }

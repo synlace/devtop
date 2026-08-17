@@ -1,0 +1,1036 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Devtop — Zoomable Work Items</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f8fafc;
+  --panel:#ffffff;
+  --line:#e2e8f0;
+  --line-subtle:#f1f5f9;
+  --text:#0f172a;
+  --text-secondary:#475569;
+  --muted:#64748b;
+  --soft:#f1f5f9;
+  --dark:#0f172a;
+  --accent:#2563eb;
+  --accent-hover:#1d4ed8;
+  --accent-soft:#eff6ff;
+  --ok-bg:#f0fdf4;
+  --ok-text:#166534;
+  --ok-border:#bbf7d0;
+  --ok-dot:#22c55e;
+  --warn-bg:#fffbeb;
+  --warn-text:#92400e;
+  --warn-border:#fef08a;
+  --warn-dot:#f59e0b;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; height:100vh; overflow:hidden; background:var(--bg); color:var(--text);
+  font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+button{font:inherit}
+
+/* Layout */
+.app{display:grid;grid-template-rows:52px 1fr;height:100vh}
+.topbar{
+  display:flex;align-items:center;justify-content:space-between;padding:0 20px;
+  background:var(--panel);border-bottom:1px solid var(--line);z-index:10;
+}
+.brand{display:flex;gap:12px;align-items:center;font-weight:600;font-size:14px;color:var(--text)}
+.mark{
+  width:26px;height:28px;border-radius:6px;background:var(--dark);color:#fff;
+  display:grid;place-items:center;font-weight:700;font-size:13px;letter-spacing:-0.5px;
+}
+.breadcrumb{display:flex;gap:8px;align-items:center;color:var(--muted);font-size:13px;font-weight:400}
+.breadcrumb button{
+  border:0;background:transparent;color:var(--muted);cursor:pointer;padding:2px 4px;
+  border-radius:4px;transition:all .15s;font-size:13px;
+}
+.breadcrumb button:hover{color:var(--text);background:var(--soft)}
+.breadcrumb .current{color:var(--text);font-weight:600}
+.breadcrumb-sep{color:#cbd5e1;font-size:12px}
+
+.top-actions{display:flex;gap:8px;align-items:center}
+.btn{
+  border:1px solid var(--line);background:var(--panel);color:var(--text-secondary);
+  border-radius:8px;padding:6px 12px;font-size:13px;font-weight:500;cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px;transition:all .15s ease;
+  box-shadow:0 1px 2px rgba(0,0,0,.04);
+}
+.btn:hover{background:var(--soft);color:var(--text);border-color:#cbd5e1}
+.btn.primary{background:var(--dark);color:#fff;border-color:var(--dark);box-shadow:0 1px 2px rgba(15,23,42,.1)}
+.btn.primary:hover{background:#1e293b;border-color:#1e293b}
+
+.main{display:grid;grid-template-columns:220px 1fr;min-height:0}
+.sidebar{background:var(--panel);border-right:1px solid var(--line);padding:12px 10px;display:flex;flex-direction:column;gap:16px}
+.repo{padding:8px 10px 12px;border-bottom:1px solid var(--line-subtle)}
+.repo small{display:block;color:var(--muted);font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
+.repo strong{font-size:13px;color:var(--text);font-weight:600;display:flex;align-items:center;gap:6px}
+.nav-section{display:flex;flex-direction:column;gap:2px}
+.nav-label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8;padding:6px 10px 4px;font-weight:600}
+.nav{
+  padding:7px 10px;border-radius:6px;color:var(--text-secondary);font-size:13px;font-weight:500;
+  cursor:pointer;display:flex;align-items:center;justify-content:space-between;transition:all .12s;
+}
+.nav:hover{background:var(--soft);color:var(--text)}
+.nav.active{background:var(--soft);color:var(--text);font-weight:600}
+
+.content{min-width:0;min-height:0;display:grid;grid-template-rows:auto 1fr;background:var(--bg)}
+.head{padding:20px 24px 14px;display:flex;justify-content:space-between;align-items:flex-start}
+h1{font-size:18px;font-weight:700;margin:0 0 4px;letter-spacing:-0.01em;color:var(--text)}
+.sub{font-size:13px;color:var(--muted);line-height:1.4}
+.viewport{overflow:auto;padding:0 24px 24px}
+
+/* Toggle Control */
+.view-toggle{display:inline-flex;gap:2px;background:#e2e8f0;border-radius:8px;padding:2px;box-shadow:inset 0 1px 2px rgba(0,0,0,.04)}
+.view-toggle button{
+  border:0;background:transparent;color:var(--muted);border-radius:6px;padding:5px 12px;
+  cursor:pointer;font-size:12px;font-weight:500;transition:all .15s ease;
+}
+.view-toggle button.on{background:var(--panel);color:var(--text);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+
+/* Status Pills */
+.pill{
+  font-size:11px;font-weight:500;background:var(--soft);color:var(--text-secondary);
+  border-radius:6px;padding:2px 8px;display:inline-flex;align-items:center;gap:5px;
+  border:1px solid transparent;line-height:1.4;
+}
+.pill .dot{width:6px;height:6px;border-radius:50%;background:var(--muted);display:inline-block}
+.pill.ok{background:var(--ok-bg);color:var(--ok-text);border-color:var(--ok-border)}
+.pill.ok .dot{background:var(--ok-dot)}
+.pill.warn{background:var(--warn-bg);color:var(--warn-text);border-color:var(--warn-border)}
+.pill.warn .dot{background:var(--warn-dot)}
+.pill.danger{background:#fef2f2;color:#b91c1c;border-color:#fecaca}
+.pill.danger .dot{background:#ef4444}
+.pill.pending{background:var(--warn-bg);color:var(--warn-text);border-color:var(--warn-border)}
+.pill.pending .dot{background:var(--warn-dot)}
+.pill.accent{background:var(--accent-soft);color:var(--accent);border-color:#bfdbfe}
+.pill.accent .dot{background:var(--accent)}
+
+/* Cards Grid */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+.work-card,.artifact-card{
+  background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;cursor:pointer;
+  box-shadow:0 1px 3px rgba(0,0,0,.03);transition:all .15s ease;display:flex;flex-direction:column;
+}
+.work-card:hover,.artifact-card:hover{
+  border-color:#cbd5e1;transform:translateY(-1px);box-shadow:0 8px 20px rgba(15,23,42,.06);
+}
+.kicker{
+  font-family:'JetBrains Mono',ui-monospace,monospace;font-size:11px;font-weight:600;
+  color:var(--muted);margin-bottom:6px;display:flex;align-items:center;gap:6px;
+}
+.work-card h3,.artifact-card h3{margin:0 0 6px;font-size:14px;font-weight:600;color:var(--text);line-height:1.3}
+.work-card p,.artifact-card p{margin:0 0 14px;color:var(--text-secondary);font-size:12px;line-height:1.5;flex:1}
+.meta{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.zoomhint{margin-top:12px;font-size:11px;color:var(--accent);font-weight:500;display:flex;align-items:center;gap:4px}
+
+/* List View */
+.list{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.02)}
+.list-head{
+  display:grid;grid-template-columns:90px minmax(180px,1.2fr) minmax(220px,2fr) repeat(4,55px) 220px;
+  gap:12px;align-items:center;padding:6px 16px;background:#f8fafc;border-bottom:1px solid var(--line);
+  font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600;
+}
+.list-row{
+  display:grid;grid-template-columns:90px minmax(180px,1.2fr) minmax(220px,2fr) repeat(4,55px) 220px;
+  gap:12px;align-items:center;padding:7px 16px;cursor:pointer;border-bottom:1px solid var(--line-subtle);
+  transition:background .1s ease;
+}
+.list-row:last-child{border-bottom:0}
+.list-row:hover{background:#f8fafc}
+.list-id{
+  font-family:'JetBrains Mono',ui-monospace,monospace;font-size:12px;font-weight:600;
+  color:var(--text-secondary);display:flex;align-items:center;gap:6px;
+}
+.list-title{font-size:13px;font-weight:600;color:var(--text)}
+.list-intent{font-size:12px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.list-count{font-size:12px;color:var(--muted);text-align:center;font-weight:500}
+.list-new{
+  display:flex;align-items:center;gap:10px;padding:11px 16px;
+  color:var(--accent);font-size:13px;font-weight:600;cursor:pointer;
+  border-top:1px dashed var(--line);background:var(--panel);transition:background .12s;
+}
+.list-new:hover{background:var(--accent-soft)}
+
+/* Expand Panel in List */
+.list-expand{
+  padding:10px 14px 12px 18px;background:#f8fafc;border-bottom:1px solid var(--line);
+  box-shadow:inset 0 2px 4px rgba(0,0,0,.02);
+}
+.cat-empty{
+  padding:16px;font-size:13px;color:var(--muted);background:var(--panel);
+  border:1px dashed var(--line);border-radius:8px;text-align:center;
+}
+
+.doc-row{
+  display:grid;grid-template-columns:86px 56px 1fr 180px;gap:12px;align-items:center;
+  padding:6px 12px;background:var(--panel);border:1px solid var(--line);border-radius:7px;
+  margin-bottom:4px;cursor:pointer;transition:all .12s ease;
+}
+.doc-row:hover{border-color:#cbd5e1;box-shadow:0 2px 4px rgba(0,0,0,.02)}
+.doc-cell-id{
+  font-family:'JetBrains Mono',ui-monospace,monospace;font-size:12px;font-weight:600;
+  color:var(--text-secondary);display:flex;align-items:center;gap:6px;
+}
+.doc-cell-kind{display:flex}
+.doc-cell-title{font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.doc-cell-status{display:flex;justify-content:flex-end}
+.doc-cell-actions{display:flex;gap:4px;justify-content:flex-end}
+.kind-chip{
+  font-family:'JetBrains Mono',ui-monospace,monospace;font-size:10px;font-weight:600;
+  letter-spacing:.02em;padding:2px 7px;border-radius:5px;border:1px solid var(--line);
+  color:var(--text-secondary);background:var(--soft);align-self:center;
+}
+.kind-chip.DOC{color:#2563eb;background:var(--accent-soft);border-color:#bfdbfe}
+.kind-chip.REQ{color:#7c3aed;background:#f5f3ff;border-color:#ddd6fe}
+.kind-chip.DEC{color:#0f766e;background:#f0fdfa;border-color:#99f6e4}
+.kind-chip.DEV{color:#475569;background:var(--soft);border-color:var(--line)}
+.kind-chip.INT{color:#b45309;background:#fffbeb;border-color:#fde68a}
+.kind-chip.OQ{color:#0369a1;background:#f0f9ff;border-color:#bae6fd}
+.panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:10px}
+.panel-title{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.filter-pills{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.filter-pill{
+  border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:3px 10px;
+  cursor:pointer;font-size:11px;font-weight:600;color:var(--text-secondary);
+  display:inline-flex;align-items:center;gap:5px;transition:all .12s;
+}
+.filter-pill .fp-cnt{color:#94a3b8;font-weight:500}
+.filter-pill:hover:not(.on){background:var(--soft);color:var(--text)}
+.filter-pill.on{background:var(--dark);color:#fff;border-color:var(--dark)}
+.filter-pill.on .fp-cnt{color:#cbd5e1}
+.filter-pill.DOC.on{background:#2563eb;border-color:#2563eb}
+.filter-pill.INT.on{background:#b45309;border-color:#b45309}
+.filter-pill.OQ.on{background:#0369a1;border-color:#0369a1}
+.filter-pill.REQ.on{background:#7c3aed;border-color:#7c3aed}
+.filter-pill.DEC.on{background:#0f766e;border-color:#0f766e}
+.filter-pill.DEV.on{background:#475569;border-color:#475569}
+.showing{font-size:11px;color:var(--muted);white-space:nowrap}
+.row-review{display:flex;align-items:center;gap:8px}
+.row-review-actions{display:flex;gap:4px}
+.row-publish{display:flex;align-items:center;gap:8px}
+.pub-btn{height:26px;display:inline-flex;align-items:center;gap:5px;border-radius:6px;padding:0 10px;font-size:12px;font-weight:600;color:#fff;background:var(--accent);border:1px solid var(--accent);cursor:pointer;transition:all .12s}
+.pub-btn:hover:not(:disabled){background:var(--accent-hover)}
+.pub-btn:disabled{background:var(--muted);border-color:var(--muted);opacity:.5;cursor:not-allowed}
+.deriving-row{display:flex;align-items:center;gap:8px;padding:8px 2px 2px;font-size:12px;color:var(--muted)}
+.panel-foot{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:10px}
+.panel-foot .showing{margin-right:auto}
+.spin{animation:dtk-spin .8s linear infinite}
+@keyframes dtk-spin{to{transform:rotate(360deg)}}
+.doc-row.fresh{animation:dtk-fade .5s ease}
+@keyframes dtk-fade{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+.derive-btn{
+  padding:4px 12px;border:1px solid var(--line);background:var(--panel);border-radius:20px;
+  color:var(--accent);font-size:12px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:4px;
+}
+.derive-btn:hover{background:var(--accent-soft);border-color:#bfdbfe}
+.rv-btn{
+  width:26px;height:26px;display:grid;place-items:center;border-radius:6px;cursor:pointer;
+  border:1px solid var(--line);background:var(--panel);color:var(--muted);transition:all .12s;
+}
+.rv-btn:hover{background:var(--soft);color:var(--text)}
+.rv-btn.ok.on{background:var(--ok-bg);border-color:var(--ok-border);color:var(--ok-text)}
+.rv-btn.ok:hover:not(.on){color:#16a34a;border-color:#bbf7d0}
+.rv-btn.bad.on{background:#fef2f2;border-color:#fecaca;color:#b91c1c}
+.rv-btn.bad:hover:not(.on){color:#dc2626;border-color:#fecaca}
+
+.doc-expand{
+  background:var(--panel);border:1px solid var(--line);border-top:0;
+  border-radius:0 0 7px 7px;padding:9px 12px;margin:-4px 0 5px;font-size:12px;
+  box-shadow:0 2px 4px rgba(0,0,0,.02);
+}
+.doc-expand-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.edit-btn{
+  width:26px;height:26px;display:grid;place-items:center;border-radius:6px;cursor:pointer;flex:none;
+  border:1px solid var(--line);background:var(--panel);color:var(--muted);transition:all .12s;
+}
+.edit-btn:hover{background:var(--soft);color:var(--accent);border-color:#bfdbfe}
+.edited-chip{
+  font-size:11px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:99px;padding:2px 8px;white-space:nowrap;
+}
+.doc-edit{margin-top:6px}
+.doc-textarea{
+  width:100%;min-height:110px;resize:vertical;box-sizing:border-box;
+  border:1px solid var(--line);border-radius:7px;padding:8px 10px;font:inherit;font-size:12px;line-height:1.55;
+  color:var(--text);background:var(--panel);outline:none;
+}
+.doc-textarea:focus{border-color:#93c5fd}
+.doc-edit-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+
+/* Zoomed Map View */
+.map{
+  display:grid;grid-template-columns:240px 1fr;gap:20px;align-items:start;min-height:540px;
+}
+.root-card{
+  background:var(--dark);color:#fff;border-radius:12px;padding:18px;position:sticky;top:0;
+  box-shadow:0 4px 12px rgba(15,23,42,.12);
+}
+.root-card .kicker{color:#94a3b8}
+.root-card h2{font-size:17px;margin:0 0 8px;font-weight:700}
+.root-card p{font-size:12px;line-height:1.5;color:#cbd5e1;margin:0 0 14px}
+.flow{display:flex;flex-direction:column;gap:12px}
+.stage{
+  background:#f1f5f9;border:1px solid var(--line);border-radius:12px;padding:12px 14px;
+}
+.stage-head{display:flex;justify-content:space-between;align-items:center;padding-bottom:10px}
+.stage-title{font-size:13px;font-weight:700;color:var(--text)}
+.stage-meta{font-size:11px;color:var(--muted);font-weight:500}
+.stage-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.connector{
+  height:16px;display:flex;align-items:center;justify-content:center;color:#cbd5e1;
+}
+
+/* Detail View */
+.detail{
+  display:grid;grid-template-columns:1fr 280px;gap:20px;min-height:500px;
+}
+.detail-main,.detail-side{
+  background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;
+  box-shadow:0 1px 3px rgba(0,0,0,.02);
+}
+.detail-main h2{margin:0 0 10px;font-size:18px;font-weight:700;color:var(--text)}
+.detail-main p{font-size:13px;line-height:1.6;color:var(--text-secondary)}
+.detail-side h3{font-size:13px;font-weight:700;margin:0 0 12px;color:var(--text)}
+.lineage{display:flex;flex-direction:column;gap:8px}
+.lineage-item{padding:10px 12px;border-radius:8px;background:var(--soft);font-size:12px;color:var(--text-secondary);border:1px solid var(--line-subtle)}
+.lineage-item strong{color:var(--text);font-weight:600;display:block;margin-bottom:2px;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.back{
+  border:0;background:transparent;color:var(--muted);cursor:pointer;padding:0;font-size:12px;font-weight:500;
+  margin-bottom:14px;display:inline-flex;align-items:center;gap:4px;
+}
+.back:hover{color:var(--text)}
+
+@media(max-width:1000px){
+  .grid{grid-template-columns:1fr 1fr}
+  .map{grid-template-columns:1fr}.root-card{position:static}
+  .list{overflow-x:auto}
+  .list-row,.list-head{min-width:860px}
+}
+@media(max-width:760px){
+  .main{grid-template-columns:1fr}.sidebar{display:none}
+  .grid{grid-template-columns:1fr}.detail{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="mark">D</div><span>devtop</span>
+      <div class="breadcrumb" id="crumbs"></div>
+    </div>
+    <div class="top-actions">
+      <button class="btn">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M2 4h12M2 8h12M2 12h12"/></svg>
+        Project map
+      </button>
+      <button id="publishBtn" class="btn primary" onclick="publishReadyAll()" style="display:inline-flex;align-items:center;gap:6px">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 8l4 4 6-6"/></svg>
+        <span id="publishLabel">Review &amp; publish</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="main">
+    <aside class="sidebar">
+      <div class="repo">
+        <small>Repository</small>
+        <strong>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M2 3.5h12v9H2zM5 6.5l3 3 3-3"/></svg>
+          synlace/calculator
+        </strong>
+      </div>
+      <div class="nav-section">
+        <div class="nav-label">Workspace</div>
+        <div class="nav active" onclick="showOverview()">Work items</div>
+        <div class="nav">Documents</div>
+        <div class="nav">Requirements</div>
+        <div class="nav">Decisions</div>
+        <div class="nav">Tickets</div>
+      </div>
+      <div class="nav-section">
+        <div class="nav-label">Project</div>
+        <div class="nav">System map</div>
+        <div class="nav">Workflows</div>
+      </div>
+    </aside>
+
+    <main class="content">
+      <div class="head">
+        <div>
+          <h1 id="title">Work items</h1>
+          <div class="sub" id="subtitle">Start broad. Expand a work item to reveal its documentation, then open a document in place.</div>
+        </div>
+        <div class="view-toggle" id="viewToggle">
+          <button class="on" onclick="setViewMode('list')">List</button>
+          <button onclick="setViewMode('grid')">Cards</button>
+        </div>
+      </div>
+      <div class="viewport" id="view"></div>
+    </main>
+  </div>
+</div>
+
+<script>
+const workItems = [
+  {
+    id:'WI-014', title:'Calculation history', intent:'Users should be able to see and revisit previous calculations.',
+    status:'In progress', published:false, docs:1, reqs:2, decisions:1, tickets:3
+  },
+  {
+    id:'WI-015', title:'Dark mode', intent:'Users should be able to switch the calculator to a dark theme.',
+    status:'Draft', published:false, docs:1, reqs:2, decisions:0, tickets:0
+  },
+  {
+    id:'WI-016', title:'Keyboard shortcuts', intent:'Power users should be able to operate the calculator without a mouse.',
+    status:'Ready', published:false, docs:1, reqs:3, decisions:1, tickets:4
+  }
+];
+
+const artifacts = {
+  'WI-014': {
+    intent: { id:'INT-014', text:'Users should be able to see and revisit previous calculations.', review:'approved' },
+    docs: [
+      { id:'DOC-021', review:'approved', title:'Calculation history feature documentation.', status:'Approved',
+        body:'Users perform calculations frequently and often need to repeat or reference earlier results. This document captures the scope: a persistent list of past calculations with results, stored locally, with the most recent entries surfaced first.' }
+    ],
+    semantics: [
+      { id:'REQ-021', review:'approved', title:'Display completed calculations.', status:'Approved',
+        body:'The history panel lists past calculations newest first, each with its operands, operator and result, and a button to reuse the expression.' },
+      { id:'REQ-022', review:'rejected', title:'Persist history locally.', status:'Needs review',
+        body:'History survives reloads. Entries store the expression and result; storage uses browser local storage.' },
+      { id:'DEC-008', review:'approved', title:'Use browser local storage.', status:'Approved',
+        body:'Rejected a backend store for a client-side app. Local storage keeps the feature offline-capable and free of sync concerns.' }
+    ],
+    tickets: [
+      { id:'DEV-118', review:'pending', title:'Add history state and persistence.', status:'Proposed', req:'REQ-022',
+        body:'Add a history module: load, append and serialize entries. Reuse the persisted list on boot.' },
+      { id:'DEV-119', review:'approved', title:'Build calculation history panel.', status:'Proposed', req:'REQ-021',
+        body:'Render the history list under the display area, newest first, with click-to-reuse.' },
+      { id:'DEV-120', review:'rejected', title:'Add history behaviour tests.', status:'Proposed', req:'REQ-021',
+        body:'Cover persistence, ordering and reuse flows, including offline reload.' }
+    ]
+  },
+  'WI-015': {
+    intent: { id:'INT-015', text:'Users should be able to switch the calculator to a dark theme.', review:'approved' },
+    docs: [
+      { id:'DOC-030', review:'pending', title:'Dark mode feature document.', status:'Approved',
+        body:'The calculator currently ships a single light theme. This document covers a dark theme option, how the user switches between themes, and how the chosen theme persists across sessions.' }
+    ],
+    semantics: [
+      { id:'REQ-030', review:'approved', title:'Switch between light and dark themes.', status:'Approved',
+        body:'A theme toggle in the header flips the calculator between light and dark palettes immediately.' },
+      { id:'REQ-031', review:'rejected', title:'Remember the theme choice.', status:'Draft',
+        body:'The last chosen theme persists across sessions, with the light theme as default.' }
+    ],
+    tickets: []
+  },
+  'WI-016': {
+    intent: { id:'INT-016', text:'Power users should be able to operate the calculator without a mouse.', review:'approved' },
+    docs: [
+      { id:'DOC-040', review:'approved', title:'Keyboard shortcuts feature document.', status:'Approved',
+        body:'Power users rely on the keyboard. This document defines the shortcut set: number keys for digits, letter keys for operations, and an overlay that reveals all bindings on demand.' }
+    ],
+    semantics: [
+      { id:'REQ-040', review:'approved', title:'Bind digits to number keys.', status:'Approved',
+        body:'Keys 0–9 enter the matching digit while the calculator has focus. Typing replaces the current entry.' },
+      { id:'REQ-041', review:'approved', title:'Bind operations to letter keys.', status:'Approved',
+        body:'Keys a, s, m and d stand for add, subtract, multiply and divide; enter evaluates.' },
+      { id:'REQ-042', review:'pending', title:'Show a shortcuts overlay.', status:'Needs review',
+        body:'Pressing ? toggles an overlay listing every binding, dismissible with Escape.' }
+    ],
+    tickets: [
+      { id:'DEV-140', review:'approved', title:'Implement number key bindings.', status:'Proposed', req:'REQ-040',
+        body:'Map ten keys to number input and wire focus semantics.' },
+      { id:'DEV-141', review:'rejected', title:'Implement operation key bindings.', status:'Proposed', req:'REQ-041',
+        body:'Bind one letter per operation, including evaluate and clear.' },
+      { id:'DEV-142', review:'pending', title:'Build shortcuts overlay.', status:'Proposed', req:'REQ-042',
+        body:'Render the overlay with all bindings; wire the ? toggle.' },
+      { id:'DEV-143', review:'rejected', title:'Add key handling tests.', status:'Proposed', req:'REQ-040',
+        body:'Cover focus, repeated keys and overlay toggle behaviour.' }
+    ]
+  }
+};
+
+let viewMode='list';
+let listExpanded={wi:null,open:{},f:{},editing:null};
+
+const pillCls=s=>s==='Approved'||s==='Accepted'?'ok':s==='Needs review'||s==='Draft'?'warn':'';
+const renderPill=s=>`<span class="pill ${pillCls(s)}"><span class="dot"></span>${s}</span>`;
+const reviewPill=r=>`<span class="pill ${r==='approved'?'ok':r==='rejected'?'danger':'pending'}"><span class="dot"></span>${r==='approved'?'Approved':r==='rejected'?'Rejected':'Needs review'}</span>`;
+const wiStatePill=w=>{
+  if(w.published) return `<span class="pill ok"><span class="dot"></span>Published</span>`;
+  const pending=wiPending(w.id);
+  if(!pending.length) return `<span class="pill warn"><span class="dot"></span>Needs tickets</span>`;
+  return `<span class="pill warn"><span class="dot"></span>${pending.length} of ${wiArtifacts(w.id).length} pending</span>`;
+};
+const typeOf=id=>id.startsWith('REQ')?'REQ':id.startsWith('DEC')?'DEC':id.startsWith('DEV')?'DEV':id.startsWith('INT')?'INT':id.startsWith('OQ')?'OQ':'DOC';
+const kindOf=id=>id.startsWith('REQ')?'Requirement':id.startsWith('DEC')?'Decision':id.startsWith('DEV')?'Ticket':id.startsWith('INT')?'Intent':id.startsWith('OQ')?'Open question':'Feature document';
+function countsOf(w){
+  const a=artifacts[w.id];
+  if(!a) return {docs:w.docs||0,reqs:w.reqs||0,decisions:w.decisions||0,tickets:w.tickets||0};
+  return {
+    docs:(a.docs||[]).length,
+    reqs:(a.semantics||[]).filter(s=>s.id.startsWith('REQ')).length,
+    decisions:(a.semantics||[]).filter(s=>s.id.startsWith('DEC')).length,
+    tickets:(a.tickets||[]).length
+  };
+}
+function maxIdNum(prefix){
+  let max=0;
+  Object.keys(artifacts).forEach(k=>{
+    const a=artifacts[k];
+    const ids=[a.intent&&a.intent.id,...(a.docs||[]).map(x=>x.id),...(a.semantics||[]).map(x=>x.id),...(a.tickets||[]).map(x=>x.id)];
+    ids.forEach(id=>{
+      if(id&&id.startsWith(prefix)){
+        const n=parseInt(id.slice(prefix.length),10);
+        if(!isNaN(n)&&n>max) max=n;
+      }
+    });
+  });
+  return max;
+}
+function nextArtifactId(prefix){ return maxIdNum(prefix)+1; }
+function makeIdAllocator(){
+  const next={};
+  return prefix=>{
+    if(!(prefix in next)) next[prefix]=maxIdNum(prefix)+1;
+    return prefix+next[prefix]++;
+  };
+}
+
+function wiArtifacts(wiId){
+  const a=artifacts[wiId]||{docs:[],semantics:[],tickets:[]};
+  return [...(a.intent?[a.intent]:[]),...(a.docs||[]),...(a.semantics||[]),...(a.tickets||[])];
+}
+function wiPending(wiId){ return wiArtifacts(wiId).filter(x=>x.review!=='approved').map(x=>x.id); }
+function wiReady(w){ return !!artifacts[w.id] && wiPending(w.id).length===0 && (artifacts[w.id].tickets||[]).length>0; }
+function readyCount(){ return workItems.filter(w=>!w.published&&wiReady(w)).length; }
+
+function updatePublish(){
+  const n=readyCount();
+  const btn=document.getElementById('publishBtn');
+  const label=document.getElementById('publishLabel');
+  if(!btn||!label) return;
+  label.textContent=n?`Publish ready (${n})`:'Publish ready';
+  btn.disabled=!n;
+  btn.title=n?'Publish every ready work item':'Nothing ready — approve every artifact inside one work item first';
+  btn.style.opacity=n?'1':'0.55';
+  btn.style.cursor=n?'pointer':'not-allowed';
+}
+
+function publishWorkItem(wiId){
+  const w=workItems.find(x=>x.id===wiId);
+  if(!w||w.published) return;
+  const pending=wiPending(wiId);
+  if(pending.length){
+    alert('Publish blocked — approve every artifact in '+wiId+' first:\n'+pending.join(', '));
+    return;
+  }
+  if(!(artifacts[wiId].tickets||[]).length){
+    alert('Publish blocked — '+wiId+' has no tickets yet. Derive tickets first.');
+    return;
+  }
+  w.published=true;
+  document.getElementById('view').innerHTML=listHTML();
+  updatePublish();
+}
+
+function publishReadyAll(){
+  const ready=workItems.filter(w=>!w.published&&wiReady(w));
+  const blocked=workItems.filter(w=>!w.published&&!wiReady(w)).map(w=>w.id);
+  if(ready.length){
+    ready.forEach(w=>w.published=true);
+    document.getElementById('view').innerHTML=listHTML();
+    updatePublish();
+    alert('Published: '+ready.map(w=>w.id).join(', ')+
+      (blocked.length?('\nNot ready: '+blocked.join(', ')):''));
+  }else{
+    alert('Nothing to publish yet. Approve every artifact inside a work item first.'+
+      (blocked.length?'\nNot ready: '+blocked.join(', '):''));
+  }
+}
+
+function toggleFilter(wiId,typ){
+  const f=Object.assign({},listExpanded.f||{});
+  if(f[typ]){ delete f[typ]; } else { f[typ]=true; }
+  listExpanded.f=f;
+  document.getElementById('view').innerHTML=listHTML();
+  updatePublish();
+}
+
+function clearFilter(wiId){
+  listExpanded.f={};
+  document.getElementById('view').innerHTML=listHTML();
+  updatePublish();
+}
+
+function findItem(wiId,id){
+  const a=artifacts[wiId];
+  if(!a) return null;
+  if(a.intent&&a.intent.id===id) return a.intent;
+  return [...(a.docs||[]),...(a.semantics||[]),...(a.tickets||[])].find(x=>x.id===id)||null;
+}
+
+function setReview(wiId,id,val){
+  const item=findItem(wiId,id);
+  if(!item) return;
+  item.review = item.review === val ? 'pending' : val;
+  document.getElementById('view').innerHTML=listHTML();
+  updatePublish();
+}
+
+function createWorkItem(){
+  const title=window.prompt('Work item title', 'Print receipts');
+  if(!title||!title.trim()) return;
+  const id='WI-'+nextArtifactId('WI');
+  const intId='INT-'+nextArtifactId('INT');
+  const text='Users should be able to '+title.trim().toLowerCase()+'.';
+  workItems.unshift({id,title:title.trim(),intent:text,status:'Draft',published:false,docs:0,reqs:0,decisions:0,tickets:0});
+  artifacts[id]={intent:{id:intId,text,review:'pending'},docs:[],semantics:[],tickets:[]};
+  listExpanded={wi:id,open:{},f:{}};
+  document.getElementById('view').innerHTML=listHTML();
+  updatePublish();
+}
+
+function stageOf(a){
+  if(!(a.docs||[]).length) return 'doc';
+  if(!(a.semantics||[]).length) return 'semantics';
+  if(!(a.tickets||[]).length) return 'tickets';
+  return 'complete';
+}
+
+function gateFor(a,stage){
+  if(stage==='doc') return a.intent&&a.intent.review==='approved'?null:[a.intent.id];
+  if(stage==='semantics'){
+    const bad=(a.docs||[]).filter(d=>d.review!=='approved').map(d=>d.id);
+    return bad.length?bad:null;
+  }
+  if(stage==='tickets'){
+    const reqs=(a.semantics||[]).filter(s=>s.id.startsWith('REQ'));
+    const bad=reqs.filter(r=>r.review!=='approved').map(r=>r.id);
+    return bad.length?bad:null;
+  }
+  return null;
+}
+
+function deriveLabel(st){
+  if(st==='complete') return 'Complete';
+  if(st==='doc') return 'Derive documentation';
+  if(st==='semantics') return 'Derive artifacts';
+  return 'Derive tickets';
+}
+
+function deriveClick(wiId){
+  if(listExpanded.deriving) return;
+  const a=artifacts[wiId];
+  const st=stageOf(a);
+  if(st==='complete'){ alert('All artifacts derived for this work item.'); return; }
+  const gate=gateFor(a,st);
+  if(gate){
+    alert('Approve first: '+gate.join(', '));
+    return;
+  }
+  const plan=derivePlan(wiId,st);
+  const target=st==='doc'?'docs':st==='semantics'?'semantics':'tickets';
+  listExpanded.deriving=st;
+  document.getElementById('view').innerHTML=listHTML();
+  let i=0;
+  const step=()=>{
+    if(i>=plan.length){
+      listExpanded.deriving=null;
+      listExpanded.freshId=null;
+      if(viewMode==='list') document.getElementById('view').innerHTML=listHTML();
+      updatePublish();
+      return;
+    }
+    a[target].push(plan[i++]);
+    listExpanded.freshId=plan[i-1].id;
+    if(viewMode==='list') document.getElementById('view').innerHTML=listHTML();
+    setTimeout(step,420);
+  };
+  setTimeout(step,350);
+}
+
+function derivePlan(wiId,st){
+  const a=artifacts[wiId];
+  const id=makeIdAllocator();
+  const mk=obj=>{obj.review='pending';obj.status='Draft';return obj;};
+  if(st==='doc'){
+    return [mk({id:id('DOC'),title:'Feature documentation for '+wiId+'.',
+      body:'Scope derived from '+a.intent.id+': '+a.intent.text+' The document captures user-facing behaviour, storage notes and acceptance surfaces.'})];
+  }
+  if(st==='semantics'){
+    return [
+      mk({id:id('REQ'),title:'Support the core behaviour.',body:'The feature must satisfy: '+a.intent.text}),
+      mk({id:id('REQ'),title:'Persist state across sessions.',body:'User-visible state survives reloads and remains consistent.'}),
+      mk({id:id('DEC'),title:'Implement in the client application.',body:'No backend required for this work item; local persistence keeps it self-contained.'}),
+      mk({id:id('OQ'),title:'What happens on storage limits?',body:'Default to truncating oldest entries for this mock.'})
+    ];
+  }
+  const reqs=(a.semantics||[]).filter(s=>s.id.startsWith('REQ'));
+  const tickets=reqs.map(r=>mk({id:id('DEV'),title:'Implement '+r.id+' — '+r.title, req:r.id,
+    body:'Build the behaviour described in '+r.id+'; verify against acceptance criteria.'}));
+  if(reqs.length){
+    tickets.push(mk({id:id('DEV'),title:'Acceptance tests for this work item.',req:reqs[0].id,
+      body:'Cover the flows defined by the approved requirements.'}));
+  }
+  return tickets;
+}
+
+const svgChevron = open => `<svg class="chev ${open?'open':''}" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="transition:transform .15s ease;transform:rotate(${open?'90':'0'}deg);color:#94a3b8"><path d="M6 12l4-4-4-4"/></svg>`;
+const spinnerSVG = () => `<svg class="spin" width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="var(--line)" stroke-width="2"/><path d="M8 2a6 6 0 0 1 6 6" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/></svg>`;
+
+function startEdit(wiId,id){
+  listExpanded.editing=id;
+  document.getElementById('view').innerHTML=listHTML();
+  const f=document.getElementById('docEditField');
+  if(f){ f.focus(); f.setSelectionRange(f.value.length,f.value.length); }
+}
+function cancelEdit(wiId,id){
+  listExpanded.editing=null;
+  document.getElementById('view').innerHTML=listHTML();
+}
+function saveEdit(wiId,id){
+  const f=document.getElementById('docEditField');
+  if(!f) return;
+  editArtifact(wiId,id,f.value);
+  listExpanded.editing=null;
+  document.getElementById('view').innerHTML=listHTML();
+  updatePublish();
+}
+function editArtifact(wiId,id,body){
+  const w=workItems.find(x=>x.id===wiId);
+  const a=artifacts[wiId];
+  const item=findItem(wiId,id);
+  if(!w||!a||!item) return;
+  if(a.intent&&a.intent.id===id) a.intent.text=body; else item.body=body;
+  item.edited=true;
+  if(w.published){ w.published=false; item.editedAfterPublish=true; }
+  item.review='pending';
+}
+function editHint(wiId,id){
+  const a=artifacts[wiId];
+  const item=findItem(wiId,id);
+  if(!item) return '';
+  const t=typeOf(id);
+  const feeds=(t==='INT'&&(a.docs||[]).length)||(t==='DOC'&&(a.semantics||[]).length)||(t==='REQ'&&(a.tickets||[]).length);
+  const parts=[];
+  if(item.editedAfterPublish) parts.push('edited after publish');
+  else if(item.edited) parts.push('edited by hand');
+  if(feeds) parts.push('re-derive dependents');
+  return parts.length?`<span class="edited-chip">${parts.join(' · ')}</span>`:'';
+}
+const pencilSVG = () => `<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="pointer-events:none"><path d="M11 2l3 3-8 8-4 1 1-4z"/></svg>`;
+
+function setCrumbs(parts){
+  const c=document.getElementById('crumbs');
+  c.innerHTML='';
+  parts.forEach((p,i)=>{
+    if(i>0) {
+      const sep=document.createElement('span');
+      sep.className='breadcrumb-sep';
+      sep.textContent='/';
+      c.appendChild(sep);
+    }
+    const b=document.createElement('button');
+    b.textContent=p.label;
+    if(p.action) b.onclick=p.action;
+    if(i===parts.length-1) b.className='current';
+    c.appendChild(b);
+  });
+}
+
+function setViewMode(mode){
+  viewMode=mode;
+  listExpanded={wi:null,open:{},f:{}};
+  document.querySelectorAll('#viewToggle button').forEach(b=>b.className=b.textContent===(mode==='grid'?'Cards':'List')?'on':'');
+  showOverview();
+}
+
+function showOverview(){
+  document.getElementById('title').textContent='Work items';
+  document.getElementById('subtitle').textContent='Start broad. Expand a work item to reveal its documentation, then open a document in place.';
+  setCrumbs([{label:'synlace/calculator'},{label:'Work items'}]);
+  document.getElementById('view').innerHTML = viewMode==='list' ? listHTML() : gridHTML();
+  updatePublish();
+}
+
+function toggleWork(wiId){
+  listExpanded = listExpanded.wi===wiId ? {wi:null,open:{},f:{}} : {wi:wiId,open:{},f:{}};
+  document.getElementById('view').innerHTML=listHTML();
+}
+
+function toggleItem(wiId,id){
+  listExpanded.open[id]=!listExpanded.open[id];
+  document.getElementById('view').innerHTML=listHTML();
+  updatePublish();
+}
+
+function gridHTML(){
+  return `
+    <div class="grid">
+      ${workItems.map(w=>{
+        const c=countsOf(w);
+        return `
+        <article class="work-card" onclick="showWork('${w.id}')">
+          <div class="kicker">${w.id}</div>
+          <h3>${w.title}</h3>
+          <p>${w.intent}</p>
+          <div class="meta">
+            ${renderPill(w.status)}
+            <span class="pill">${c.docs} doc</span>
+            <span class="pill">${c.reqs} reqs</span>
+            <span class="pill">${c.tickets} tickets</span>
+          </div>
+          <div class="zoomhint">
+            Open to zoom into work item
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 12l4-4-4-4"/></svg>
+          </div>
+        </article>`;
+      }).join('')}
+      <article class="work-card" style="border-style:dashed;background:transparent;" onclick="createWorkItem()">
+        <div class="kicker">New work</div>
+        <h3 style="color:var(--accent)">+ Capture intent</h3>
+        <p>Start with a title. Devtop can expand the intent before deriving documentation.</p>
+      </article>
+    </div>`;
+}
+
+function listHTML(){
+  const head=`
+    <div class="list-head">
+      <span>ID</span><span>Title</span><span>Intent</span>
+      <span class="col-count" style="text-align:center">Docs</span>
+      <span class="col-count" style="text-align:center">Reqs</span>
+      <span class="col-count" style="text-align:center">Decis.</span>
+      <span class="col-count" style="text-align:center">Tickets</span>
+      <span style="text-align:right">Publish</span>
+    </div>`;
+  const rows=workItems.map(w=>{
+    const open=listExpanded.wi===w.id;
+    const docRows=open?listDocsHTML(w.id):'';
+    const c=countsOf(w);
+    return `
+      <div class="list-row" onclick="toggleWork('${w.id}')" title="Expand to reveal documentation">
+        <div class="list-id">${svgChevron(open)}${w.id}</div>
+        <div class="list-title">${w.title}</div>
+        <div class="list-intent">${w.intent}</div>
+        <div class="list-count">${c.docs}</div>
+        <div class="list-count">${c.reqs}</div>
+        <div class="list-count">${c.decisions}</div>
+        <div class="list-count">${c.tickets}</div>
+        <div class="row-publish" style="justify-content:flex-end">
+          ${wiStatePill(w)}
+          ${w.published?'':`
+          <button class="pub-btn" ${wiReady(w)?'':'disabled'} title="${wiReady(w)?'Publish '+w.id:wiPending(w.id).length?'Approve every artifact in '+w.id+' first':'Derive tickets for '+w.id+' first'}" onclick="event.stopPropagation();publishWorkItem('${w.id}')">
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 2v8M4 6l4 4 4-4M3 13h10"/></svg>
+            Publish
+          </button>`}
+        </div>
+      </div>
+      ${docRows}`;
+  }).join('');
+  const newRow=`
+    <div class="list-new" onclick="createWorkItem()">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v10M3 8h10"/></svg>
+      <div>Capture new intent</div>
+    </div>`;
+  return `<div class="list">${head}${rows}${newRow}</div>`;
+}
+
+function listDocsHTML(wiId){
+  const a=artifacts[wiId];
+  const st=stageOf(a);
+  const gate=gateFor(a,st);
+  const busy=listExpanded.deriving;
+  const items=[
+    a.intent?{id:a.intent.id,title:a.intent.text,status:'Draft',review:a.intent.review||'pending',body:a.intent.text}:null,
+    ...(a.docs||[]),...(a.semantics||[]),...(a.tickets||[])
+  ].filter(Boolean);
+  const total=items.length;
+  const counts={};
+  items.forEach(it=>counts[typeOf(it.id)]=(counts[typeOf(it.id)]||0)+1);
+  const f=listExpanded.f||{};
+  const filtered=Object.keys(f).length?items.filter(it=>f[typeOf(it.id)]):items;
+  const pills=Object.entries(counts).map(([t,n])=>
+    `<button class="filter-pill ${t} ${f[t]?'on':''}" onclick="toggleFilter('${wiId}','${t}')">${t}<span class="fp-cnt">${n}</span></button>`
+  ).join('');
+  const deriveDisabled=st==='complete'||!!busy||!!gate;
+  const deriveTitle=busy?'Deriving…':st==='complete'?'All artifacts derived':gate?('Approve '+gate.join(', ')+' first'):'';
+  const row=it=>{
+    const open=!!listExpanded.open[it.id];
+    return `
+      <div class="doc-row${it.id===listExpanded.freshId?' fresh':''}" onclick="toggleItem('${wiId}','${it.id}')" title="Open ${kindOf(it.id).toLowerCase()} in place">
+        <div class="doc-cell-id">${svgChevron(open)}${it.id}</div>
+        <div class="doc-cell-kind"><span class="kind-chip ${typeOf(it.id)}">${typeOf(it.id)}</span></div>
+        <div class="doc-cell-title">${it.title}</div>
+        <div class="row-review" style="justify-content:flex-end">
+          ${reviewPill(it.review)}
+          <div class="row-review-actions">
+            <button class="rv-btn ok ${it.review==='approved'?'on':''}" title="Approve ${it.id} (click again to mark needs review)" onclick="event.stopPropagation();setReview('${wiId}','${it.id}','approved')">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l4 4 6-6"/></svg>
+            </button>
+            <button class="rv-btn bad ${it.review==='rejected'?'on':''}" title="Reject ${it.id} (click again to mark needs review)" onclick="event.stopPropagation();setReview('${wiId}','${it.id}','rejected')">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+      ${open?itemPanel(wiId,it,kindOf(it.id)):''}`;
+  };
+  const filteredText=Object.keys(f).length?`<span class="showing">Showing ${filtered.length} of ${total}</span>`:'';
+  return `
+    <div class="list-expand">
+      <div class="panel-head">
+        <div class="filter-pills">
+          <button class="filter-pill all ${Object.keys(f).length?'':'on'}" onclick="clearFilter('${wiId}')">All<span class="fp-cnt">${total}</span></button>
+          ${pills}
+        </div>
+      </div>
+      ${filtered.length?filtered.map(row).join(''):`<div class="cat-empty">No ${Object.keys(f).join(' / ')} artifacts match the filter.</div>`}
+      ${busy?`<div class="deriving-row">${spinnerSVG()}Deriving ${deriveLabel(st).toLowerCase()}… new artifacts appear below</div>`:''}
+      <div class="panel-foot">
+        ${filteredText}
+        <button class="derive-btn" ${deriveDisabled?'disabled':''} title="${deriveTitle}" onclick="deriveClick('${wiId}')" style="${deriveDisabled?'opacity:.45;cursor:not-allowed':''}">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v10M3 8h10"/></svg>
+          ${busy?'Deriving…':deriveLabel(st)}
+        </button>
+      </div>
+    </div>`;
+}
+
+function itemPanel(wiId,it,kind){
+  const editing=listExpanded.editing===it.id;
+  return `
+    <div class="doc-expand">
+      <div class="doc-expand-head">
+        <div class="kicker">${it.id} · ${kind}</div>
+        <div style="display:flex;align-items:center;gap:6px">
+          ${editHint(wiId,it.id)}
+          <button class="edit-btn" onclick="event.stopPropagation();startEdit('${wiId}','${it.id}')" title="Edit ${it.id}" style="${editing?'opacity:.4':''}">
+            ${pencilSVG()}
+          </button>
+        </div>
+      </div>
+      ${editing?`
+        <div class="doc-edit">
+          <textarea id="docEditField" class="doc-textarea" data-edit-id="${it.id}">${it.body||''}</textarea>
+          <div class="doc-edit-actions">
+            <button class="btn" onclick="event.stopPropagation();cancelEdit('${wiId}','${it.id}')">Cancel</button>
+            <button class="btn primary" onclick="event.stopPropagation();saveEdit('${wiId}','${it.id}')">Save</button>
+          </div>
+        </div>`:
+        `<p style="font-size:13px;line-height:1.55;color:var(--text-secondary);margin:6px 0 0">${it.body||'No description provided.'}</p>`}
+    </div>`;
+}
+
+function showWork(id){
+  const w=workItems.find(x=>x.id===id);
+  const a=artifacts[id];
+  document.getElementById('title').textContent=w.title;
+  document.getElementById('subtitle').textContent='Zoomed into one work item. Each stage shows the artifacts derived from the previous level.';
+  setCrumbs([
+    {label:'synlace/calculator',action:showOverview},
+    {label:'Work items',action:showOverview},
+    {label:w.title}
+  ]);
+
+  document.getElementById('view').innerHTML = `
+  <div class="map">
+    <section class="root-card">
+      <div class="kicker">${w.id} · Work item</div>
+      <h2>${w.title}</h2>
+      <p>${w.intent}</p>
+      <div class="meta">
+        ${renderPill(w.status)}
+      </div>
+      <div class="zoomhint">Stable container for the entire change</div>
+    </section>
+
+    <div class="flow">
+      ${stage('Intent', 'Seed', [
+        card(a.intent.id,'Intent',a.intent.text,'Accepted',`showArtifact(${JSON.stringify(Object.assign({},a.intent,{type:'Intent',workId:id}))})`)
+      ])}
+      <div class="connector">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v10M4 9l4 4 4-4"/></svg>
+      </div>
+      ${stage('Documentation', 'Derived from intent', a.docs.map(d=>card(d.id,'Feature document',d.title,d.status,`showArtifact(${JSON.stringify(Object.assign({},d,{type:'Document',workId:id}))})`)))}
+      <div class="connector">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v10M4 9l4 4 4-4"/></svg>
+      </div>
+      ${stage('Semantic artifacts', 'Derived from documentation', a.semantics.map(d=>card(d.id,d.id.startsWith('REQ')?'Requirement':'Decision',d.title,d.status,`showArtifact(${JSON.stringify(Object.assign({},d,{type:d.id.startsWith('REQ')?'Requirement':'Decision',workId:id}))})`)))}
+      ${a.tickets.length?`
+      <div class="connector">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v10M4 9l4 4 4-4"/></svg>
+      </div>
+      ${stage('Implementation', 'Derived from requirements', a.tickets.map(d=>card(d.id,'Ticket',d.title,d.status,`showArtifact(${JSON.stringify(Object.assign({},d,{type:'Ticket',workId:id}))})`)))}
+      `:''}
+    </div>
+  </div>`;
+  updatePublish();
+}
+
+function stage(title,meta,cards){
+  return `<section class="stage">
+    <div class="stage-head"><div class="stage-title">${title}</div><div class="stage-meta">${meta}</div></div>
+    <div class="stage-grid">${cards.join('')}</div>
+  </section>`
+}
+
+function card(id,type,title,status,onclick){
+  return `<article class="artifact-card" onclick='${onclick}'>
+    <div class="kicker">${id} · ${type}</div>
+    <h3>${title}</h3>
+    <div class="meta">${renderPill(status)}</div>
+  </article>`
+}
+
+function showArtifact(a){
+  const work=workItems.find(w=>w.id===a.workId)||workItems[0];
+  document.getElementById('title').textContent=`${a.type || 'Artifact'} ${a.id}`;
+  document.getElementById('subtitle').textContent='Zoomed into an individual artifact with its lineage and downstream impact.';
+  setCrumbs([
+    {label:'synlace/calculator',action:showOverview},
+    {label:'Work items',action:showOverview},
+    {label:work.title,action:()=>showWork(work.id)},
+    {label:a.id}
+  ]);
+  document.getElementById('view').innerHTML = `
+    <div class="detail">
+      <section class="detail-main">
+        <button class="back" onclick="showWork('${work.id}')">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 3L5 8l5 5"/></svg>
+          Back to work item
+        </button>
+        <div class="kicker">${a.id} · ${a.type}</div>
+        <h2>${a.title}</h2>
+        <p>${a.body || 'This view is where the full artifact lives: content, metadata, review state, comments, diffs, and any structured fields defined by its artifact type.'}</p>
+        <p>The user has zoomed from the project level to the work item, and down to one concrete artifact without losing context.</p>
+      </section>
+      <aside class="detail-side">
+        <h3>Lineage</h3>
+        <div class="lineage">
+          <div class="lineage-item"><strong>Work item</strong>${work.title}</div>
+          <div class="lineage-item"><strong>Intent</strong>${artifacts[work.id].intent.id}</div>
+          <div class="lineage-item"><strong>Source document</strong>${artifacts[work.id].docs[0].id}</div>
+          <div class="lineage-item"><strong>Current artifact</strong>${a.id}</div>
+        </div>
+      </aside>
+    </div>`;
+  updatePublish();
+}
+
+showOverview();
+</script>
+</body>
+</html>

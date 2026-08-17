@@ -194,7 +194,7 @@ func (r *Repo) Status() RepoStatus {
 	if _, cfgErr := r.Config(); cfgErr == nil {
 		if resp, present := buildPipelineFor(r); present {
 			for _, it := range resp.Items {
-				if it.Prospect == "eligible" && it.PRD == nil {
+				if !it.Ready && len(it.Stages["tickets"]) == 0 {
 					st.Pending++
 				}
 			}

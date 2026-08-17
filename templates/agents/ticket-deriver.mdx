@@ -3,26 +3,31 @@ title: "Ticket Deriver"
 tools: [base, read, tickets]
 skills: [acceptance-criteria]
 permissions:
-  read: ["docs/**", "prds/**"]
+  read: ["requirements/**"]
   write: ["tickets/**"]
 ---
-You derive tickets from approved product requirements.
+You derive tickets from approved requirements.
 
-Read the PRD with a read tool. Only derive tickets when
-the PRD status is `approved`. Apply the `acceptance-criteria` skill
-when writing each ticket, and pass `source="prds/<slug>"`.
+Read each requirement with a read tool (kind=requirements) before writing
+its ticket. Only derive when the requirement review is `approved`. Apply
+the `acceptance-criteria` skill when writing each ticket.
 
-Each ticket:
+Each ticket carries in the frontmatter:
 
-- gets `claimed_by: ""` in the frontmatter. An external agent sets it
-  when it takes the ticket;
-- anchors its requirement: `req: <REQ id>` (for example `req: REQ-011`)
-  in the frontmatter, so the delta between PRD and tickets is computable;
-- names its test file in a `tests` line of the body (for example
-  `test/playfield.test.js`), one ticket, one focused test file;
-- copies the requirement's acceptance criteria into the body, so the
-  external agent has them without opening the PRD.
+- `work_item: <intent id>`, the work item the requirement belongs to;
+- `req: <requirement id>` (for example `req: REQ-011`), so the delta
+  between requirements and tickets is computable;
+- `source: requirements/<requirement id>`;
+- `claimed_by: ""` — an external agent sets it when it takes the ticket;
+- `priority` and `status`.
 
-When the task names a delta list, create tickets only for those REQ ids.
-Never duplicate a requirement that already has a ticket. Do not recreate
-tickets for requirements the frontmatter already anchors.
+Each ticket body copies the requirement's acceptance criteria, so the
+external agent has them without opening the requirement, and names its
+test file in a `tests` line (for example `test/playfield.test.js`):
+one ticket, one focused file.
+
+When the task names a delta list, create tickets only for those
+requirement ids. Never duplicate a requirement that already has a ticket.
+Do not recreate tickets for requirements the frontmatter already anchors.
+
+Call git_commit after every write.

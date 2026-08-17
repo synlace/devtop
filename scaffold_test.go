@@ -30,12 +30,15 @@ func TestScaffoldRepo_MaterializesDefaults(t *testing.T) {
 	for _, f := range []string{
 		"config.yml",
 		"agents/docs.mdx",
-		"agents/classify-doc.mdx",
-		"agents/prd-builder.mdx",
+		"agents/doc-builder.mdx",
+		"agents/semantics-builder.mdx",
 		"agents/ticket-deriver.mdx",
 		"skills/ste100.mdx",
 		"skills/acceptance-criteria.mdx",
-		"skills/prd-review.mdx",
+		"skills/artifact-review.mdx",
+		"intents/",
+		"documentation/",
+		"requirements/",
 		"docs/index.mdx",
 	} {
 		if _, err := os.Stat(filepath.Join(p.DevTop, f)); err != nil {
@@ -85,7 +88,7 @@ func TestScaffoldRepo_KeepsRepoAuthoredFiles(t *testing.T) {
 	if !strings.Contains(string(got), "custom body") {
 		t.Error("repo-authored agent was overwritten by the scaffold")
 	}
-	if _, err := os.Stat(filepath.Join(agents, "prd-builder.mdx")); err != nil {
+	if _, err := os.Stat(filepath.Join(agents, "semantics-builder.mdx")); err != nil {
 		t.Error("missing default agent not scaffolded alongside repo files")
 	}
 	contract, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
@@ -115,7 +118,7 @@ func TestRepoInit_DirectScaffold(t *testing.T) {
 	if st := r.Status(); st.Status != "nogit" || !st.Initialized {
 		t.Fatalf("expected nogit initialized, got %+v", st)
 	}
-	for _, agent := range []string{"docs", "classify-doc", "prd-builder", "ticket-deriver"} {
+	for _, agent := range []string{"docs", "doc-builder", "semantics-builder", "ticket-deriver"} {
 		if _, err := os.Stat(filepath.Join(p.DevTop, "agents", agent+".mdx")); err != nil {
 			t.Errorf("agent %s not scaffolded by Repo.Init: %v", agent, err)
 		}

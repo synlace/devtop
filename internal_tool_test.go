@@ -157,7 +157,7 @@ func TestDispatchRepoTool_AuthorizesAgainstDefaultAgent(t *testing.T) {
 		want string
 	}{
 		{"create_ticket", map[string]interface{}{"title": "t", "description": "d", "priority": "medium"}, "write scope"},
-		{"write_artifact", map[string]interface{}{"kind": "prds", "id": "x", "content": "c"}, "write scope"},
+		{"write_artifact", map[string]interface{}{"kind": "requirements", "id": "x", "content": "c"}, "write scope"},
 	} {
 		out := dispatchRepoTool(repo, tt.name, tt.args)
 		if !strings.Contains(out, tt.want) {
@@ -171,16 +171,16 @@ func TestDispatchRepoTool_AuthorizesAgainstDefaultAgent(t *testing.T) {
 	if strings.Contains(out, "not allowed") || strings.Contains(out, "outside") {
 		t.Fatalf("write_artifact to docs should be allowed for the docs agent, got %q", out)
 	}
-	prdDir := filepath.Join(repo.paths.DevTop, "prds")
+	prdDir := filepath.Join(repo.paths.DevTop, "requirements")
 	if err := os.MkdirAll(prdDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(prdDir, "data-layer.mdx"), []byte("---\ntitle: DL\n---\nBody"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	out = dispatchRepoTool(repo, "read_artifact", map[string]interface{}{"kind": "prds", "id": "data-layer"})
+	out = dispatchRepoTool(repo, "read_artifact", map[string]interface{}{"kind": "requirements", "id": "data-layer"})
 	if !strings.Contains(out, "Body") {
-		t.Fatalf("read_artifact should read prds for the docs agent, got %q", out)
+		t.Fatalf("read_artifact should read requirements for the docs agent, got %q", out)
 	}
 	// A kind that resolves to nothing reads as not-found (fail-safe either at
 	// the permission mapper or in the tool).
