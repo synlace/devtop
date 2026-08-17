@@ -13,7 +13,10 @@ devtop *args:
     set -- {{args}}
     SRC="{{devtop_src}}"
     PROJECT_DIR="$(pwd)"
-    DEVTOP_DIR="${DEVTOP_DIR:-$PROJECT_DIR/.devtop}"
+    # DEVTOP_DIR is the root the instance scans and the anchor for
+    # registering projects — the folder you run from, like /workspace in
+    # prod. Projects under it each own their .devtop.
+    DEVTOP_DIR="${DEVTOP_DIR:-$PROJECT_DIR}"
     IMAGE="${DEVTOP_IMAGE:-ghcr.io/synlace/devtop:latest}"
 
     require_frontend_deps() {
@@ -44,7 +47,6 @@ devtop *args:
             echo "✔ devtop-bin ready (serves the built React app + API)"
             ;;
         serve)
-            mkdir -p "$DEVTOP_DIR/docs" "$DEVTOP_DIR/tickets" "$DEVTOP_DIR/threads" "$DEVTOP_DIR/data"
             cd "$SRC"
             load_env
             export DEVTOP_DIR="$DEVTOP_DIR"
@@ -53,7 +55,6 @@ devtop *args:
             ;;
         dev)
             require_frontend_deps
-            mkdir -p "$DEVTOP_DIR/docs" "$DEVTOP_DIR/tickets" "$DEVTOP_DIR/threads" "$DEVTOP_DIR/data"
             cd "$SRC"
             load_env
             export DEVTOP_DIR="$DEVTOP_DIR"
@@ -106,8 +107,9 @@ devtop *args:
             docker push "$IMAGE"
             ;;
         init)
-            mkdir -p "$DEVTOP_DIR/docs" "$DEVTOP_DIR/tickets" "$DEVTOP_DIR/threads" "$DEVTOP_DIR/data"
-            echo "✔ Created $DEVTOP_DIR/ directory structure"
+            echo "  Add a project from the UI (Add project) and Initialize it;"
+            echo "  init scaffolds that project's .devtop. Nothing is created"
+            echo "  under DEVTOP_DIR ($DEVTOP_DIR) at boot."
             ;;
         install)
             cd "$SRC"
@@ -119,8 +121,7 @@ devtop *args:
             ;;
         clean)
             rm -rf "$SRC/frontend/dist" "$SRC/devtop-bin"
-            rm -rf "$DEVTOP_DIR"
-            echo "✔ Removed frontend/dist, devtop-bin, and $DEVTOP_DIR"
+            echo "✔ Removed frontend/dist and devtop-bin"
             ;;
         *)
             echo "Unknown devtop subcommand: ${1:-}"
