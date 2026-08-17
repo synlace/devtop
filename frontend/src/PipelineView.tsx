@@ -278,6 +278,9 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
           const open = expanded.has(item.id)
           const kinds = Object.keys(item.stages)
           const totalArtifacts = kinds.reduce((n, k) => n + (item.stages[k]?.length ?? 0), 0)
+          const intentKey = `intents/${item.id}:review`
+          const intentErr = actionError?.key === intentKey ? actionError.msg : null
+          const intentArt: PipelineArtifact = { id: item.id, kind: 'intents', title: item.title, review: item.review, stale: item.stale }
           return (
             <div key={item.id} className="border border-borderDark rounded-xl overflow-hidden bg-[#0b1220]/40">
               <div
@@ -288,7 +291,25 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
                 <div className="font-mono text-xs text-slate-400 flex-shrink-0">{item.id}</div>
                 <div className="text-sm font-medium text-slate-200 truncate">{item.title}</div>
                 {item.stale && chip('bg-orange-500/10 border-orange-500/20 text-orange-300', 'stale')}
-                <Pill value={item.review} />
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <Pill value={item.review} />
+                  <button
+                    className={`${BTN_ROW} ${item.review === 'approved' ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300' : 'border-borderDark text-slate-500 hover:text-emerald-300'}`}
+                    title="Approve intent (click again to mark needs review)"
+                    disabled={!!busy}
+                    onClick={(e) => { e.stopPropagation(); void review(intentArt, 'approved') }}
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" /></svg>
+                  </button>
+                  <button
+                    className={`${BTN_ROW} ${item.review === 'rejected' ? 'bg-rose-500/15 border-rose-500/40 text-rose-300' : 'border-borderDark text-slate-500 hover:text-rose-300'}`}
+                    title="Reject intent (click again to mark needs review)"
+                    disabled={!!busy}
+                    onClick={(e) => { e.stopPropagation(); void review(intentArt, 'rejected') }}
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 6l12 12M18 6L6 18" /></svg>
+                  </button>
+                </div>
                 <div className="ml-auto flex items-center gap-3">
                   <span className="text-[11px] text-slate-500">{totalArtifacts} artifacts</span>
                   {item.uncovered > 0 && chip('bg-rose-500/10 border-rose-500/20 text-rose-300', `${item.uncovered} uncovered`)}
@@ -297,6 +318,7 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
                     : chip('bg-amber-500/10 border-amber-500/20 text-amber-300', 'pending')}
                 </div>
               </div>
+              {intentErr && <div className="px-4 pb-2 text-[11px] text-rose-400 font-mono">{intentErr}</div>}
 
               {open && (
                 <div className="border-t border-borderDark px-4 py-3 space-y-5">
