@@ -564,7 +564,7 @@ func TestHandler_FSList_DefaultSeed(t *testing.T) {
 	defer func() { DEVTOP_DIR = oldDir }()
 
 	ws := t.TempDir()
-	DEVTOP_DIR = filepath.Join(ws, ".devtop")
+	DEVTOP_DIR = ws
 	seed := filepath.Join(ws, "seed-repo")
 	if err := os.MkdirAll(seed, 0755); err != nil {
 		t.Fatal(err)

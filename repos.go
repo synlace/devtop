@@ -605,10 +605,11 @@ func handleAPIRepoInit(w http.ResponseWriter, r *http.Request) {
 // container that is the mounted volume, not the empty OS home. Fall back to
 // the home directory, then the filesystem root.
 func browseSeed() string {
-	if ws := filepath.Dir(DEVTOP_DIR); ws != "" {
-		if fi, err := os.Stat(ws); err == nil && fi.IsDir() {
-			return ws
-		}
+	// DEVTOP_DIR is the root that contains the user's project dirs, so the
+	// Add-repo browser starts there (the old single-repo layout seeded the
+	// parent of a .devtop dir; root + registered projects seeds the root).
+	if fi, err := os.Stat(DEVTOP_DIR); err == nil && fi.IsDir() {
+		return DEVTOP_DIR
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		return home
