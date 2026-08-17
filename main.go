@@ -174,6 +174,7 @@ func main() {
 	mux.HandleFunc("POST /api/pipeline/prospect/classify", handleAPIProspectClassify)
 	mux.HandleFunc("GET /api/artifacts/{kind}", handleAPIArtifacts)
 	mux.HandleFunc("GET /api/artifacts/{kind}/{id...}", handleAPIArtifactDetail)
+	mux.HandleFunc("POST /api/intents", handleAPIIntentCreate)
 	mux.HandleFunc("GET /api/viewstate", handleAPIGetViewState)
 	mux.HandleFunc("PUT /api/viewstate", handleAPIPutViewState)
 	mux.HandleFunc("GET /api/favourites", handleAPIGetFavourites)

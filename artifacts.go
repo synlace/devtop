@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -171,4 +172,82 @@ func handleAPIArtifactDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// nextIntentID scans the intents kind dir for the highest INT-<n> already
+// used and returns INT-<n+1>, so seeds never collide and re-runs are stable.
+func nextIntentID(root, ext string) string {
+	files, _ := filepath.Glob(filepath.Join(root, "INT-*"+ext))
+	maxID := 0
+	for _, f := range files {
+		var n int
+		if _, err := fmt.Sscanf(strings.TrimSuffix(filepath.Base(f), ext), "INT-%d", &n); err == nil && n > maxID {
+			maxID = n
+		}
+	}
+	return fmt.Sprintf("INT-%03d", maxID+1)
+}
+
+// handleAPIIntentCreate seeds a new work item. The intent artifact is the
+// human-authored seed of a derivation chain (agent_writable=false): it gets
+// review: pending, and documentation derives only after the user approves it.
+//
+//	POST /api/intents  {"title":"...","intent":"..."}
+func handleAPIIntentCreate(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
+	cfg, err := repo.Config()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	kind, ok := cfg.ArtifactKinds["intents"]
+	if !ok {
+		http.Error(w, "no intents kind configured", 404)
+		return
+	}
+	ext := kind.Extension
+	if ext == "" {
+		ext = ".mdx"
+	}
+	var body struct {
+		Title  string `json:"title"`
+		Intent string `json:"intent"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON body", 400)
+		return
+	}
+	title := strings.TrimSpace(body.Title)
+	intentBody := strings.TrimSpace(body.Intent)
+	if title == "" {
+		http.Error(w, "title is required", 400)
+		return
+	}
+	if intentBody == "" {
+		intentBody = title
+	}
+	id := nextIntentID(artifactKindRootFor(repo.paths, kind), ext)
+	meta := map[string]interface{}{"title": title, "review": "pending"}
+	content := composeFrontmatter(meta, intentBody)
+	path := filepath.Join(artifactKindRootFor(repo.paths, kind), id+ext)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	gitCommitIn(repo, "intents: create "+id)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":      id,
+		"title":   title,
+		"review":  "pending",
+		"content": intentBody,
+		"created": true,
+	})
 }

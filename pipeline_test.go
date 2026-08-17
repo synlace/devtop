@@ -383,6 +383,51 @@ func TestPipelineRow_UncoveredDelta(t *testing.T) {
 	}
 }
 
+func TestHandleAPIIntentCreate(t *testing.T) {
+	setupPipelineEnv(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/intents", handleAPIIntentCreate)
+
+	post := func(title string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/api/intents", strings.NewReader(`{"title":"`+title+`"}`))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := post("A calculator that remembers")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["id"] != "INT-001" || out["review"] != "pending" {
+		t.Errorf("created intent = %+v, want INT-001 pending", out)
+	}
+	meta := readMeta(t, "intents/INT-001.mdx")
+	if m, _ := meta["review"].(string); m != "pending" {
+		t.Errorf("review = %q, want pending", m)
+	}
+
+	// The next seed advances the id and never collides.
+	rec2 := post("Another")
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("second create status = %d, body = %s", rec2.Code, rec2.Body.String())
+	}
+	var out2 map[string]interface{}
+	_ = json.Unmarshal(rec2.Body.Bytes(), &out2)
+	if out2["id"] != "INT-002" {
+		t.Errorf("second id = %v, want INT-002", out2["id"])
+	}
+
+	// A blank title is rejected.
+	if rec := post("   "); rec.Code != http.StatusBadRequest {
+		t.Errorf("blank title expected 400, got %d", rec.Code)
+	}
+}
+
 func TestAPIPipeline_Empty(t *testing.T) {
 	setupPipelineEnv(t)
 	mux := http.NewServeMux()

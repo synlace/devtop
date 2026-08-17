@@ -73,6 +73,8 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [progress, setProgress] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
+  const [title, setTitle] = useState('')
+  const [intentText, setIntentText] = useState('')
 
   const load = useCallback(async (clearAction = true) => {
     try {
@@ -165,6 +167,30 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
     }
   }
 
+  const createIntent = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (busy || !title.trim()) return
+    setBusy('new-intent')
+    try {
+      const res = await fetch(api('/api/intents'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: title.trim(), intent: intentText.trim() }),
+      })
+      if (!res.ok) {
+        const j = await res.json().catch(() => null)
+        throw new Error(j?.error ?? ('create ' + res.status))
+      }
+      setTitle('')
+      setIntentText('')
+    } catch (e) {
+      setActionError({ key: 'new-intent', msg: String(e) })
+    } finally {
+      await load(true)
+      setBusy(null)
+    }
+  }
+
   const toggleItem = (id: string) => {
     setExpanded(prev => {
       const n = new Set(prev)
@@ -221,9 +247,30 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
       </div>
 
       {data.items.length === 0 && (
-        <div className="text-xs text-slate-500 border border-borderDark rounded-xl p-6">
+        <div className="text-xs text-slate-500 border border-borderDark rounded-xl p-6 mb-4">
           No work items yet. An intent is the seed: enter it, approve it, and derive the documentation.
         </div>
+      )}
+
+      <form onSubmit={(e) => void createIntent(e)} className="flex gap-2 items-center mb-4">
+        <input
+          className="flex-1 px-3 py-2 rounded-lg bg-[#0b1220] border border-borderDark text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-accentBlue/60"
+          placeholder="New intent (the seed of a work item)…"
+          value={title}
+          onChange={e => setTitle(e.target.value)}
+        />
+        <input
+          className="flex-1 px-3 py-2 rounded-lg bg-[#0b1220] border border-borderDark text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-accentBlue/60"
+          placeholder="Intent context (optional)…"
+          value={intentText}
+          onChange={e => setIntentText(e.target.value)}
+        />
+        <button type="submit" className={`${ACTION_BTN} bg-accentBlue text-slate-100 hover:bg-accentBlue/80`} disabled={!!busy || !title.trim()}>
+          {busy === 'new-intent' ? 'Creating…' : 'Add work item'}
+        </button>
+      </form>
+      {actionError?.key === 'new-intent' && (
+        <div className="text-xs text-rose-400 font-mono mb-4">{actionError.msg}</div>
       )}
 
       <div className="space-y-4">
