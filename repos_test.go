@@ -32,14 +32,42 @@ func newRepoTemp(t *testing.T, name string, initDevtop bool) string {
 // the environment; used by tests that exercise registry.Add directly. Every
 // helper pins the registry file into a temp dir so tests never write the
 // real user config.
+// resetRegistry empties the shared in-memory registry. Registry state is
+// global across tests, so harnesses and cleanRegistry reset it explicitly
+// instead of relying on deferred cleanup.
+func resetRegistry() {
+	registry.mu.Lock()
+	registry.repos = nil
+	registry.byName = map[string]*Repo{}
+	registry.mu.Unlock()
+}
+
 func cleanRegistry(t *testing.T) {
 	t.Helper()
 	t.Setenv("DEVTOP_REPOS_FILE", filepath.Join(t.TempDir(), "repos.json"))
-	t.Cleanup(func() {
-		registry.mu.Lock()
-		registry.repos = nil
-		registry.byName = map[string]*Repo{}
-		registry.mu.Unlock()
+	resetRegistry()
+	t.Cleanup(resetRegistry)
+}
+
+// registerWorkspaceRepo resets the shared registry and registers the current
+// DEVTOP_DIR globals as the single project. Single mode is gone, so harnesses
+// that used to rely on Resolve("") synthesizing a repo over the globals now
+// register it explicitly: Repo.Dir is DEVTOP_DIR itself (the harnesses write
+// config.yml there), Root is its parent.
+func registerWorkspaceRepo(t *testing.T) {
+	t.Helper()
+	resetRegistry()
+	registry.addLocked(&Repo{
+		Name: repoNameForRoot(DEVTOP_DIR),
+		Root: filepath.Dir(DEVTOP_DIR),
+		Dir:  DEVTOP_DIR,
+		paths: RepoPaths{
+			DevTop:  DEVTOP_DIR,
+			Docs:    DOCS_DIR,
+			Tickets: TICKETS_DIR,
+			Threads: THREADS_DIR,
+			Data:    DATA_DIR,
+		},
 	})
 }
 
@@ -65,18 +93,18 @@ func stringsJoin(parts []string, sep string) string {
 	return out
 }
 
-func TestRegistryResolve_DefaultSynthetic(t *testing.T) {
-	// Empty registry resolves to a synthetic repo built from the globals.
-	repo, err := registry.Resolve("")
-	if err != nil {
+func TestRegistryResolve_EmptyErrors(t *testing.T) {
+	// A registry with no registered projects resolves nothing: there is no
+	// synthetic single-repo fallback.
+	cleanRegistry(t)
+	t.Setenv("DEVTOP_REPOS", "")
+	if err := initRegistry(); err != nil {
 		t.Fatal(err)
 	}
-	if repo.paths.DevTop != DEVTOP_DIR {
-		t.Fatalf("expected devtop %s, got %s", DEVTOP_DIR, repo.paths.DevTop)
+	if _, err := registry.Resolve(""); err == nil {
+		t.Fatal("Resolve(\"\") must fail without registered repos")
 	}
-	if !repo.Single {
-		t.Fatal("expected single-repo fallback")
-	}
+	defer func() { registry.repos = nil; registry.byName = map[string]*Repo{} }()
 }
 
 func TestRegistry_MultiRepoResolveAndIsolation(t *testing.T) {
@@ -427,9 +455,13 @@ func TestRegistry_RemoveAndLastRepoGuard(t *testing.T) {
 	if _, err := registry.Resolve("rem-b"); err != nil {
 		t.Fatal("rem-b should remain")
 	}
-	// Removing the last repo is refused so the UI can never get locked out.
-	if _, err := registry.Remove("rem-b"); err == nil {
-		t.Fatal("expected last-repo guard error")
+	// The last repo may be removed: an empty registry is a valid state and
+	// the UI offers the Add-project flow to recover.
+	if _, err := registry.Remove("rem-b"); err != nil {
+		t.Fatalf("expected last-repo removal to succeed: %v", err)
+	}
+	if got := registry.List(); len(got) != 0 {
+		t.Fatalf("expected an empty registry, got %d repos", len(got))
 	}
 	data, _ := os.ReadFile(file)
 	if string(data) == "" {
@@ -437,8 +469,8 @@ func TestRegistry_RemoveAndLastRepoGuard(t *testing.T) {
 	}
 	var paths []string
 	json.Unmarshal(data, &paths)
-	if len(paths) != 1 || paths[0] == "" {
-		t.Fatalf("unexpected persisted paths: %v", paths)
+	if len(paths) != 0 {
+		t.Fatalf("expected persisted paths to be empty, got %v", paths)
 	}
 }
 
@@ -464,7 +496,7 @@ func TestHandler_DeleteRepo(t *testing.T) {
 		t.Fatal("del-a should be gone")
 	}
 
-	// Unknown repo -> 404; last repo -> 409.
+	// Unknown repo -> 404; the last repo still removes.
 	req = httptest.NewRequest("DELETE", "/api/repos/nope", nil)
 	req.SetPathValue("name", "nope")
 	rr = httptest.NewRecorder()
@@ -476,8 +508,11 @@ func TestHandler_DeleteRepo(t *testing.T) {
 	req.SetPathValue("name", "del-b")
 	rr = httptest.NewRecorder()
 	handleAPIRepoDelete(rr, req)
-	if rr.Code != http.StatusConflict {
-		t.Fatalf("expected 409 for last repo, got %d", rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for last repo, got %d", rr.Code)
+	}
+	if got := registry.List(); len(got) != 0 {
+		t.Fatalf("expected an empty registry, got %d repos", len(got))
 	}
 }
 
@@ -577,35 +612,29 @@ func TestRegistryFilePathPreferConfigVolume(t *testing.T) {
 	}
 }
 
-func TestRegistryHasSynthetic(t *testing.T) {
+func TestRegistryEmpty_IsValidState(t *testing.T) {
 	cleanRegistry(t)
-	if registryHasSynthetic() {
-		t.Fatal("empty registry reported synthetic")
+	if got := registry.List(); len(got) != 0 {
+		t.Fatalf("fresh registry should be empty, got %d", len(got))
 	}
-	real := filepath.Join(t.TempDir(), "real")
-	if err := os.MkdirAll(real, 0755); err != nil {
-		t.Fatal(err)
+	if !zeroRepoInstance() {
+		t.Fatal("an empty registry must report zeroRepoInstance")
 	}
-	if _, err := registry.Add(real); err != nil {
-		t.Fatal(err)
+	if _, err := registry.Resolve(""); err == nil {
+		t.Fatal("Resolve(\"\") must fail on an empty registry")
 	}
-	if registryHasSynthetic() {
-		t.Fatal("real repo reported synthetic")
-	}
-	registry.mu.Lock()
-	registry.repos = []*Repo{{Name: "synthetic", Single: true}}
-	registry.byName = map[string]*Repo{"synthetic": {Name: "synthetic", Single: true}}
-	registry.mu.Unlock()
-	if !registryHasSynthetic() {
-		t.Fatal("synthetic-only registry not reported")
+	if _, err := registry.Resolve("x"); err == nil {
+		t.Fatal("Resolve(\"x\") must fail on an empty registry")
 	}
 }
 
-func TestInitRegistryFallsBackByWorkspaceShape(t *testing.T) {
+func TestInitRegistry_ZeroByDefault(t *testing.T) {
 	oldDir := DEVTOP_DIR
 	defer func() { DEVTOP_DIR = oldDir }()
 
-	// A plain folder mounts with zero repos: no synthetic fallback.
+	// Root without DEVTOP_REPOS and without a persisted registry yields zero
+	// projects, regardless of whether the root is a git checkout: projects
+	// are registered explicitly, never synthesized.
 	plain := t.TempDir()
 	DEVTOP_DIR = filepath.Join(plain, ".devtop")
 	cleanRegistry(t)
@@ -614,10 +643,10 @@ func TestInitRegistryFallsBackByWorkspaceShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := registry.List(); len(got) != 0 {
-		t.Fatalf("plain folder synthesized %d repos, want 0", len(got))
+		t.Fatalf("plain folder synthesized %d projects, want 0", len(got))
 	}
 
-	// A git checkout still gets the classic single-repo fallback.
+	// A git checkout at the root changes nothing: no classic fallback.
 	repoWorkspace := t.TempDir()
 	if _, err := execGit(repoWorkspace, "init", "-q"); err != nil {
 		t.Fatal(err)
@@ -627,9 +656,8 @@ func TestInitRegistryFallsBackByWorkspaceShape(t *testing.T) {
 	if err := initRegistry(); err != nil {
 		t.Fatal(err)
 	}
-	list := registry.List()
-	if len(list) != 1 || !list[0].Single {
-		t.Fatalf("git workspace synthesized %d repos, want the single fallback", len(list))
+	if got := registry.List(); len(got) != 0 {
+		t.Fatalf("git workspace synthesized %d projects, want 0", len(got))
 	}
 }
 
@@ -843,11 +871,10 @@ func TestSingleRepoThreadRoundTrip(t *testing.T) {
 	DEVTOP_DIR = devTop
 	cleanRegistry(t)
 	registry.addLocked(&Repo{
-		Name:   "workspace",
-		Root:   root,
-		Dir:    devTop,
-		Single: true,
-		paths:  newRepoPaths(devTop),
+		Name:  "workspace",
+		Root:  root,
+		Dir:   devTop,
+		paths: newRepoPaths(devTop),
 	})
 
 	// Create with the empty context, as the frontend sends in classic mode.

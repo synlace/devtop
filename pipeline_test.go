@@ -53,6 +53,10 @@ func setupPipelineEnv(t *testing.T) string {
 	if err := writeEngineConfigFile(tempDir); err != nil {
 		t.Fatal(err)
 	}
+	// Register the workspace as the default project so buildPipeline and the
+	// repo-scoped handlers resolve it, as Resolve("") synthesized before
+	// single mode was removed.
+	registerWorkspaceRepo(t)
 	return tempDir
 }
 
@@ -293,12 +297,9 @@ func TestUnapprovedSiblings_BlockDelta(t *testing.T) {
 
 func TestHandleDerive_TicketsCoveredShortCircuits(t *testing.T) {
 	setupPipelineEnv(t)
-	// Route the request at the synthetic repo over the temp workspace: a
-	// stale registered repo from another test would skew cfg/p below.
-	registry.mu.Lock()
-	registry.repos = nil
-	registry.byName = map[string]*Repo{}
-	registry.mu.Unlock()
+	// setupPipelineEnv registered the workspace as the default project;
+	// handleAPIDerive resolves it and reads the fixture kinds written to
+	// config.yml in DEVTOP_DIR.
 
 	seedWorkItem(t, "INT-001")
 	writeArtifact(t, "requirements/REQ-001.mdx", "---\ntitle: \"R1\"\nwork_item: INT-001\nreview: approved\n---\n\nB\n")

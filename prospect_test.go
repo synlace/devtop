@@ -38,6 +38,7 @@ func setupClassifyEnv(t *testing.T) string {
 	if err := writeEngineConfigFile(tempDir); err != nil {
 		t.Fatal(err)
 	}
+	registerWorkspaceRepo(t)
 	return tempDir
 }
 
@@ -74,15 +75,15 @@ func readMeta(t *testing.T, rel string) map[string]interface{} {
 	return meta
 }
 
-// testRepo returns a synthetic repo over the current globals, as registry
-// Resolve("") would, for tests that exercise repo-scoped logic.
+// testRepo returns a repo over the current globals, as registry Resolve("")
+// did before single mode was removed, for tests that exercise repo-scoped
+// logic.
 func testRepo() *Repo {
 	return &Repo{
-		Name:   repoNameForRoot(DEVTOP_DIR),
-		Root:   filepath.Dir(DEVTOP_DIR),
-		Dir:    DEVTOP_DIR,
-		Single: true,
-		paths:  defaultPaths(),
+		Name:  repoNameForRoot(DEVTOP_DIR),
+		Root:  filepath.Dir(DEVTOP_DIR),
+		Dir:   DEVTOP_DIR,
+		paths: defaultPaths(),
 	}
 }
 

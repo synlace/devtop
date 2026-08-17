@@ -13,13 +13,16 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// Repo scope: one devtop instance can serve several repositories. The registry
-// is the only instance-level state — repos never know which instance serves
-// them, and every API request resolves its active repo explicitly.
+// Repo scope: every devtop instance serves a set of project directories (the
+// registry), and every API request resolves its active repo explicitly. There
+// is no single-repo mode: a project is a directory that owns a .devtop/
+// (usually a git checkout), registered by hand or by path. The registry is the
+// only instance-level state — repos never know which instance serves them.
 //
-// Layout (standard): <root>/.devtop manages the repo; docs, tickets, threads
-// and data live there. The legacy single-repo mode keeps DEVTOP_DIR untouched
-// and name "" resolves to it.
+// Layout (standard): <project>/.devtop manages the repo; docs, tickets,
+// threads and data live there. The devtop root (DEVTOP_DIR) is the directory
+// the user points the instance at — typically the mounted volume — used for
+// the folder browser and as a default anchor for registering projects.
 
 // RepoPaths are the storage directories of one repo.
 type RepoPaths struct {
@@ -40,13 +43,12 @@ func newRepoPaths(devTop string) RepoPaths {
 	}
 }
 
-// Repo is the per-repository context: its devtop dir, storage paths, git
-// status, and lazily-parsed engine config.
+// Repo is the per-project context: its devtop dir, storage paths, git status,
+// and lazily-parsed engine config.
 type Repo struct {
 	Name        string    `json:"name"`
 	Root        string    `json:"path"`   // project root (workspace root)
 	Dir         string    `json:"devtop"` // .devtop directory
-	Single      bool      `json:"single"` // legacy single-repo mode
 	paths       RepoPaths `json:"-"`
 	cfg         EngineConfig
 	cfgErr      error
@@ -64,13 +66,19 @@ type RepoStatus struct {
 	Dirty       int    `json:"dirty,omitempty"`
 	Docs        int    `json:"docs"`
 	Initialized bool   `json:"initialized"`
-	Single      bool   `json:"single"`
 	HasGit      bool   `json:"has_git"`
 	Pending     int    `json:"pending"`
 }
 
-// defaultPaths builds the legacy RepoPaths from the package globals.
+// defaultPaths returns the paths of the default (first) registered project,
+// or the package globals when the registry is empty (hermetic tests and
+// legacy shims that predate repo scoping).
 func defaultPaths() RepoPaths {
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	if len(registry.repos) > 0 {
+		return registry.repos[0].paths
+	}
 	return RepoPaths{
 		DevTop:  DEVTOP_DIR,
 		Docs:    DOCS_DIR,
@@ -165,7 +173,6 @@ func (r *Repo) Status() RepoStatus {
 		Name:   r.Name,
 		Path:   r.Root,
 		Status: "ready",
-		Single: r.Single,
 	}
 	if r.Initialized() {
 		st.Initialized = true
@@ -295,8 +302,8 @@ func saveRegistryFile() error {
 
 // initRegistry builds the registry from DEVTOP_REPOS (path-list of project
 // roots) merged with the persisted registry file. It must run after the
-// global dirs are resolved. Legacy behavior: no DEVTOP_REPOS and no registry
-// file means a single repo from the globals, named "".
+// devtop root is resolved. No DEVTOP_REPOS and no registry file means zero
+// projects — the UI shows the Add-project state, never a synthesized repo.
 func initRegistry() error {
 	registry.mu.Lock()
 	defer registry.mu.Unlock()
@@ -305,23 +312,6 @@ func initRegistry() error {
 
 	raw := strings.TrimSpace(os.Getenv("DEVTOP_REPOS"))
 	roots := loadRegistryFile()
-	if raw == "" && len(roots) == 0 {
-		// Classic single-repo mode only when the workspace is itself a
-		// repository (a git checkout, or already has a .devtop). A fresh
-		// folder-of-repos mount boots with zero repos instead: nothing is
-		// written until a repo is added and initialized.
-		if workspaceIsRepo() {
-			r := &Repo{
-				Name:   repoNameForRoot(DEVTOP_DIR),
-				Root:   filepath.Dir(DEVTOP_DIR),
-				Dir:    DEVTOP_DIR,
-				Single: true,
-				paths:  defaultPaths(),
-			}
-			registry.addLocked(r)
-		}
-		return nil
-	}
 
 	seen := map[string]bool{}
 	all := append(filepath.SplitList(raw), roots...)
@@ -377,22 +367,15 @@ func (reg *Registry) addLocked(r *Repo) {
 	reg.byName[r.Name] = r
 }
 
-// Resolve returns the repo named by name, or the registry default for "".
-// With no registered repos (hermetic tests, config-less runs) the default is a
-// synthetic repo built from the current globals, preserving classic
-// single-repo behavior.
+// Resolve returns the repo named by name, or the first registered repo for "".
+// Zero registered repos is an error: there is no synthetic single-repo
+// fallback, the UI must offer the Add-project state instead.
 func (reg *Registry) Resolve(name string) (*Repo, error) {
 	reg.mu.RLock()
 	defer reg.mu.RUnlock()
 	if name == "" || name == "__default__" {
 		if len(reg.repos) == 0 {
-			return &Repo{
-				Name:   repoNameForRoot(DEVTOP_DIR),
-				Root:   filepath.Dir(DEVTOP_DIR),
-				Dir:    DEVTOP_DIR,
-				Single: true,
-				paths:  defaultPaths(),
-			}, nil
+			return nil, fmt.Errorf("no repos registered")
 		}
 		return reg.repos[0], nil
 	}
@@ -444,19 +427,14 @@ func (reg *Registry) Add(root string) (*Repo, error) {
 	return r, nil
 }
 
-// Remove unregisters a repo by name. The last repo cannot be removed: an
-// empty registry would silently fall back to single-repo mode and leave the
-// UI with no way to add repos. Returns an error otherwise.
+// Remove unregisters a repo by name. The last repo may be removed: an empty
+// registry is a valid state, and the UI's Add-project flow re-registers.
 func (reg *Registry) Remove(name string) (*Repo, error) {
 	reg.mu.Lock()
 	r, ok := reg.byName[name]
 	if !ok {
 		reg.mu.Unlock()
 		return nil, fmt.Errorf("unknown repo %q", name)
-	}
-	if len(reg.repos) <= 1 {
-		reg.mu.Unlock()
-		return nil, fmt.Errorf("cannot remove the last registered repo")
 	}
 	out := make([]*Repo, 0, len(reg.repos)-1)
 	for _, e := range reg.repos {
@@ -539,63 +517,11 @@ func repoFromRequest(w http.ResponseWriter, r *http.Request) (*Repo, bool) {
 	return repo, true
 }
 
-// registryHasSynthetic reports whether the registry holds only the legacy
-// classic single-repo fallback — the workspace itself is repo-shaped and
-// should be seeded at boot. Used by main() to decide whether the default
-// workspace materializes on first run.
-func registryHasSynthetic() bool {
-	list := registry.List()
-	return len(list) == 1 && list[0].Single
-}
-
-// hasRealRepos reports whether any registered (non-synthetic) repo exists.
-func hasRealRepos() bool {
-	for _, r := range registry.List() {
-		if !r.Single {
-			return true
-		}
-	}
-	return false
-}
-
-// zeroRepoInstance reports whether this instance booted with no repos at all
-// (a fresh folder-of-repos mount). Resolve("") fabricates a synthetic fallback
-// for handler compatibility, but nothing should be written to the workspace
-// until a repo is added.
+// zeroRepoInstance reports whether this instance has no registered projects.
+// These guards replace the classic single-repo boot: nothing is created for a
+// project until it is added and initialized.
 func zeroRepoInstance() bool {
-	return !hasRealRepos() && !workspaceIsRepo()
-}
-
-// workspaceIsRepo reports whether the workspace root is itself repo-shaped: a
-// git checkout, or a genuinely-initialized .devtop (config.yml or seeded
-// docs). A fresh folder-of-repos mount — or a bare, half-created .devtop left
-// by an earlier misbehaving boot — is not repo-shaped and boots with zero
-// repos.
-func workspaceIsRepo() bool {
-	root := filepath.Dir(DEVTOP_DIR)
-	// Classic invocation: DEVTOP_DIR is the workspace's .devtop, so the git
-	// checkout (or an initialized .devtop) sits one level up.
-	if _, err := os.Stat(filepath.Join(root, ".git")); err == nil {
-		return true
-	}
-	devTop := filepath.Join(root, ".devtop")
-	if fi, err := os.Stat(devTop); err == nil && fi.IsDir() {
-		if _, err := os.Stat(filepath.Join(devTop, "config.yml")); err == nil {
-			return true
-		}
-		if entries, err := os.ReadDir(filepath.Join(devTop, "docs")); err == nil && len(entries) > 0 {
-			return true
-		}
-	}
-	// Testing/embedding invocation: DEVTOP_DIR points straight at the data
-	// root, which may itself be a git checkout or hold live docs.
-	if _, err := os.Stat(filepath.Join(DEVTOP_DIR, ".git")); err == nil {
-		return true
-	}
-	if entries, err := os.ReadDir(filepath.Join(DEVTOP_DIR, "docs")); err == nil && len(entries) > 0 {
-		return true
-	}
-	return false
+	return len(registry.List()) == 0
 }
 
 // handleAPIRepos serves the registry: repo list (with status) via GET, and

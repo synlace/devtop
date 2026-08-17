@@ -56,6 +56,11 @@ func setupGitHistory(t *testing.T) (string, string) {
 	run("add", ".")
 	run("commit", "-q", "-m", "Update docs stack")
 
+	// Register the workspace as the default project so the revision handlers
+	// (which resolve docs via defaultPaths) read this temp workspace, not a
+	// stale repo left by an earlier test.
+	registerWorkspaceRepo(t)
+
 	return tmpRoot, parent
 }
 

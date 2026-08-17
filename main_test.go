@@ -33,6 +33,8 @@ func setupTestEnvironment(t *testing.T) string {
 	// boot-scaffolded repo for the per-repo init gates to pass.
 	os.WriteFile(filepath.Join(DEVTOP_DIR, "config.yml"), defaultEngineConfig, 0644)
 
+	registerWorkspaceRepo(t)
+
 	APP_DIR = "."
 	STATIC_DIR = filepath.Join(APP_DIR, "frontend", "dist")
 

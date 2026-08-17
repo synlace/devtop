@@ -30,6 +30,10 @@ func initHTTPTestEnv(t *testing.T) (string, *http.ServeMux) {
 		t.Fatalf("loadEngineConfig: %v", err)
 	}
 
+	// Register the workspace as the default project so repo-scoped handlers
+	// resolve, as Resolve("") synthesized before single mode was removed.
+	registerWorkspaceRepo(t)
+
 	// Set up router identical to main.go
 	mux := http.NewServeMux()
 

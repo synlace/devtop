@@ -264,7 +264,11 @@ func staleFromMtime(source, derived string) bool {
 }
 
 func buildPipeline() PipelineResponse {
-	resp, _ := buildPipelineFor(registrySingle())
+	r := registrySingle()
+	if r == nil {
+		return PipelineResponse{Edges: []PipelineEdge{}, Items: []PipelineItem{}}
+	}
+	resp, _ := buildPipelineFor(r)
 	return resp
 }
 
@@ -419,11 +423,14 @@ func buildPipelineFor(r *Repo) (PipelineResponse, bool) {
 	return PipelineResponse{Edges: edges, Items: items}, true
 }
 
-// registrySingle returns the legacy default repo (single-repo mode) or the
-// first registered repo, for handlers that run outside request scope.
+// registrySingle returns the default (first) registered project, or nil when
+// none are registered. Used by handlers that run outside request scope.
 func registrySingle() *Repo {
-	repo, _ := registry.Resolve("")
-	return repo
+	list := registry.List()
+	if len(list) == 0 {
+		return nil
+	}
+	return list[0]
 }
 
 func handleAPIPipeline(w http.ResponseWriter, r *http.Request) {

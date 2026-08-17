@@ -13,19 +13,19 @@ set -e
 TARGET_UID="${TARGET_UID:-$(id -u)}"
 TARGET_GID="${TARGET_GID:-$(id -g)}"
 
-# The docker recipe mounts the host project at /workspace; default the data
-# directory there so docs/tickets/threads from the mounted repo are served
-# (an explicit DEVTOP_DIR override still wins).
+# The docker recipe mounts the host project at /workspace; DEVTOP_DIR is the
+# root the folder browser scans and the anchor for registering projects, so
+# default it to the mount itself (each project owns its own .devtop). An
+# explicit DEVTOP_DIR override still wins.
 if [ -d /workspace ]; then
-  export DEVTOP_DIR="${DEVTOP_DIR:-/workspace/.devtop}"
+  export DEVTOP_DIR="${DEVTOP_DIR:-/workspace}"
 fi
-DEVTOP_DIR="${DEVTOP_DIR:-/app/.devtop}"
+DEVTOP_DIR="${DEVTOP_DIR:-/app}"
 export DEVTOP_DIR
 
-# The workspace must not be touched at boot: a fresh folder-of-repos mount
-# writes nothing until a repo is added and initialized. The Go seed creates
-# the classic-mode dirs, and every write path MkdirAlls its own directory, so
-# nothing here pre-creates them.
+# The workspace must not be touched at boot: a fresh folder mount writes
+# nothing until a project is added and initialized. Every write path
+# MkdirAlls its own directory, so nothing here pre-creates dirs.
 
 # Fix the config volume once, then drop privileges. Docker creates a fresh
 # named volume — or a recreated bind source — owned by root, which would break

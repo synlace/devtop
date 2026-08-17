@@ -797,9 +797,9 @@ func gitCommit(message string) string {
 	return gitCommitIn(forRepoOf(defaultPaths()), message)
 }
 
-// forRepoOf finds the registered repo whose devtop dir matches p, or a
-// synthetic legacy repo so unscoped writes keep the classic single-repo
-// behavior (tests, startup scaffolding).
+// forRepoOf finds the registered repo whose devtop dir matches p. When none
+// matches it returns a plain repo built from p — a path-only fallback for
+// hermetic tests and pre-registry shims, never a synthesized instance repo.
 func forRepoOf(p RepoPaths) *Repo {
 	for _, r := range registry.List() {
 		if r.paths.DevTop == p.DevTop {
@@ -807,7 +807,7 @@ func forRepoOf(p RepoPaths) *Repo {
 		}
 	}
 	return &Repo{
-		Name:  repoNameForRoot(p.DevTop),
+		Name:  filepath.Base(p.DevTop),
 		Root:  filepath.Dir(p.DevTop),
 		Dir:   p.DevTop,
 		paths: p,

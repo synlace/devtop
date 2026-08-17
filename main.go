@@ -84,7 +84,11 @@ func main() {
 
 	devtopEnv := os.Getenv("DEVTOP_DIR")
 	if devtopEnv == "" {
-		devtopEnv = "./.devtop"
+		// The devtop root: the directory that contains (or will contain) the
+		// user's project directories. Nothing here is created or scaffolded —
+		// a project becomes managed when the user registers it and it gets
+		// its own .devtop/.
+		devtopEnv = "."
 	}
 	if !filepath.IsAbs(devtopEnv) {
 		cwd, _ := os.Getwd()
@@ -98,25 +102,16 @@ func main() {
 	THREADS_DIR = filepath.Join(DEVTOP_DIR, "threads")
 	DATA_DIR = filepath.Join(DEVTOP_DIR, "data")
 
-	// Repo registry: DEVTOP_REPOS=<root1>:<root2> serves multiple repos from
-	// one instance. Unset means the classic single-repo mode (no repo param).
+	// Repo registry: DEVTOP_REPOS=<root1>:<root2> serves multiple projects
+	// from one instance; otherwise the persisted registry file carries them.
+	// No DEVTOP_REPOS and no registry file means zero projects registered:
+	// the UI shows the Add-project state. There is no single-repo fallback.
 	if err := initRegistry(); err != nil {
 		fmt.Printf("Warning: could not build repo registry: %v\n", err)
 	}
 
-	// The classic single-repo workspace is seeded at boot so the docs view
-	// has content on first run. In multi-repo mode (and on a fresh launch of
-	// a folder-of-repos mount with zero repos) the default workspace stays
-	// untouched until a repo is explicitly initialized.
-	if registryHasSynthetic() {
-		// Complete scaffold: storage dirs, config.yml, kind dirs, the
-		// default agents and skills, and the welcome doc. Non-destructive.
-		if err := scaffoldRepo(defaultPaths()); err != nil {
-			fmt.Printf("Warning: could not scaffold the default workspace: %v\n", err)
-		}
-	}
-	// Parse the engine config in both modes (falls back to the bundled
-	// default when no config.yml exists).
+	// Parse the engine config for the default repo (falls back to the bundled
+	// default when no config.yml exists) so the legacy globals stay coherent.
 	if err := loadEngineConfig(); err != nil {
 		fmt.Printf("Warning: invalid engine config: %v\n", err)
 	}
@@ -199,10 +194,11 @@ func main() {
 	addr := fmt.Sprintf("%s:%d", *host, *port)
 	fmt.Printf("  devtop — Go local dev server\n")
 	repos := registry.List()
-	if len(repos) == 1 && repos[0].Single {
-		fmt.Printf("  Data: %s\n", DATA_DIR)
+	fmt.Printf("  Root:  %s\n", DEVTOP_DIR)
+	if len(repos) == 0 {
+		fmt.Printf("  Repos: 0 registered — add a project to begin\n")
 	} else {
-		fmt.Printf("  Repos: %d registered (DEVTOP_REPOS)\n", len(repos))
+		fmt.Printf("  Repos: %d registered\n", len(repos))
 		for _, r := range repos {
 			fmt.Printf("    - %s (%s)\n", r.Name, r.Root)
 		}
