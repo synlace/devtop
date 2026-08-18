@@ -575,7 +575,9 @@ export default function PipelineView({ refreshKey }: { refreshKey?: number }) {
       : all === 0 ? null
       : pending > 0
         ? <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-medium border border-amber-500/30 bg-amber-500/10 text-amber-400"><span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>{pending} of {all} pending</span>
-        : <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-medium border border-amber-500/30 bg-amber-500/10 text-amber-400"><span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>Needs tickets</span>
+        : countOf(w, 'tickets') === 0
+          ? <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-medium border border-amber-500/30 bg-amber-500/10 text-amber-400"><span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>Needs tickets</span>
+          : <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-medium border bg-emerald-500/10 border-emerald-500/30 text-emerald-400"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>Ready</span>
     return (
       <div className={`border-b border-borderDark last:border-b-0 ${freshIds.has(w.id) ? 'bg-emerald-500/5' : ''}`}>
         <div
