@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/adrg/frontmatter"
 	"gopkg.in/yaml.v2"
 )
 
@@ -987,15 +989,19 @@ func handleAPIWorkItemPublish(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "kind": "intents", "published": true})
 }
 
-// readFrontmatterFile parses a frontmatter file into meta and body.
+// readFrontmatterFile parses a frontmatter file into meta and body. A second
+// frontmatter block at the start of the body is merged into meta and removed
+// from the body: derived tickets occasionally carry the engine keys
+// (work_item, req, review) in a secondary block after the classic ones, and
+// the pipeline, review and publish flows must see them.
 func readFrontmatterFile(path string) (map[string]interface{}, []byte, error) {
-	file, err := os.Open(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer file.Close()
+	defer f.Close()
 	var meta map[string]interface{}
-	body, err := frontmatterParse(file, &meta)
+	body, err := parseArtifactFrontmatter(f, &meta)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1003,6 +1009,39 @@ func readFrontmatterFile(path string) (map[string]interface{}, []byte, error) {
 		meta = map[string]interface{}{}
 	}
 	return meta, body, nil
+}
+
+// parseArtifactFrontmatter reads the first frontmatter block as YAML into
+// meta, then merges a second frontmatter block found at the start of the body
+// (keys already present win) and strips that block from the returned body.
+func parseArtifactFrontmatter(r io.Reader, meta interface{}) ([]byte, error) {
+	body, err := frontmatter.Parse(r, meta)
+	if err != nil {
+		return body, err
+	}
+	m, ok := meta.(*map[string]interface{})
+	if !ok {
+		return body, nil
+	}
+	t := strings.TrimLeft(string(body), "\r\n \t")
+	if !strings.HasPrefix(t, "---") {
+		return body, nil
+	}
+	index := strings.Index(t[3:], "\n---")
+	if index < 0 {
+		return body, nil
+	}
+	// The block is "---" + content + trailing "\n---"; slice the whole thing.
+	end := 3 + index + 4
+	var second map[string]interface{}
+	if err := yaml.Unmarshal([]byte(t[:end]), &second); err == nil {
+		for k, v := range second {
+			if _, exists := (*m)[k]; !exists {
+				(*m)[k] = v
+			}
+		}
+	}
+	return []byte(t[end:]), nil
 }
 
 // composeFrontmatter writes YAML frontmatter + markdown body. yaml.v2 marshals

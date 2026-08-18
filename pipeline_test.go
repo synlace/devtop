@@ -340,6 +340,62 @@ func TestHandleAPIWorkPublish_GatesAndUnpublishes(t *testing.T) {
 	}
 }
 
+func TestReadArtifactFrontmatter_MergesSecondaryBlock(t *testing.T) {
+	setupPipelineEnv(t)
+	// Derived tickets occasionally carry the engine keys (work_item, req,
+	// review) in a second frontmatter block after the classic ones. The
+	// primary block must win on conflicts; the secondary block leaves the body.
+	writeArtifact(t, "tickets/001.md", "---\nid: \"001\"\ntitle: \"T\"\nstatus: open\n---\n\n---\nwork_item: INT-001\nreq: REQ-001\nreview: approved\nstatus: closed\n---\n\nBody text.\n")
+	meta := readMeta(t, "tickets/001.md")
+	if wi, _ := meta["work_item"].(string); wi != "INT-001" {
+		t.Errorf("work_item = %q, want INT-001", wi)
+	}
+	if r, _ := meta["req"].(string); r != "REQ-001" {
+		t.Errorf("req = %q, want REQ-001", r)
+	}
+	if r, _ := meta["review"].(string); r != "approved" {
+		t.Errorf("review = %q, want approved", r)
+	}
+	if s, _ := meta["status"].(string); s != "open" {
+		t.Errorf("primary status should win, got %q", s)
+	}
+	// The merged read returns the body without the secondary block; the file
+	// itself is normalized on the next write (review or edit).
+	f, err := os.Open(filepath.Join(DEVTOP_DIR, "tickets/001.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	var m2 map[string]interface{}
+	body, err := parseArtifactFrontmatter(f, &m2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(body), "work_item:"); got != 0 {
+		t.Errorf("secondary block must be stripped from the returned body, found %d work_item occurrences", got)
+	}
+	if !strings.Contains(string(body), "Body text.") {
+		t.Error("body content missing after merge")
+	}
+}
+
+func TestHandleAPIWorkPublish_DoubleFrontmatterTicket(t *testing.T) {
+	setupPipelineEnv(t)
+	seedWorkItem(t, "INT-001")
+	writeArtifact(t, "documentation/DOC-001.mdx", "---\ntitle: \"Doc\"\nwork_item: INT-001\nreview: approved\n---\n\nB\n")
+	writeArtifact(t, "requirements/REQ-001.mdx", "---\ntitle: \"R\"\nwork_item: INT-001\nreview: approved\n---\n\nB\n")
+	writeArtifact(t, "tickets/001.md", "---\nid: \"001\"\ntitle: \"T\"\n---\n\n---\nwork_item: INT-001\nreq: REQ-001\nreview: approved\n---\n\nT\n")
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/intents/{id}/publish", handleAPIWorkItemPublish)
+	req := httptest.NewRequest("POST", "/api/intents/INT-001/publish", strings.NewReader(`{}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("publish of a double-frontmatter ticket chain expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestUncoveredReqIDs_Delta(t *testing.T) {
 	setupPipelineEnv(t)
 	seedWorkItem(t, "INT-001")

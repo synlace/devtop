@@ -112,7 +112,7 @@ func parseFrontmatterFile(filePath string, meta interface{}) ([]byte, error) {
 		return nil, err
 	}
 	defer file.Close()
-	return frontmatter.Parse(file, meta)
+	return parseArtifactFrontmatter(file, meta)
 }
 
 // Legacy global-backed variants (classic single-repo mode; tools).

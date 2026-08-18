@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/adrg/frontmatter"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/renderer/html"
@@ -53,7 +52,7 @@ func renderMD(text string) string {
 }
 
 func frontmatterParse(file *os.File, meta interface{}) ([]byte, error) {
-	return frontmatter.Parse(file, meta)
+	return parseArtifactFrontmatter(file, meta)
 }
 
 type DocMeta struct {
