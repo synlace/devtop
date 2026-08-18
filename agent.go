@@ -909,6 +909,9 @@ func runAgentWithDepth(ctx context.Context, repo *Repo, messages []AgentMessage,
 
 	stream, err := client.CreateChatCompletionStream(ctx, req)
 	if err != nil {
+		// Emit before the deferred close so the caller's stream shows the
+		// failure instead of a bare "done" (e.g. a 401 from a revoked key).
+		outChan <- AgentChunk{Type: "text", Content: "Model call failed: " + err.Error()}
 		return err
 	}
 	defer stream.Close()
@@ -927,6 +930,7 @@ func runAgentWithDepth(ctx context.Context, repo *Repo, messages []AgentMessage,
 			break
 		}
 		if err != nil {
+			outChan <- AgentChunk{Type: "text", Content: "Model stream error: " + err.Error()}
 			return err
 		}
 

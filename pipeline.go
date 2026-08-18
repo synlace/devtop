@@ -699,6 +699,9 @@ func handleAPIDerive(w http.ResponseWriter, r *http.Request) {
 	msgs := []AgentMessage{{Role: "user", Content: taskMsg}}
 	outChan := make(chan AgentChunk, 100)
 	go func() {
+		// Model/agent failures surface as visible stream items inside
+		// runAgentWithDepth (before it closes the channel), so a 401 or
+		// network error never masquerades as a bare "done".
 		_ = runAgentInRepo(context.Background(), repo, msgs, aiCfg.APIKey, aiCfg.BaseURL, aiCfg.Model, rt, outChan)
 	}()
 
