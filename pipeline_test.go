@@ -269,6 +269,77 @@ func TestHandleAPIArtifactReview_KnownKindOnly(t *testing.T) {
 	}
 }
 
+func TestHandleAPIArtifactUpdate_EditsBodyAndReopens(t *testing.T) {
+	setupPipelineEnv(t)
+	seedWorkItem(t, "INT-001")
+	writeArtifact(t, "documentation/DOC-001.mdx", "---\ntitle: Doc\nwork_item: INT-001\nreview: approved\n---\n\nOld body.\n")
+	mux := http.NewServeMux()
+	mux.HandleFunc("PUT /api/artifacts/{kind}/{id}", handleAPIArtifactUpdate)
+
+	req := httptest.NewRequest("PUT", "/api/artifacts/documentation/DOC-001", strings.NewReader(`{"content":"New body."}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("edit status %d: %s", rec.Code, rec.Body.String())
+	}
+	meta := readMeta(t, "documentation/DOC-001.mdx")
+	if r, _ := meta["review"].(string); r != "pending" {
+		t.Errorf("edit should reopen review, got %q", r)
+	}
+	if e, _ := meta["edited"].(bool); !e {
+		t.Error("edit should mark the artifact edited")
+	}
+	raw, _ := os.ReadFile(filepath.Join(DEVTOP_DIR, "documentation/DOC-001.mdx"))
+	if !strings.Contains(string(raw), "New body.") {
+		t.Errorf("body not updated: %q", string(raw))
+	}
+}
+
+func TestHandleAPIWorkPublish_GatesAndUnpublishes(t *testing.T) {
+	setupPipelineEnv(t)
+	seedWorkItem(t, "INT-001")
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/intents/{id}/publish", handleAPIWorkItemPublish)
+	mux.HandleFunc("POST /api/artifacts/{kind}/{id}/review", handleAPIArtifactReview)
+
+	publish := func() int {
+		req := httptest.NewRequest("POST", "/api/intents/INT-001/publish", strings.NewReader(`{}`))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	// No tickets derived yet → refused even with the intent approved.
+	if code := publish(); code != http.StatusConflict {
+		t.Fatalf("publish without tickets expected 409, got %d", code)
+	}
+
+	writeArtifact(t, "documentation/DOC-001.mdx", "---\ntitle: Doc\nwork_item: INT-001\nreview: approved\n---\n\nB\n")
+	writeArtifact(t, "requirements/REQ-001.mdx", "---\ntitle: R\nwork_item: INT-001\nreview: approved\n---\n\nB\n")
+	writeArtifact(t, "tickets/001.md", "---\nid: \"001\"\nreq: REQ-001\nwork_item: INT-001\nreview: approved\n---\n\nT\n")
+	if code := publish(); code != http.StatusOK {
+		t.Fatalf("publish of a ready chain expected 200, got %d: %s", code, "")
+	}
+	meta := readMeta(t, "intents/INT-001.mdx")
+	if p, _ := meta["published"].(bool); !p {
+		t.Fatal("expected INT-001 published")
+	}
+
+	// Re-reviewing a derived artifact reopens the work item.
+	req := httptest.NewRequest("POST", "/api/artifacts/documentation/DOC-001/review", strings.NewReader(`{"review":"pending"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("review status %d", rec.Code)
+	}
+	if meta := readMeta(t, "intents/INT-001.mdx"); metaBool(meta["published"]) {
+		t.Fatal("published flag survived a pending re-review")
+	}
+	if code := publish(); code != http.StatusConflict {
+		t.Fatalf("publish of a non-ready chain expected 409, got %d", code)
+	}
+}
+
 func TestUncoveredReqIDs_Delta(t *testing.T) {
 	setupPipelineEnv(t)
 	seedWorkItem(t, "INT-001")

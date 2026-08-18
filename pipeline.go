@@ -37,6 +37,7 @@ type PipelineArtifact struct {
 	Title  string `json:"title"`
 	Review string `json:"review"`
 	Stale  bool   `json:"stale"`
+	Edited bool   `json:"edited"`
 }
 
 type PipelineItem struct {
@@ -48,6 +49,7 @@ type PipelineItem struct {
 	Ready     bool                          `json:"ready"`
 	Stale     bool                          `json:"stale"`
 	Uncovered int                           `json:"uncovered"`
+	Published bool                          `json:"published"`
 }
 
 type PipelineResponse struct {
@@ -279,6 +281,11 @@ func metaReview(meta map[string]interface{}) string {
 	return "pending"
 }
 
+func metaBool(v interface{}) bool {
+	b, ok := v.(bool)
+	return ok && b
+}
+
 // pipelineWorkItemOf returns the work item id an artifact belongs to: its
 // explicit `work_item` frontmatter, or (for a seed) its own id. Artifacts
 // without a work_item belong to no chain.
@@ -359,10 +366,11 @@ func buildPipelineFor(r *Repo) (PipelineResponse, bool) {
 		}
 		for _, a := range arts {
 			it := PipelineItem{
-				ID:     a.ID,
-				Title:  a.Title,
-				Review: metaReview(a.Meta),
-				Stages: map[string][]PipelineArtifact{},
+				ID:        a.ID,
+				Title:     a.Title,
+				Review:    metaReview(a.Meta),
+				Stages:    map[string][]PipelineArtifact{},
+				Published: metaBool(a.Meta["published"]),
 			}
 			if s, ok := a.Meta["summary"].(string); ok && s != "" {
 				it.Summary = s
@@ -384,7 +392,7 @@ func buildPipelineFor(r *Repo) (PipelineResponse, bool) {
 					}
 					stale := staleArtifact(cfg, p, c)
 					it.Stages[kindName] = append(it.Stages[kindName], PipelineArtifact{
-						ID: c.ID, Title: c.Title, Review: metaReview(c.Meta), Stale: stale,
+						ID: c.ID, Title: c.Title, Review: metaReview(c.Meta), Stale: stale, Edited: metaBool(c.Meta["edited"]),
 					})
 					if stale {
 						it.Stale = true
@@ -785,9 +793,198 @@ func handleAPIArtifactReview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	// Re-reviewing to anything that is not approved reopens the work item.
+	if body.Review != "approved" {
+		unpublishWorkItemFor(repo, cfg, kindName, id)
+	}
 	gitCommitIn(repo, fmt.Sprintf("%s: set %s review to %s", kindName, id, body.Review))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "kind": kindName, "review": body.Review})
+}
+
+// handleAPIArtifactUpdate replaces an artifact's body. Editing marks the
+// artifact edited and re-opens it for review (review: pending), and clears
+// the published flag on its owning work item — the edit must be reviewed
+// again before it feeds the next stage.
+//
+//	PUT /api/artifacts/{kind}/{id}  {"content":"..."}
+func handleAPIArtifactUpdate(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
+	cfg, err := repo.Config()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	kindName := r.PathValue("kind")
+	kind, ok := cfg.ArtifactKinds[kindName]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	ext := kind.Extension
+	if ext == "" {
+		ext = ".md"
+	}
+	id := strings.TrimSuffix(r.PathValue("id"), ext)
+	if id == "" || strings.Contains(id, "..") || strings.Contains(id, "\\") {
+		http.Error(w, "invalid artifact id", 400)
+		return
+	}
+	var body struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON body", 400)
+		return
+	}
+	path, ok := resolveArtifactFileFor(cfg, repo.paths, kindName, id)
+	if !ok {
+		http.Error(w, "artifact not found", 404)
+		return
+	}
+	meta, _, err := readFrontmatterFile(path)
+	if err != nil {
+		http.Error(w, "artifact not found", 404)
+		return
+	}
+	meta["edited"] = true
+	meta["review"] = "pending"
+	if err := os.WriteFile(path, composeFrontmatter(meta, body.Content), 0644); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	unpublishWorkItemFor(repo, cfg, kindName, id)
+	gitCommitIn(repo, fmt.Sprintf("%s: edit %s", kindName, id))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "kind": kindName, "review": "pending", "edited": true})
+}
+
+// unpublishWorkItemFor clears the published flag on the intent that owns the
+// artifact — found through the artifact's work_item frontmatter, or the
+// artifact itself when the kind is the seed. Editing or re-reviewing a
+// published work item reopens it.
+func unpublishWorkItemFor(repo *Repo, cfg EngineConfig, artKind, artifactID string) {
+	intents, ok := cfg.ArtifactKinds["intents"]
+	if !ok {
+		return
+	}
+	ext := intents.Extension
+	if ext == "" {
+		ext = ".mdx"
+	}
+	wi := ""
+	if artKind == "intents" {
+		wi = artifactID
+	} else {
+		path, ok := resolveArtifactFileFor(cfg, repo.paths, artKind, artifactID)
+		if !ok {
+			return
+		}
+		meta, _, err := readFrontmatterFile(path)
+		if err != nil {
+			return
+		}
+		wi, _ = meta["work_item"].(string)
+	}
+	if wi == "" {
+		return
+	}
+	ipath := filepath.Join(artifactKindRootFor(repo.paths, intents), wi+ext)
+	if _, err := os.Stat(ipath); err != nil {
+		return
+	}
+	meta, body, err := readFrontmatterFile(ipath)
+	if err != nil || !metaBool(meta["published"]) {
+		return
+	}
+	delete(meta, "published")
+	if err := os.WriteFile(ipath, composeFrontmatter(meta, string(body)), 0644); err != nil {
+		return
+	}
+	gitCommitIn(repo, "intents: reopen "+wi)
+}
+
+// handleAPIWorkItemPublish marks a work item (its intent artifact) as
+// published. The gate is enforced here, deterministically: the intent and
+// every derived artifact must be approved, and at least one ticket must exist.
+//
+//	POST /api/intents/{id}/publish
+func handleAPIWorkItemPublish(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoFromRequest(w, r)
+	if !ok {
+		return
+	}
+	cfg, err := repo.Config()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	kind, ok := cfg.ArtifactKinds["intents"]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	ext := kind.Extension
+	if ext == "" {
+		ext = ".mdx"
+	}
+	id := strings.TrimSuffix(r.PathValue("id"), ext)
+	if id == "" || strings.Contains(id, "..") || strings.Contains(id, "\\") {
+		http.Error(w, "invalid work item id", 400)
+		return
+	}
+	path, ok := resolveArtifactFileFor(cfg, repo.paths, "intents", id)
+	if !ok {
+		http.Error(w, "work item not found", 404)
+		return
+	}
+	meta, body, err := readFrontmatterFile(path)
+	if err != nil {
+		http.Error(w, "work item not found", 404)
+		return
+	}
+	if metaReview(meta) != "approved" {
+		writeJSONError(w, http.StatusConflict, "approve "+id+" first")
+		return
+	}
+	var unapproved []string
+	tickets := 0
+	for kindName := range cfg.ArtifactKinds {
+		if kindName == "intents" {
+			continue
+		}
+		arts, _ := listArtifactsFor(cfg, repo.paths, kindName)
+		for _, a := range arts {
+			if pipelineWorkItemOf(a.Meta) != id {
+				continue
+			}
+			if kindName == "tickets" {
+				tickets++
+			}
+			if metaReview(a.Meta) != "approved" {
+				unapproved = append(unapproved, a.ID)
+			}
+		}
+	}
+	if tickets == 0 {
+		writeJSONError(w, http.StatusConflict, "derive tickets for "+id+" first")
+		return
+	}
+	if len(unapproved) > 0 {
+		writeJSONError(w, http.StatusConflict, "approve first: "+strings.Join(unapproved, ", "))
+		return
+	}
+	meta["published"] = true
+	if err := os.WriteFile(path, composeFrontmatter(meta, string(body)), 0644); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	gitCommitIn(repo, "intents: publish "+id)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "kind": "intents", "published": true})
 }
 
 // readFrontmatterFile parses a frontmatter file into meta and body.
