@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/adrg/frontmatter"
@@ -59,9 +60,11 @@ priority: "%s"
 assignee: "%s"
 created: "%s"
 source: "%s"
+req: "%s"
+work_item: "%s"
 ---
 
-%s`, t.ID, t.Title, t.Status, t.Priority, t.Assignee, t.Created, t.Source, strings.TrimSpace(t.RawDescription))
+%s`, t.ID, t.Title, t.Status, t.Priority, t.Assignee, t.Created, t.Source, t.Req, t.WorkItem, strings.TrimSpace(t.RawDescription))
 	return os.WriteFile(filePath, []byte(fm), 0644)
 }
 
@@ -88,22 +91,25 @@ func deleteThreadFileP(p RepoPaths, id string) error {
 	return nil
 }
 
+// getNextTicketIDP mints the next ticket id: a monotone per-repo counter,
+// held under the store lock, that never reuses an id even after a ticket
+// file is deleted.
 func getNextTicketIDP(p RepoPaths) string {
-	files, _ := filepath.Glob(filepath.Join(p.Tickets, "*.md"))
-	if len(files) == 0 {
-		return "001"
-	}
-	maxID := 0
-	for _, f := range files {
-		stem := strings.TrimSuffix(filepath.Base(f), ".md")
-		if len(stem) == 3 {
-			var n int
-			if _, err := fmt.Sscanf(stem, "%d", &n); err == nil && n > maxID {
-				maxID = n
-			}
+	var id string
+	if err := withStoreLock(p, func() {
+		n := maxIDOnDisk(p.Tickets, "", ".md")
+		counters := readIDCounters(p)
+		if stored := counters["tickets"]; stored > n {
+			n = stored
 		}
+		n++
+		counters["tickets"] = n
+		writeIDCounters(p, counters)
+		id = strconv.Itoa(n)
+	}); err != nil {
+		return ""
 	}
-	return fmt.Sprintf("%03d", maxID+1)
+	return id
 }
 
 func parseFrontmatterFile(filePath string, meta interface{}) ([]byte, error) {

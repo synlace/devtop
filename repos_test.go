@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sync"
 	"testing"
 )
 
@@ -235,10 +236,10 @@ func TestHandler_RepoScopedDocs(t *testing.T) {
 
 	ra, _ := registry.Resolve("scoped-a")
 	rb, _ := registry.Resolve("scoped-b")
-	if err := writeDocToFileSystemP(ra.paths, "only-a", "---\ntitle: A\n---\n"); err != nil {
+	if err := writeDocToFileSystemP(docsPathsFor(ra), "only-a", "---\ntitle: A\n---\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeDocToFileSystemP(rb.paths, "only-b", "---\ntitle: B\n---\n"); err != nil {
+	if err := writeDocToFileSystemP(docsPathsFor(rb), "only-b", "---\ntitle: B\n---\n"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -273,6 +274,31 @@ func TestHandler_RepoScopedDocs(t *testing.T) {
 	}
 	if docs := get("scoped-b"); !has(docs, "only-b") || has(docs, "only-a") {
 		t.Fatalf("scoped-b returned %+v", docs)
+	}
+}
+
+func TestDocsPathsResolution(t *testing.T) {
+	withRegistryEnv(t, newRepoTemp(t, "resolved", true))
+	r, _ := registry.Resolve("resolved")
+	want := filepath.Join(r.paths.DevTop, "documentation")
+	if got := docsPathsFor(r).Docs; got != want {
+		t.Fatalf("kind-model docs dir = %q, want %q", got, want)
+	}
+
+	// A config from the pre-kind model (no documentation kind) keeps the
+	// legacy .devtop/docs directory.
+	legacy := `artifact_kinds:
+  tickets:
+    path: tickets
+    extension: .md
+    view: board
+`
+	if err := os.WriteFile(filepath.Join(r.paths.DevTop, "config.yml"), []byte(legacy), 0644); err != nil {
+		t.Fatal(err)
+	}
+	r.cfgOnce = sync.Once{}
+	if got := docsPathsFor(r).Docs; got != r.paths.Docs {
+		t.Fatalf("legacy docs dir = %q, want %q", got, r.paths.Docs)
 	}
 }
 

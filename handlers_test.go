@@ -30,6 +30,13 @@ func initHTTPTestEnv(t *testing.T) (string, *http.ServeMux) {
 		t.Fatalf("loadEngineConfig: %v", err)
 	}
 
+	// The HTTP doc endpoints resolve the documentation kind dir from the
+	// engine config, so seed the fixtures there (not the legacy docs dir).
+	docRoot := filepath.Join(DEVTOP_DIR, "documentation")
+	_ = os.MkdirAll(docRoot, 0755)
+	_ = os.WriteFile(filepath.Join(docRoot, "index.mdx"), []byte("---\ntitle: \"Project Overview\"\n---\n\n# Welcome\n\nTest documentation."), 0644)
+	_ = os.WriteFile(filepath.Join(docRoot, "architecture.mdx"), []byte("---\ntitle: \"System Architecture\"\n---\n\n# Architecture\n\nStack: Go."), 0644)
+
 	// Register the workspace as the default project so repo-scoped handlers
 	// resolve, as Resolve("") synthesized before single mode was removed.
 	registerWorkspaceRepo(t)
@@ -101,8 +108,10 @@ func TestAPIEmptyLists(t *testing.T) {
 	// frontend can iterate them.
 	_ = os.RemoveAll(DOCS_DIR)
 	_ = os.RemoveAll(TICKETS_DIR)
+	_ = os.RemoveAll(filepath.Join(DEVTOP_DIR, "documentation"))
 	_ = os.MkdirAll(DOCS_DIR, 0755)
 	_ = os.MkdirAll(TICKETS_DIR, 0755)
+	_ = os.MkdirAll(filepath.Join(DEVTOP_DIR, "documentation"), 0755)
 
 	for _, path := range []string{"/api/docs", "/api/tickets"} {
 		req := httptest.NewRequest("GET", path, nil)

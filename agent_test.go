@@ -166,15 +166,26 @@ func TestTicketTools_GetNextTicketID(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	nextID := getNextTicketID()
-	if nextID != "003" {
-		t.Errorf("expected next ticket ID 003, got %s", nextID)
+	if nextID != "3" {
+		t.Errorf("expected next ticket ID 3, got %s", nextID)
 	}
 
+	// The counter never reuses an id, even after every ticket file is gone:
+	// wiped dirs keep the monotone counter, so the next id still advances.
 	_ = os.RemoveAll(TICKETS_DIR)
 	_ = os.MkdirAll(TICKETS_DIR, 0755)
+	nextIDAfterWipe := getNextTicketID()
+	if nextIDAfterWipe != "4" {
+		t.Errorf("expected next ticket ID 4 after a dir wipe, got %s", nextIDAfterWipe)
+	}
+	// A fresh store (counter file gone too) restarts at 1 — e.g. a new devtop
+	// data dir: the on-disk scan still sees any committed tickets.
+	_ = os.RemoveAll(TICKETS_DIR)
+	_ = os.RemoveAll(DATA_DIR)
+	_ = os.MkdirAll(TICKETS_DIR, 0755)
 	nextIDEmpty := getNextTicketID()
-	if nextIDEmpty != "001" {
-		t.Errorf("expected first ticket ID 001, got %s", nextIDEmpty)
+	if nextIDEmpty != "1" {
+		t.Errorf("expected first ticket ID 1, got %s", nextIDEmpty)
 	}
 }
 
@@ -188,11 +199,11 @@ func TestTicketTools_CreateTicket(t *testing.T) {
 		"priority":    "urgent",
 		"assignee":    "bob",
 	})
-	if !strings.Contains(res, "Created ticket 003") {
+	if !strings.Contains(res, "Created ticket 3") {
 		t.Errorf("expected success message, got: %s", res)
 	}
 
-	filePath := filepath.Join(TICKETS_DIR, "003.md")
+	filePath := filepath.Join(TICKETS_DIR, "3.md")
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil {
 		t.Fatalf("failed to read created ticket file: %v", err)
@@ -206,9 +217,9 @@ func TestTicketTools_CreateTicket(t *testing.T) {
 		t.Errorf("created ticket file lacks expected content: %s", content)
 	}
 
-	tkt, err := getTicket("003")
+	tkt, err := getTicket("3")
 	if err != nil {
-		t.Fatalf("ticket 003 not found: %v", err)
+		t.Fatalf("ticket 3 not found: %v", err)
 	}
 	if tkt.Title != "Bug found" || tkt.Priority != "urgent" || tkt.Assignee != "bob" {
 		t.Errorf("ticket mismatch: %+v", tkt)

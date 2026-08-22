@@ -167,7 +167,7 @@ func handleAPIDocs(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	docs, err := listDocsP(repo.paths)
+	docs, err := listDocsP(docsPathsFor(repo))
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -181,15 +181,18 @@ func handleAPIDocPage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	p := repo.paths
+	p := docsPathsFor(repo)
 	slug := r.PathValue("slug")
 	slug = strings.TrimSuffix(slug, ".mdx")
 
 	title, htmlContent, err := getDocP(p, slug)
 	if err != nil {
 		if slug == "index" {
-			docs, _ := listDocsP(p)
-			if len(docs) > 0 {
+			// Legacy fallback: pre-kind stores keep their landing doc in
+			// .devtop/docs until documentation/ has content.
+			if lt, lc, lerr := getDocP(repo.paths, "index"); lerr == nil {
+				title, htmlContent, err = lt, lc, nil
+			} else if docs, _ := listDocsP(p); len(docs) > 0 {
 				title, htmlContent, err = getDocP(p, docs[0].Slug)
 			} else {
 				title, htmlContent, err = getWelcomeDoc()
@@ -627,7 +630,7 @@ func handleAPIDocRevisions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slug := r.PathValue("slug")
-	path, err := docPathForSlugP(repo.paths, slug)
+	path, err := docPathForSlugP(docsPathsFor(repo), slug)
 	if err != nil {
 		http.Error(w, "Document not found", 404)
 		return
@@ -810,7 +813,7 @@ func handleAPIDeleteDoc(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Cannot delete the index document", 400)
 		return
 	}
-	if err := deleteDocP(repo.paths, slug); err != nil {
+	if err := deleteDocP(docsPathsFor(repo), slug); err != nil {
 		http.Error(w, "Document not found", 404)
 		return
 	}

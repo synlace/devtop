@@ -22,6 +22,7 @@ type Ticket struct {
 	ID             string    `json:"id"`
 	Title          string    `json:"title"`
 	Req            string    `json:"req"`
+	WorkItem       string    `json:"work_item"`
 	Status         string    `json:"status"`
 	Priority       string    `json:"priority"`
 	Assignee       string    `json:"assignee"`
@@ -63,6 +64,7 @@ type TicketMeta struct {
 	ID       string `yaml:"id"`
 	Title    string `yaml:"title"`
 	Req      string `yaml:"req"`
+	WorkItem string `yaml:"work_item"`
 	Status   string `yaml:"status"`
 	Priority string `yaml:"priority"`
 	Assignee string `yaml:"assignee"`
@@ -232,6 +234,7 @@ func listTicketsP(p RepoPaths) ([]Ticket, error) {
 			ID:             id,
 			Title:          meta.Title,
 			Req:            meta.Req,
+			WorkItem:       meta.WorkItem,
 			Status:         status,
 			Priority:       priority,
 			Assignee:       meta.Assignee,
@@ -242,7 +245,7 @@ func listTicketsP(p RepoPaths) ([]Ticket, error) {
 		})
 		return nil
 	})
-	sort.Slice(tickets, func(i, j int) bool { return tickets[i].ID < tickets[j].ID })
+	sort.Slice(tickets, func(i, j int) bool { return lessArtifactID(tickets[i].ID, tickets[j].ID) })
 	return tickets, err
 }
 
@@ -261,6 +264,8 @@ func getTicketP(p RepoPaths, id string) (Ticket, error) {
 	t := Ticket{
 		ID:             meta.ID,
 		Title:          meta.Title,
+		Req:            meta.Req,
+		WorkItem:       meta.WorkItem,
 		Status:         meta.Status,
 		Priority:       meta.Priority,
 		Assignee:       meta.Assignee,

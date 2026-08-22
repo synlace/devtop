@@ -29,7 +29,7 @@ func setupPipelineEnv(t *testing.T) string {
 	}
 	engineConfig = EngineConfig{
 		ArtifactKinds: map[string]ArtifactKind{
-			"intents":        {Path: "intents", Extension: ".mdx", AgentWritable: false},
+			"intents":        {Path: "intents", Extension: ".mdx", AgentWritable: false, IDPrefix: "INT"},
 			"documentation":  {Path: "documentation", Extension: ".mdx", AgentWritable: true},
 			"requirements":   {Path: "requirements", Extension: ".mdx", AgentWritable: true},
 			"decisions":      {Path: "decisions", Extension: ".mdx", AgentWritable: true},
@@ -396,14 +396,14 @@ func TestHandleAPIWorkPublish_DoubleFrontmatterTicket(t *testing.T) {
 	}
 }
 
-func TestUncoveredReqIDs_Delta(t *testing.T) {
+func TestUncoveredSourceIDs_Delta(t *testing.T) {
 	setupPipelineEnv(t)
 	seedWorkItem(t, "INT-001")
 	writeArtifact(t, "requirements/REQ-001.mdx", "---\ntitle: \"R1\"\nwork_item: INT-001\nreview: approved\n---\n\nB\n")
 	writeArtifact(t, "requirements/REQ-011.mdx", "---\ntitle: \"R2\"\nwork_item: INT-001\nreview: approved\n---\n\nB\n")
 	writeArtifact(t, "requirements/REQ-012.mdx", "---\ntitle: \"R3\"\nwork_item: INT-001\nreview: approved\n---\n\nB\n")
 	writeArtifact(t, "tickets/001.md", "---\nid: \"001\"\nreq: REQ-001\nwork_item: INT-001\n---\n\nB\n")
-	missing := uncoveredReqIDs(engineConfig, defaultPaths(), "REQ-001")
+	missing := uncoveredSourceIDs(engineConfig, defaultPaths(), "requirements", "REQ-001")
 	want := []string{"REQ-011", "REQ-012"}
 	sort.Strings(missing)
 	if strings.Join(missing, ",") != strings.Join(want, ",") {
@@ -411,14 +411,14 @@ func TestUncoveredReqIDs_Delta(t *testing.T) {
 	}
 }
 
-func TestUnapprovedSiblings_BlockDelta(t *testing.T) {
+func TestUnapprovedSources_BlockDelta(t *testing.T) {
 	setupPipelineEnv(t)
 	seedWorkItem(t, "INT-001")
 	writeArtifact(t, "requirements/REQ-001.mdx", "---\ntitle: \"R1\"\nwork_item: INT-001\nreview: approved\n---\n\nB\n")
 	writeArtifact(t, "requirements/REQ-002.mdx", "---\ntitle: \"R2\"\nwork_item: INT-001\nreview: pending\n---\n\nB\n")
-	bad := unapprovedSiblings(engineConfig, defaultPaths(), "REQ-001")
+	bad := unapprovedSources(engineConfig, defaultPaths(), "requirements", "REQ-001")
 	if len(bad) != 1 || bad[0] != "REQ-002" {
-		t.Fatalf("unapproved siblings = %v, want [REQ-002]", bad)
+		t.Fatalf("unapproved sources = %v, want [REQ-002]", bad)
 	}
 }
 
@@ -441,7 +441,7 @@ func TestHandleDerive_TicketsCoveredShortCircuits(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("covered derive = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "All requirements already have tickets") {
+	if !strings.Contains(rec.Body.String(), "All sources already have tickets") {
 		t.Errorf("missing covered note: %s", rec.Body.String())
 	}
 }
@@ -485,14 +485,51 @@ func TestDeriveMessage_UsesEdgePrompt(t *testing.T) {
 func TestCreateTicket_SourceField(t *testing.T) {
 	setupPipelineEnv(t)
 	dispatchTool("create_ticket", map[string]interface{}{
-		"title": "From requirement", "description": "D", "priority": "low", "source": "requirements/REQ-001",
+		"title": "From requirement", "description": "D", "priority": "low", "source": "requirements/REQ-1", "req": "REQ-1", "work_item": "INT-1",
 	})
 	tickets, err := listTickets()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tickets) != 1 || tickets[0].Source != "requirements/REQ-001" {
+	if len(tickets) != 1 || tickets[0].Source != "requirements/REQ-1" {
 		t.Errorf("ticket source not persisted: %+v", tickets)
+	}
+	if tickets[0].Req != "REQ-1" || tickets[0].WorkItem != "INT-1" {
+		t.Errorf("ticket anchor not persisted: %+v", tickets[0])
+	}
+	// The frontmatter file carries the anchors, so coverage scoping works
+	// off the file, not off ephemeral tool state.
+	raw, _ := os.ReadFile(filepath.Join(DEVTOP_DIR, "tickets", "1.md"))
+	if !strings.Contains(string(raw), "req: \"REQ-1\"") || !strings.Contains(string(raw), "work_item: \"INT-1\"") {
+		t.Errorf("ticket frontmatter lacks anchors: %s", string(raw))
+	}
+}
+
+func TestWriteArtifact_MintsNewIds(t *testing.T) {
+	setupMultiWorkflowEnv(t)
+	write := func(id string) string {
+		args := map[string]interface{}{"kind": "requirements", "content": "---\ntitle: \"R\"\n---\n\nB\n"}
+		if id != "" {
+			args["id"] = id
+		}
+		return dispatchTool("write_artifact", args)
+	}
+
+	// A brand-new artifact mints its own id; the caller's id is ignored.
+	if res := write("REQ-99"); !strings.Contains(res, "id=REQ-1") {
+		t.Fatalf("new write should mint REQ-1, got: %s", res)
+	}
+	arts, _ := listArtifactsFor(engineConfig, defaultPaths(), "requirements")
+	if len(arts) != 1 || arts[0].ID != "REQ-1" {
+		t.Fatalf("artifacts = %+v, want [REQ-1]", arts)
+	}
+	// An edit to the existing file keeps its id instead of minting.
+	if res := write("REQ-1"); !strings.Contains(res, "id=REQ-1") {
+		t.Fatalf("edit should keep REQ-1, got: %s", res)
+	}
+	// The next fresh write advances the counter.
+	if res := write("REQ-77"); !strings.Contains(res, "id=REQ-2") {
+		t.Fatalf("second fresh write should mint REQ-2, got: %s", res)
 	}
 }
 
@@ -531,10 +568,10 @@ func TestHandleAPIIntentCreate(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if out["id"] != "INT-001" || out["review"] != "pending" {
-		t.Errorf("created intent = %+v, want INT-001 pending", out)
+	if out["id"] != "INT-1" || out["review"] != "pending" {
+		t.Errorf("created intent = %+v, want INT-1 pending", out)
 	}
-	meta := readMeta(t, "intents/INT-001.mdx")
+	meta := readMeta(t, "intents/INT-1.mdx")
 	if m, _ := meta["review"].(string); m != "pending" {
 		t.Errorf("review = %q, want pending", m)
 	}
@@ -546,8 +583,8 @@ func TestHandleAPIIntentCreate(t *testing.T) {
 	}
 	var out2 map[string]interface{}
 	_ = json.Unmarshal(rec2.Body.Bytes(), &out2)
-	if out2["id"] != "INT-002" {
-		t.Errorf("second id = %v, want INT-002", out2["id"])
+	if out2["id"] != "INT-2" {
+		t.Errorf("second id = %v, want INT-2", out2["id"])
 	}
 
 	// A blank title is rejected.
@@ -575,5 +612,233 @@ func TestAPIPipeline_Empty(t *testing.T) {
 	}
 	if len(res.Items) != 0 {
 		t.Errorf("expected empty items, got %d", len(res.Items))
+	}
+}
+
+// multiWorkflowCfg declares the five seed kinds and their chains, mirroring
+// the bundled default config, so the multi-workflow tests exercise the real
+// engine surface (id prefixes, seed resolution, publish gating).
+func multiWorkflowCfg() EngineConfig {
+	return EngineConfig{
+		ArtifactKinds: map[string]ArtifactKind{
+			"intents":        {Path: "intents", Extension: ".mdx", AgentWritable: false, IDPrefix: "INT"},
+			"bugs":           {Path: "bugs", Extension: ".mdx", AgentWritable: false, IDPrefix: "BUG"},
+			"spikes":         {Path: "spikes", Extension: ".mdx", AgentWritable: false, IDPrefix: "SPIKE"},
+			"rfcs":           {Path: "rfcs", Extension: ".mdx", AgentWritable: false, IDPrefix: "RFC"},
+			"chores":         {Path: "chores", Extension: ".mdx", AgentWritable: false, IDPrefix: "CHORE"},
+			"documentation":  {Path: "documentation", Extension: ".mdx", AgentWritable: true, IDPrefix: "DOC"},
+			"requirements":   {Path: "requirements", Extension: ".mdx", AgentWritable: true, IDPrefix: "REQ"},
+			"decisions":      {Path: "decisions", Extension: ".mdx", AgentWritable: true, IDPrefix: "DEC"},
+			"open_questions": {Path: "open_questions", Extension: ".mdx", AgentWritable: true, IDPrefix: "OQ"},
+			"tickets":        {Path: "tickets", Extension: ".md"},
+		},
+		Derivation: []DerivationEdge{
+			{From: "intents", To: "documentation", Chain: "intents"},
+			{From: "documentation", To: "requirements", Chain: "intents"},
+			{From: "documentation", To: "decisions", Chain: "intents"},
+			{From: "documentation", To: "open_questions", Chain: "intents"},
+			{From: "requirements", To: "tickets", Chain: "intents"},
+			{From: "bugs", To: "documentation", Chain: "bugs"},
+			{From: "documentation", To: "decisions", Chain: "bugs"},
+			{From: "decisions", To: "tickets", Chain: "bugs"},
+			{From: "spikes", To: "documentation", Chain: "spikes"},
+			{From: "documentation", To: "decisions", Chain: "spikes"},
+			{From: "documentation", To: "open_questions", Chain: "spikes"},
+			{From: "rfcs", To: "documentation", Chain: "rfcs"},
+			{From: "documentation", To: "decisions", Chain: "rfcs"},
+			{From: "decisions", To: "tickets", Chain: "rfcs"},
+			{From: "chores", To: "tickets", Chain: "chores"},
+		},
+		Pipeline: PipelineConfig{Nav: &EngineNav{Label: "Work items", View: "pipeline", Order: 1}},
+	}
+}
+
+func setupMultiWorkflowEnv(t *testing.T) string {
+	prevDevtop := DEVTOP_DIR
+	prevCfg := engineConfig
+	tempDir := setupTestDirs(t)
+	DEVTOP_DIR = tempDir
+	for _, d := range []string{DOCS_DIR, TICKETS_DIR, THREADS_DIR, DATA_DIR} {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	engineConfig = multiWorkflowCfg()
+	t.Cleanup(func() {
+		DEVTOP_DIR = prevDevtop
+		engineConfig = prevCfg
+		os.RemoveAll(tempDir)
+	})
+	if err := writeEngineConfigFile(tempDir); err != nil {
+		t.Fatal(err)
+	}
+	registerWorkspaceRepo(t)
+	return tempDir
+}
+
+func TestDeriveStageLabels(t *testing.T) {
+	cases := []struct {
+		name, args, result, wantLabel, wantDetail string
+	}{
+		{"read_artifact", `{"kind":"requirements","id":"REQ-2"}`, "# long body", "Reading requirement", "REQ-2"},
+		{"read_doc", `{"path":"sub/guide.mdx"}`, "long body", "Reading document", "sub/guide.mdx"},
+		{"read_ticket", `{"id":"7"}`, "long body", "Reading ticket", "7"},
+		{"list_docs", `{}`, "", "Surveying documentation", ""},
+		{"write_artifact", `{"kind":"requirements","id":"REQ-3"}`, "Written to .devtop/requirements/REQ-3.mdx (id=REQ-3)", "Writing requirement", "REQ-3"},
+		{"create_ticket", `{}`, "tickets/8.md", "Creating ticket", "tickets/8.md"},
+		{"git_commit", `{}`, "", "Committing changes", ""},
+		{"unknown_tool", `{}`, "", "Working", ""},
+	}
+	for _, c := range cases {
+		label, detail := deriveStageLabel(c.name, c.args, c.result)
+		if label != c.wantLabel || detail != c.wantDetail {
+			t.Errorf("deriveStageLabel(%s) = (%q, %q), want (%q, %q)", c.name, label, detail, c.wantLabel, c.wantDetail)
+		}
+	}
+}
+
+func TestSeedKindResolution(t *testing.T) {
+	setupMultiWorkflowEnv(t)
+	if got := kindReachesTickets(engineConfig, "intents"); !got {
+		t.Error("intents chain must reach tickets")
+	}
+	if got := kindReachesTickets(engineConfig, "bugs"); !got {
+		t.Error("bugs chain must reach tickets")
+	}
+	if got := kindReachesTickets(engineConfig, "chores"); !got {
+		t.Error("chores chain must reach tickets")
+	}
+	if got := kindReachesTickets(engineConfig, "spikes"); got {
+		t.Error("spikes chain must not reach tickets")
+	}
+	if !isSeedKind(engineConfig, "intents") || isSeedKind(engineConfig, "tickets") || isSeedKind(engineConfig, "documentation") {
+		t.Error("seed kinds are roots; derived kinds are not seeds")
+	}
+	writeArtifact(t, "bugs/BUG-001.mdx", "---\ntitle: \"Bug\"\nreview: pending\n---\n\nB\n")
+	if kind := seedKindOf(engineConfig, defaultPaths(), "BUG-001"); kind != "bugs" {
+		t.Errorf("seedKindOf BUG-001 = %q, want bugs", kind)
+	}
+	if kind := seedKindOf(engineConfig, defaultPaths(), "INT-001"); kind != "" {
+		t.Errorf("seedKindOf missing INT-001 = %q, want empty", kind)
+	}
+}
+
+func TestUncoveredSourceIDs_IgnoresOtherWorkItems(t *testing.T) {
+	setupPipelineEnv(t)
+	// REQ-001 belongs to INT-003, but the only ticket with req REQ-001
+	// belongs to INT-001. Ids repeat across work items; a foreign ticket
+	// must never satisfy the local chain's coverage.
+	writeArtifact(t, "intents/INT-003.mdx", "---\ntitle: \"Dark mode\"\nreview: approved\n---\n\nB\n")
+	writeArtifact(t, "requirements/REQ-001.mdx", "---\ntitle: \"Dark mode toggle\"\nwork_item: INT-003\nreview: approved\n---\n\nB\n")
+	writeArtifact(t, "tickets/999.md", "---\nid: \"999\"\nreq: REQ-001\nwork_item: INT-001\n---\n\nB\n")
+	missing := uncoveredSourceIDs(engineConfig, defaultPaths(), "requirements", "REQ-001")
+	if len(missing) != 1 || missing[0] != "REQ-001" {
+		t.Fatalf("missing = %v, want [REQ-001] (foreign ticket must not cover)", missing)
+	}
+	// A ticket owned by the same work item covers.
+	writeArtifact(t, "tickets/998.md", "---\nid: \"998\"\nreq: REQ-001\nwork_item: INT-003\n---\n\nB\n")
+	missing = uncoveredSourceIDs(engineConfig, defaultPaths(), "requirements", "REQ-001")
+	if len(missing) != 0 {
+		t.Fatalf("missing = %v, want none after an owned ticket", missing)
+	}
+}
+
+func TestHandleAPISeedCreate_GenericKind(t *testing.T) {
+	setupMultiWorkflowEnv(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/seeds/{kind}", handleAPISeedCreate)
+
+	post := func(kind, title string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/api/seeds/"+kind, strings.NewReader(`{"title":"`+title+`"}`))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := post("bugs", "It keeps resizing"); rec.Code != http.StatusOK {
+		t.Fatalf("bug seed create = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if rec := post("chores", "Rotate the backup keys"); rec.Code != http.StatusOK {
+		t.Fatalf("chore seed create = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if rec := post("spikes", "Redis vs Postgres"); rec.Code != http.StatusOK {
+		t.Fatalf("spike seed create = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	// Non-seed kinds cannot be created by hand.
+	if rec := post("requirements", "not a seed"); rec.Code != http.StatusForbidden {
+		t.Fatalf("derived kind create expected 403, got %d", rec.Code)
+	}
+	if _, err := os.Stat(filepath.Join(DEVTOP_DIR, "bugs", "BUG-1.mdx")); err != nil {
+		t.Error("BUG-1 seed file missing")
+	}
+	if _, err := os.Stat(filepath.Join(DEVTOP_DIR, "chores", "CHORE-1.mdx")); err != nil {
+		t.Error("CHORE-1 seed file missing")
+	}
+	if _, err := os.Stat(filepath.Join(DEVTOP_DIR, "spikes", "SPIKE-1.mdx")); err != nil {
+		t.Error("SPIKE-1 seed file missing")
+	}
+}
+
+func TestPipeline_BugChainPublishes(t *testing.T) {
+	setupMultiWorkflowEnv(t)
+	writeArtifact(t, "bugs/BUG-001.mdx", "---\ntitle: \"Bug\"\nreview: approved\n---\n\nB\n")
+	writeArtifact(t, "documentation/DOC-001.mdx", "---\ntitle: \"Change record\"\nwork_item: BUG-001\nreview: approved\n---\n\nCR\n")
+	writeArtifact(t, "decisions/DEC-001.mdx", "---\ntitle: \"Fix direction\"\nwork_item: BUG-001\nreview: approved\n---\n\nD\n")
+	writeArtifact(t, "tickets/010.md", "---\nid: \"010\"\ntitle: \"T\"\nreq: DEC-001\nwork_item: BUG-001\nreview: approved\n---\n\nT\n")
+
+	res := buildPipeline()
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(res.Items))
+	}
+	it := res.Items[0]
+	if it.Seed != "bugs" || it.ID != "BUG-001" {
+		t.Errorf("item seed = %q id = %q, want bugs/BUG-001", it.Seed, it.ID)
+	}
+	if !it.NeedsTickets || !it.Ready {
+		t.Errorf("bug chain needs tickets and must be ready, got needs=%v ready=%v", it.NeedsTickets, it.Ready)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/work-items/{id}/publish", handleAPIWorkItemPublish)
+	req := httptest.NewRequest("POST", "/api/work-items/BUG-001/publish", strings.NewReader(`{}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bug publish expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	meta := readMeta(t, "bugs/BUG-001.mdx")
+	if !metaBool(meta["published"]) {
+		t.Fatal("BUG-001 should be published")
+	}
+}
+
+func TestPipeline_SpikePublishesWithoutTickets(t *testing.T) {
+	setupMultiWorkflowEnv(t)
+	writeArtifact(t, "spikes/SPIKE-001.mdx", "---\ntitle: \"Spike\"\nreview: approved\n---\n\nS\n")
+	writeArtifact(t, "documentation/DOC-001.mdx", "---\ntitle: \"Findings\"\nwork_item: SPIKE-001\nreview: approved\n---\n\nF\n")
+	writeArtifact(t, "decisions/DEC-001.mdx", "---\ntitle: \"Recommendation\"\nwork_item: SPIKE-001\nreview: approved\n---\n\nR\n")
+
+	res := buildPipeline()
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(res.Items))
+	}
+	it := res.Items[0]
+	if it.Seed != "spikes" {
+		t.Errorf("seed = %q, want spikes", it.Seed)
+	}
+	if it.NeedsTickets {
+		t.Error("spike chain must not require tickets")
+	}
+	if !it.Ready {
+		t.Error("an approved spike chain with no tickets must be ready")
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/work-items/{id}/publish", handleAPIWorkItemPublish)
+	req := httptest.NewRequest("POST", "/api/work-items/SPIKE-001/publish", strings.NewReader(`{}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("spike publish expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

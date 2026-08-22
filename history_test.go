@@ -27,9 +27,18 @@ func setupGitHistory(t *testing.T) (string, string) {
 	_ = os.MkdirAll(TICKETS_DIR, 0755)
 	_ = os.MkdirAll(THREADS_DIR, 0755)
 
+	// The revision handlers resolve docs through the documentation kind dir;
+	// mirror the doc into it (committed alongside the legacy copy) so the
+	// HTTP tests see the same history as the unit tests.
+	docRoot := filepath.Join(DEVTOP_DIR, "documentation")
+	_ = os.MkdirAll(docRoot, 0755)
+
 	doc := filepath.Join(DOCS_DIR, "architecture.mdx")
+	docKind := filepath.Join(docRoot, "architecture.mdx")
 	writeDoc := func(body string) {
-		_ = os.WriteFile(doc, []byte("---\ntitle: \"System Architecture\"\n---\n\n"+body), 0644)
+		content := []byte("---\ntitle: \"System Architecture\"\n---\n\n" + body)
+		_ = os.WriteFile(doc, content, 0644)
+		_ = os.WriteFile(docKind, content, 0644)
 	}
 	// V1 — the committed state at the parent commit.
 	writeDoc("# Architecture\nStack: Go + Alpine.")

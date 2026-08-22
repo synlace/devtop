@@ -395,8 +395,18 @@ func TestWriteArtifact_Tool(t *testing.T) {
 	if !strings.Contains(res, "Written to") {
 		t.Fatalf("write_artifact failed: %s", res)
 	}
-	if _, err := os.Stat(filepath.Join(tempDir, "prds", "architecture", "index.mdx")); err != nil {
-		t.Fatal("prd file not written")
+	// The id the agent sent points at a file that does not exist, so the
+	// engine mints the first id of the kind instead of honoring it.
+	if !strings.Contains(res, "id=1") {
+		t.Fatalf("expected a minted id in the result, got: %s", res)
+	}
+	if _, err := os.Stat(filepath.Join(tempDir, "prds", "1", "index.mdx")); err != nil {
+		t.Fatal("minted prd file not written")
+	}
+	// Editing an existing file honors its id (no second mint).
+	res = dispatchTool("write_artifact", map[string]interface{}{"kind": "prds", "id": "1", "content": "---\ntitle: P2\n---\n\nBody2."})
+	if !strings.Contains(res, "id=1") {
+		t.Fatalf("edit should keep the existing id, got: %s", res)
 	}
 
 	res = dispatchTool("write_artifact", map[string]interface{}{"kind": "tickets", "id": "001", "content": "x"})

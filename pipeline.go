@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,6 +28,7 @@ type PipelineEdge struct {
 	Transform  string `json:"transform"`
 	Gate       string `json:"gate,omitempty"`
 	Agent      string `json:"agent,omitempty"`
+	Chain      string `json:"chain,omitempty"`
 	Classifier string `json:"classifier,omitempty"`
 	Prompt     string `json:"prompt,omitempty"`
 }
@@ -43,19 +43,22 @@ type PipelineArtifact struct {
 }
 
 type PipelineItem struct {
-	ID        string                        `json:"id"`
-	Title     string                        `json:"title"`
-	Summary   string                        `json:"summary,omitempty"`
-	Review    string                        `json:"review"`
-	Stages    map[string][]PipelineArtifact `json:"stages"`
-	Ready     bool                          `json:"ready"`
-	Stale     bool                          `json:"stale"`
-	Uncovered int                           `json:"uncovered"`
-	Published bool                          `json:"published"`
+	ID           string                        `json:"id"`
+	Title        string                        `json:"title"`
+	Summary      string                        `json:"summary,omitempty"`
+	Seed         string                        `json:"seed"`
+	Review       string                        `json:"review"`
+	Stages       map[string][]PipelineArtifact `json:"stages"`
+	Ready        bool                          `json:"ready"`
+	Stale        bool                          `json:"stale"`
+	Uncovered    int                           `json:"uncovered"`
+	Published    bool                          `json:"published"`
+	NeedsTickets bool                          `json:"needs_tickets"`
 }
 
 type PipelineResponse struct {
 	Edges []PipelineEdge `json:"edges"`
+	Roots []string       `json:"roots"`
 	Items []PipelineItem `json:"items"`
 }
 
@@ -124,7 +127,7 @@ func listArtifactsFor(cfg EngineConfig, p RepoPaths, kindName string) ([]kindArt
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	sort.Slice(out, func(i, j int) bool { return lessArtifactID(out[i].ID, out[j].ID) })
 	return out, nil
 }
 
@@ -253,6 +256,92 @@ func pipelineRootKindsFor(cfg EngineConfig) []string {
 	return roots
 }
 
+// seedKindOf resolves the seed kind that owns a work item id by scanning the
+// pipeline root kinds. Ids are unique per prefix, so at most one root matches.
+func seedKindOf(cfg EngineConfig, p RepoPaths, wi string) string {
+	for _, root := range pipelineRootKindsFor(cfg) {
+		if _, ok := resolveArtifactFileFor(cfg, p, root, wi); ok {
+			return root
+		}
+	}
+	return ""
+}
+
+// edgeBelongs reports whether a derivation edge participates in a seed kind's
+// chain. A chain-scoped edge serves only its seed; an unscoped edge serves
+// every seed (single-chain configs).
+func edgeBelongs(e DerivationEdge, seed string) bool {
+	return e.Chain == "" || e.Chain == seed
+}
+
+// reachableFrom reports whether a kind lies on a seed kind's derivation
+// chain. A seed reaches itself.
+func reachableFrom(cfg EngineConfig, seed, kind string) bool {
+	if seed == kind {
+		return true
+	}
+	queue := []string{seed}
+	seen := map[string]bool{seed: true}
+	for len(queue) > 0 {
+		k := queue[0]
+		queue = queue[1:]
+		for _, e := range cfg.Derivation {
+			if e.From != k || seen[e.To] || !edgeBelongs(e, seed) {
+				continue
+			}
+			seen[e.To] = true
+			if e.To == kind {
+				return true
+			}
+			queue = append(queue, e.To)
+		}
+	}
+	return false
+}
+
+// kindReachesTickets reports whether a seed kind's derivation chain reaches
+// the tickets kind. A chain without a ticket edge (a spike) publishes with no
+// tickets at all.
+func kindReachesTickets(cfg EngineConfig, root string) bool {
+	return reachableFrom(cfg, root, "tickets")
+}
+
+// chainWorkItem returns the work item id a source artifact belongs to. A
+// derived artifact carries work_item explicitly; a seed artifact is its own
+// work item.
+func chainWorkItem(cfg EngineConfig, p RepoPaths, fromKind, id string) string {
+	meta, ok, err := artifactMetaOfFor(cfg, p, fromKind, id)
+	if err != nil || !ok {
+		return ""
+	}
+	if wi := pipelineWorkItemOf(meta); wi != "" {
+		return wi
+	}
+	if isSeedKind(cfg, fromKind) {
+		return id
+	}
+	return ""
+}
+
+// chainSourcesOf returns the sorted ids of the source artifacts one work item
+// would derive tickets from, given the ticket edge's source kind. For a seed
+// source kind (chores) the seed itself is the source; otherwise every derived
+// artifact of that kind belonging to the work item.
+func chainSourcesOf(cfg EngineConfig, p RepoPaths, fromKind, wi string) []string {
+	arts, err := listArtifactsFor(cfg, p, fromKind)
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	for _, a := range arts {
+		if pipelineWorkItemOf(a.Meta) == wi || (isSeedKind(cfg, fromKind) && a.ID == wi) {
+			ids = append(ids, a.ID)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 // staleFromMtime: true when the source changed after the derived artifact.
 func staleFromMtime(source, derived string) bool {
 	sm, err := os.Stat(source)
@@ -348,15 +437,17 @@ func buildPipelineFor(r *Repo) (PipelineResponse, bool) {
 	p := r.paths
 	edges := make([]PipelineEdge, 0, len(cfg.Derivation))
 	for _, e := range cfg.Derivation {
-		edges = append(edges, PipelineEdge{From: e.From, To: e.To, Transform: e.Transform, Gate: e.Gate, Agent: e.Agent, Classifier: e.Classifier, Prompt: e.Prompt})
+		edges = append(edges, PipelineEdge{From: e.From, To: e.To, Transform: e.Transform, Gate: e.Gate, Agent: e.Agent, Chain: e.Chain, Classifier: e.Classifier, Prompt: e.Prompt})
 	}
 
-	// Tickets once, keyed by the requirement each anchors, for cover counts.
+	// Tickets once, keyed by (work_item, req) so a ticket covers only the
+	// sources of its own work item — ids recur across work items, and a
+	// ticket belonging to one intent must never satisfy another's coverage.
 	tickets, _ := listTicketsP(p)
 	ticketed := map[string]bool{}
 	for _, t := range tickets {
-		if t.Req != "" {
-			ticketed[t.Req] = true
+		if t.Req != "" && t.WorkItem != "" {
+			ticketed[t.WorkItem+"|"+t.Req] = true
 		}
 	}
 
@@ -368,11 +459,13 @@ func buildPipelineFor(r *Repo) (PipelineResponse, bool) {
 		}
 		for _, a := range arts {
 			it := PipelineItem{
-				ID:        a.ID,
-				Title:     a.Title,
-				Review:    metaReview(a.Meta),
-				Stages:    map[string][]PipelineArtifact{},
-				Published: metaBool(a.Meta["published"]),
+				ID:           a.ID,
+				Title:        a.Title,
+				Seed:         root,
+				Review:       metaReview(a.Meta),
+				Stages:       map[string][]PipelineArtifact{},
+				Published:    metaBool(a.Meta["published"]),
+				NeedsTickets: kindReachesTickets(cfg, root),
 			}
 			if s, ok := a.Meta["summary"].(string); ok && s != "" {
 				it.Summary = s
@@ -401,14 +494,31 @@ func buildPipelineFor(r *Repo) (PipelineResponse, bool) {
 					}
 				}
 			}
-			// Uncovered: requirements without an anchored ticket.
-			for _, c := range it.Stages["requirements"] {
-				if !ticketed[c.ID] {
-					it.Uncovered++
+			// Uncovered: the chain's ticket sources (requirements for a feature,
+			// decisions for a bug or RFC, the seed for a chore) that no ticket
+			// anchors. A seed-kind source counts the seed itself.
+			for _, e := range cfg.Derivation {
+				if e.To != "tickets" || !edgeBelongs(e, root) {
+					continue
+				}
+				if e.From == root {
+					if !ticketed[it.ID+"|"+it.ID] {
+						it.Uncovered++
+					}
+					continue
+				}
+				if !kindReachesTickets(cfg, root) || !reachableFrom(cfg, root, e.From) {
+					continue
+				}
+				for _, c := range it.Stages[e.From] {
+					if !ticketed[it.ID+"|"+c.ID] {
+						it.Uncovered++
+					}
 				}
 			}
-			// Ready: the seed and every artifact approved, and tickets exist.
-			ready := it.Review == "approved" && len(it.Stages["tickets"]) > 0
+			// Ready: the seed and every artifact approved, and — for chains
+			// that need them — tickets exist.
+			ready := it.Review == "approved" && (!it.NeedsTickets || len(it.Stages["tickets"]) > 0)
 			if ready {
 				for _, stage := range it.Stages {
 					for _, c := range stage {
@@ -429,8 +539,8 @@ func buildPipelineFor(r *Repo) (PipelineResponse, bool) {
 	if items == nil {
 		items = []PipelineItem{}
 	}
-	sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
-	return PipelineResponse{Edges: edges, Items: items}, true
+	sort.Slice(items, func(i, j int) bool { return lessArtifactID(items[i].ID, items[j].ID) })
+	return PipelineResponse{Edges: edges, Roots: pipelineRootKindsFor(cfg), Items: items}, true
 }
 
 // registrySingle returns the default (first) registered project, or nil when
@@ -498,6 +608,25 @@ func findDerivationEdgeFor(cfg EngineConfig, from, to string) (DerivationEdge, b
 	return DerivationEdge{}, false
 }
 
+// findChainEdgeFor returns the derivation edge for one workflow chain: the
+// chain-scoped edge wins; an unscoped edge (single-chain configs) is the
+// fallback when the chain names no edge of its own.
+func findChainEdgeFor(cfg EngineConfig, chain, from, to string) (DerivationEdge, bool) {
+	if chain != "" {
+		for _, e := range cfg.Derivation {
+			if e.From == from && e.To == to && e.Chain == chain {
+				return e, true
+			}
+		}
+	}
+	for _, e := range cfg.Derivation {
+		if e.From == from && e.To == to && e.Chain == "" {
+			return e, true
+		}
+	}
+	return DerivationEdge{}, false
+}
+
 // deriveTaskMessage is the user message shaped for the agent running the
 // transform. The agent reads the source through its tools and writes the
 // target through write tools; the runtime enforces allowlist and scopes.
@@ -505,73 +634,48 @@ func deriveTaskMessage(e DerivationEdge, slug string) string {
 	return deriveTaskMessageFor(engineConfig, e, slug)
 }
 
-// requirementWorkItem returns the work item id a requirement belongs to.
-func requirementWorkItem(cfg EngineConfig, p RepoPaths, reqID string) string {
-	meta, ok, err := artifactMetaOfFor(cfg, p, "requirements", reqID)
-	if err != nil || !ok {
-		return ""
-	}
-	return pipelineWorkItemOf(meta)
-}
-
-// requirementsOf returns the sorted requirement ids of one work item.
-func requirementsOf(cfg EngineConfig, p RepoPaths, wi string) []string {
-	arts, err := listArtifactsFor(cfg, p, "requirements")
-	if err != nil {
-		return nil
-	}
-	var ids []string
-	for _, a := range arts {
-		if pipelineWorkItemOf(a.Meta) == wi {
-			ids = append(ids, a.ID)
-		}
-	}
-	sort.Strings(ids)
-	return ids
-}
-
-// uncoveredReqIDs returns the requirements of the source requirement's work
-// item that have no ticket anchoring them. All covered returns nil, which the
-// caller treats as "nothing to derive" — no model run.
-func uncoveredReqIDs(cfg EngineConfig, p RepoPaths, reqID string) []string {
-	wi := requirementWorkItem(cfg, p, reqID)
+// uncoveredSourceIDs returns the source artifacts of the ticket edge for the
+// source's work item that no ticket anchors. All covered returns nil, which
+// the caller treats as "nothing to derive" — no model run.
+func uncoveredSourceIDs(cfg EngineConfig, p RepoPaths, fromKind, id string) []string {
+	wi := chainWorkItem(cfg, p, fromKind, id)
 	if wi == "" {
 		return nil
 	}
-	reqs := requirementsOf(cfg, p, wi)
-	if len(reqs) == 0 {
+	sources := chainSourcesOf(cfg, p, fromKind, wi)
+	if len(sources) == 0 {
 		return nil
 	}
 	tickets, _ := listTicketsP(p)
 	anchored := map[string]bool{}
 	for _, t := range tickets {
-		if t.Req != "" {
+		if t.Req != "" && t.WorkItem == wi {
 			anchored[t.Req] = true
 		}
 	}
 	missing := []string{}
-	for _, id := range reqs {
-		if !anchored[id] {
-			missing = append(missing, id)
+	for _, s := range sources {
+		if !anchored[s] {
+			missing = append(missing, s)
 		}
 	}
 	return missing
 }
 
-// unapprovedSiblings returns the requirements of the work item (including the
-// source) whose review is not approved. Ticket derivation must not run while
-// any requirement of the chain is unapproved — the agent would derive from
-// content the user has not accepted.
-func unapprovedSiblings(cfg EngineConfig, p RepoPaths, reqID string) []string {
-	wi := requirementWorkItem(cfg, p, reqID)
+// unapprovedSources returns the source artifacts of the work item (including
+// the given one) whose review is not approved. Ticket derivation must not run
+// while any source artifact of the chain is unapproved — the agent would
+// derive from content the user has not accepted.
+func unapprovedSources(cfg EngineConfig, p RepoPaths, fromKind, id string) []string {
+	wi := chainWorkItem(cfg, p, fromKind, id)
 	if wi == "" {
 		return nil
 	}
 	var bad []string
-	for _, id := range requirementsOf(cfg, p, wi) {
-		meta, ok, _ := artifactMetaOfFor(cfg, p, "requirements", id)
+	for _, s := range chainSourcesOf(cfg, p, fromKind, wi) {
+		meta, ok, _ := artifactMetaOfFor(cfg, p, fromKind, s)
 		if !ok || metaReview(meta) != "approved" {
-			bad = append(bad, id)
+			bad = append(bad, s)
 		}
 	}
 	return bad
@@ -587,7 +691,24 @@ func deriveTaskMessageFor(cfg EngineConfig, e DerivationEdge, slug string) strin
 	} else {
 		b.WriteString("Read the source artifact with a read tool, then write the derived artifact(s) with write_artifact or create_ticket. Set review: pending in every frontmatter. Call git_commit after every write.\n")
 	}
+	// Anti-duplication guard: one artifact per source per kind. A draft
+	// followed by the full write must update the existing file, never create
+	// a sibling (DOC-1 + DOC-2 for one intent).
+	b.WriteString("\nWrite every derived artifact exactly once, in full — no drafts or stubs. If this kind already has an artifact for this source (same derived_from), update that file; never create a sibling for the same source.\n")
 	return b.String()
+}
+
+// clarifySensitivityPrompt translates the user-chosen clarification-gate
+// sensitivity into an explicit directive for the deriving model.
+func clarifySensitivityPrompt(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "low":
+		return "\n\nClarification gate: LOW. Be decisive: raise open questions or require a decision only when one genuinely blocks the next stage. Otherwise state and take reasonable assumptions."
+	case "high":
+		return "\n\nClarification gate: HIGH. Surface open questions and unsolved decisions liberally — prefer asking over assuming whenever the source is ambiguous."
+	default:
+		return "\n\nClarification gate: MEDIUM. Ask only when the ambiguity would change the outcome; assume a reasonable default otherwise."
+	}
 }
 
 func handleAPIDerive(w http.ResponseWriter, r *http.Request) {
@@ -602,17 +723,28 @@ func handleAPIDerive(w http.ResponseWriter, r *http.Request) {
 	}
 	p := repo.paths
 	var body struct {
-		From string `json:"from"`
-		To   string `json:"to"`
-		Slug string `json:"slug"`
+		From               string `json:"from"`
+		To                 string `json:"to"`
+		Slug               string `json:"slug"`
+		ClarifySensitivity string `json:"clarify_sensitivity,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON body", 400)
 		return
 	}
-	edge, ok := findDerivationEdgeFor(cfg, body.From, body.To)
+	// Resolve the derivation chain the source belongs to: a seed defines its
+	// own chain; a derived artifact inherits its work item's seed. Edges and
+	// gates are then selected per chain, so the same from/to pair can carry
+	// a different transform for each workflow flavor.
+	chain := ""
+	if isSeedKind(cfg, body.From) {
+		chain = body.From
+	} else if wi := chainWorkItem(cfg, p, body.From, body.Slug); wi != "" {
+		chain = seedKindOf(cfg, p, wi)
+	}
+	edge, ok := findChainEdgeFor(cfg, chain, body.From, body.To)
 	if !ok {
-		http.Error(w, "derivation edge not declared", 400)
+		http.Error(w, "derivation edge not declared for chain "+chain, 400)
 		return
 	}
 	if body.Slug == "" || strings.Contains(body.Slug, "..") {
@@ -651,20 +783,23 @@ func handleAPIDerive(w http.ResponseWriter, r *http.Request) {
 	// list, turning the model's job into mechanical creation.
 	taskMsg := deriveTaskMessageFor(cfg, edge, body.Slug)
 	if edge.To == "tickets" {
-		if blocked := unapprovedSiblings(cfg, p, body.Slug); len(blocked) > 0 {
+		// The ticket edge's source kind (requirements, decisions, or the seed
+		// itself) drives the gating and the delta: the agent may only derive
+		// from approved sources, and every source must end up anchored.
+		if blocked := unapprovedSources(cfg, p, edge.From, body.Slug); len(blocked) > 0 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
 			json.NewEncoder(w).Encode(map[string]string{"error": "approve first: " + strings.Join(blocked, ", ")})
 			return
 		}
-		missing := uncoveredReqIDs(cfg, p, body.Slug)
+		missing := uncoveredSourceIDs(cfg, p, edge.From, body.Slug)
 		if missing != nil && len(missing) == 0 {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Cache-Control", "no-cache")
 			w.Header().Set("Connection", "keep-alive")
 			w.Header().Set("X-Accel-Buffering", "no")
 			if flusher, ok := w.(http.Flusher); ok {
-				note, _ := json.Marshal(map[string]string{"type": "text", "content": "All requirements already have tickets."})
+				note, _ := json.Marshal(map[string]string{"type": "notice", "content": "All sources already have tickets."})
 				fmt.Fprintf(w, "data: %s\n\n", note)
 				done, _ := json.Marshal(map[string]string{"type": "done"})
 				fmt.Fprintf(w, "data: %s\n\n", done)
@@ -673,8 +808,16 @@ func handleAPIDerive(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if missing != nil && len(missing) > 0 {
-			taskMsg += fmt.Sprintf("\n\nDelta: create tickets ONLY for these requirements, one ticket per id, with frontmatter req: <id> and source=\"requirements/<id>\", plus the acceptance criteria:\n%s\n", strings.Join(missing, ", "))
+			taskMsg += fmt.Sprintf("\n\nDelta: create tickets ONLY for these sources, one ticket per id, with frontmatter req: <id> and source=\"%s/<id>\", copying each source's relevant content into the body:\n%s\n", edge.From, strings.Join(missing, ", "))
 		}
+	}
+
+	// The capture UI lets the user choose how eagerly the model gates on
+	// clarifications (open questions / decisions). The directive is appended
+	// to the task message so it shapes every derive of the work item.
+	sens := strings.TrimSpace(body.ClarifySensitivity)
+	if sens != "" {
+		taskMsg += clarifySensitivityPrompt(sens)
 	}
 
 	aiCfg := getAPIConfig()
@@ -696,6 +839,12 @@ func handleAPIDerive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A run begins when the gates pass; every in-flight and terminal state
+	// is recorded with the run id on the durable log and mirrored to
+	// data/runs/<run>/. The agent loop gets a run-scoped context so tool
+	// calls are attributed to it and guards can abort a stalled run.
+	run := startRun(repo, body.From, body.To, body.Slug, edge.Transform, edge.Agent, sens, taskMsg)
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -708,31 +857,161 @@ func handleAPIDerive(w http.ResponseWriter, r *http.Request) {
 
 	msgs := []AgentMessage{{Role: "user", Content: taskMsg}}
 	outChan := make(chan AgentChunk, 100)
+	// Lifecycle events: the UI's run log and live status survive refreshes by
+	// replaying these — a derive.started without a matching terminal event
+	// means the run is still in flight.
+	emitRunEvent("derive.started", edge.To, map[string]interface{}{"from": body.From, "to": body.To, "slug": body.Slug, "run": run.ID})
+	errCh := make(chan error, 1)
 	go func() {
 		// Model/agent failures surface as visible stream items inside
 		// runAgentWithDepth (before it closes the channel), so a 401 or
-		// network error never masquerades as a bare "done".
-		_ = runAgentInRepo(context.Background(), repo, msgs, aiCfg.APIKey, aiCfg.BaseURL, aiCfg.Model, rt, outChan)
+		// network error never masquerades as a bare "done". The run owns its
+		// terminal transition (and its derive.done/derive.aborted events) so
+		// the UI hears about it the moment it happens — not when this HTTP
+		// handler finally unwinds.
+		err := runAgentInRepo(run.Ctx(), repo, msgs, aiCfg.APIKey, aiCfg.BaseURL, aiCfg.Model, rt, outChan)
+		if run.StatusNow() == "running" {
+			switch {
+			case err != nil:
+				run.Crash(err)
+			case run.Writes() == 0:
+				// The model loop ended "cleanly" but produced nothing
+				// durable: a failed write followed by a normal answer is
+				// not a success.
+				run.Crash(fmt.Errorf("run completed without writing any artifact"))
+			default:
+				run.Done()
+			}
+		}
+		errCh <- err
 	}()
 
-	for chunk := range outChan {
-		if chunk.Type == "text" {
-			payload, _ := json.Marshal(map[string]string{"type": "text", "content": chunk.Content})
-			fmt.Fprintf(w, "data: %s\n\n", payload)
-			flusher.Flush()
-		} else if chunk.Type == "tool_call" {
-			prev := chunk.Result
-			if len(prev) > 200 {
-				prev = prev[:200]
+	// Stage events drive the status line. Raw tokens and tool_call frames
+	// stay in the stream for the activity log; the status only ever shows
+	// engine-declared labels, never model text.
+	stage := func(label, detail string) {
+		payload, _ := json.Marshal(map[string]string{"type": "stage", "label": label, "detail": detail})
+		fmt.Fprintf(w, "data: %s\n\n", payload)
+		flusher.Flush()
+	}
+	stage("Deriving "+kindNoun(edge.To), "")
+
+streamLoop:
+	for {
+		select {
+		case chunk, ok := <-outChan:
+			if !ok {
+				break streamLoop
 			}
-			payload, _ := json.Marshal(map[string]string{"type": "tool_call", "name": chunk.Name, "result": prev})
-			fmt.Fprintf(w, "data: %s\n\n", payload)
-			flusher.Flush()
+			if chunk.Type == "text" {
+				payload, _ := json.Marshal(map[string]string{"type": "text", "content": chunk.Content})
+				fmt.Fprintf(w, "data: %s\n\n", payload)
+				flusher.Flush()
+			} else if chunk.Type == "tool_call" {
+				prev := chunk.Result
+				if len(prev) > 200 {
+					prev = prev[:200]
+				}
+				payload, _ := json.Marshal(map[string]string{"type": "tool_call", "name": chunk.Name, "result": prev})
+				fmt.Fprintf(w, "data: %s\n\n", payload)
+				flusher.Flush()
+				label, detail := deriveStageLabel(chunk.Name, chunk.Arguments, prev)
+				stage(label, detail)
+			}
+		case <-run.Terminal():
+			// The run ended (guard abort, watchdog, or the agent goroutine
+			// finished) — stop streaming now. Waiting for outChan to close
+			// could hang forever if the model stream ignores cancellation,
+			// which would leave the UI's busy state stuck on "Deriving".
+			break streamLoop
 		}
 	}
 	done, _ := json.Marshal(map[string]string{"type": "done"})
 	fmt.Fprintf(w, "data: %s\n\n", done)
 	flusher.Flush()
+
+	// The run already emitted its terminal events; give the goroutine a
+	// moment to finish bookkeeping, then close the response.
+	select {
+	case <-errCh:
+	case <-time.After(2 * time.Second):
+	}
+}
+
+// deriveStageLabel turns a completed tool call into a human-readable status
+// line. The label is the activity ("Writing requirement"), the detail is the
+// artifact being touched ("REQ-3") — never tool results or model output.
+func deriveStageLabel(name, arguments, result string) (string, string) {
+	argStr := func(key string) string {
+		var m map[string]interface{}
+		if json.Unmarshal([]byte(arguments), &m) != nil {
+			return ""
+		}
+		s, _ := m[key].(string)
+		return s
+	}
+	kind := argStr("kind")
+	id := argStr("id")
+	path := argStr("path")
+	snippet := func(s string) string {
+		s = strings.TrimSpace(s)
+		if i := strings.IndexByte(s, '\n'); i >= 0 {
+			s = s[:i]
+		}
+		if len(s) > 60 {
+			s = s[:60]
+		}
+		return s
+	}
+	switch {
+	case name == "read_artifact":
+		return "Reading " + kindNoun(kind), id
+	case name == "read_doc":
+		return "Reading document", path
+	case name == "read_ticket":
+		return "Reading ticket", id
+	case name == "read_workspace_file":
+		return "Reading file", path
+	case name == "list_docs":
+		return "Surveying documentation", ""
+	case name == "list_tickets":
+		return "Surveying tickets", ""
+	case name == "list_workspace_files":
+		return "Surveying workspace", ""
+	case name == "write_artifact":
+		return "Writing " + kindNoun(kind), id
+	case name == "write_doc":
+		return "Writing document", path
+	case name == "create_ticket":
+		return "Creating ticket", snippet(result)
+	case name == "update_ticket" || name == "add_comment":
+		return "Updating tickets", ""
+	case name == "git_commit":
+		return "Committing changes", ""
+	default:
+		return "Working", ""
+	}
+}
+
+func kindNoun(kind string) string {
+	switch kind {
+	case "requirements":
+		return "requirement"
+	case "decisions":
+		return "decision"
+	case "open_questions":
+		return "open question"
+	case "documentation":
+		return "documentation"
+	case "intents":
+		return "intent"
+	case "chores":
+		return "chore"
+	case "tickets":
+		return "ticket"
+	default:
+		return kind
+	}
 }
 
 // artifactReviewValues are the review states every artifact carries. The
@@ -800,6 +1079,7 @@ func handleAPIArtifactReview(w http.ResponseWriter, r *http.Request) {
 		unpublishWorkItemFor(repo, cfg, kindName, id)
 	}
 	gitCommitIn(repo, fmt.Sprintf("%s: set %s review to %s", kindName, id, body.Review))
+	emitRunEvent("artifact.review", kindName, map[string]interface{}{"id": id, "review": body.Review, "sha": repoHeadSHA(repo)})
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "kind": kindName, "review": body.Review})
 }
@@ -860,42 +1140,33 @@ func handleAPIArtifactUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	unpublishWorkItemFor(repo, cfg, kindName, id)
 	gitCommitIn(repo, fmt.Sprintf("%s: edit %s", kindName, id))
+	emitRunEvent("artifact.updated", kindName, map[string]interface{}{"id": id, "sha": repoHeadSHA(repo)})
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "kind": kindName, "review": "pending", "edited": true})
 }
 
-// unpublishWorkItemFor clears the published flag on the intent that owns the
+// unpublishWorkItemFor clears the published flag on the seed that owns the
 // artifact — found through the artifact's work_item frontmatter, or the
-// artifact itself when the kind is the seed. Editing or re-reviewing a
+// artifact itself when the kind is a seed. Editing or re-reviewing a
 // published work item reopens it.
 func unpublishWorkItemFor(repo *Repo, cfg EngineConfig, artKind, artifactID string) {
-	intents, ok := cfg.ArtifactKinds["intents"]
-	if !ok {
-		return
-	}
-	ext := intents.Extension
-	if ext == "" {
-		ext = ".mdx"
-	}
-	wi := ""
-	if artKind == "intents" {
-		wi = artifactID
-	} else {
-		path, ok := resolveArtifactFileFor(cfg, repo.paths, artKind, artifactID)
+	wi := artifactID
+	if !isSeedKind(cfg, artKind) {
+		meta, ok, _ := artifactMetaOfFor(cfg, repo.paths, artKind, artifactID)
 		if !ok {
 			return
 		}
-		meta, _, err := readFrontmatterFile(path)
-		if err != nil {
-			return
-		}
-		wi, _ = meta["work_item"].(string)
+		wi = pipelineWorkItemOf(meta)
 	}
 	if wi == "" {
 		return
 	}
-	ipath := filepath.Join(artifactKindRootFor(repo.paths, intents), wi+ext)
-	if _, err := os.Stat(ipath); err != nil {
+	seedKind := seedKindOf(cfg, repo.paths, wi)
+	if seedKind == "" {
+		return
+	}
+	ipath, ok := resolveArtifactFileFor(cfg, repo.paths, seedKind, wi)
+	if !ok {
 		return
 	}
 	meta, body, err := readFrontmatterFile(ipath)
@@ -906,14 +1177,17 @@ func unpublishWorkItemFor(repo *Repo, cfg EngineConfig, artKind, artifactID stri
 	if err := os.WriteFile(ipath, composeFrontmatter(meta, string(body)), 0644); err != nil {
 		return
 	}
-	gitCommitIn(repo, "intents: reopen "+wi)
+	gitCommitIn(repo, seedKind+": reopen "+wi)
 }
 
-// handleAPIWorkItemPublish marks a work item (its intent artifact) as
-// published. The gate is enforced here, deterministically: the intent and
-// every derived artifact must be approved, and at least one ticket must exist.
+// handleAPIWorkItemPublish marks a work item (its seed artifact) as
+// published. The gate is enforced here, deterministically: the seed and every
+// derived artifact must be approved, and chains that reach tickets need at
+// least one. The seed kind is resolved from the id, never from the route, so
+// every seed kind publishes through one handler.
 //
-//	POST /api/intents/{id}/publish
+//	POST /api/work-items/{id}/publish
+//	POST /api/intents/{id}/publish  (legacy alias)
 func handleAPIWorkItemPublish(w http.ResponseWriter, r *http.Request) {
 	repo, ok := repoFromRequest(w, r)
 	if !ok {
@@ -924,23 +1198,21 @@ func handleAPIWorkItemPublish(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	kind, ok := cfg.ArtifactKinds["intents"]
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	ext := kind.Extension
-	if ext == "" {
-		ext = ".mdx"
-	}
-	id := strings.TrimSuffix(r.PathValue("id"), ext)
+	id := r.PathValue("id")
+	id = strings.TrimSuffix(id, ".mdx")
+	id = strings.TrimSuffix(id, ".md")
 	if id == "" || strings.Contains(id, "..") || strings.Contains(id, "\\") {
 		http.Error(w, "invalid work item id", 400)
 		return
 	}
-	path, ok := resolveArtifactFileFor(cfg, repo.paths, "intents", id)
+	seedKind := seedKindOf(cfg, repo.paths, id)
+	if seedKind == "" {
+		http.NotFound(w, r)
+		return
+	}
+	path, ok := resolveArtifactFileFor(cfg, repo.paths, seedKind, id)
 	if !ok {
-		http.Error(w, "work item not found", 404)
+		http.NotFound(w, r)
 		return
 	}
 	meta, body, err := readFrontmatterFile(path)
@@ -955,7 +1227,10 @@ func handleAPIWorkItemPublish(w http.ResponseWriter, r *http.Request) {
 	var unapproved []string
 	tickets := 0
 	for kindName := range cfg.ArtifactKinds {
-		if kindName == "intents" {
+		if kindName == seedKind || kindName == "agents" || kindName == "skills" {
+			continue
+		}
+		if !reachableFrom(cfg, seedKind, kindName) {
 			continue
 		}
 		arts, _ := listArtifactsFor(cfg, repo.paths, kindName)
@@ -971,7 +1246,7 @@ func handleAPIWorkItemPublish(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if tickets == 0 {
+	if tickets == 0 && kindReachesTickets(cfg, seedKind) {
 		writeJSONError(w, http.StatusConflict, "derive tickets for "+id+" first")
 		return
 	}
@@ -984,9 +1259,10 @@ func handleAPIWorkItemPublish(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	gitCommitIn(repo, "intents: publish "+id)
+	gitCommitIn(repo, seedKind+": publish "+id)
+	emitRunEvent("workitem.published", seedKind, map[string]interface{}{"id": id, "sha": repoHeadSHA(repo)})
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "kind": "intents", "published": true})
+	json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "kind": seedKind, "published": true})
 }
 
 // readFrontmatterFile parses a frontmatter file into meta and body. A second

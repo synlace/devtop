@@ -2,13 +2,64 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
+
+// sameSourceArtifactFor returns the DevTop-relative path and id of the
+// artifact of kind whose frontmatter `derived_from` matches the source named
+// in the incoming content; the second write targets the same source artifact
+// as an existing one, so it must update that file instead of minting a
+// sibling (a draft followed by the full artifact must not leave DOC-1 and
+// DOC-2 for the same intent).
+func sameSourceArtifactFor(cfg EngineConfig, p RepoPaths, kindName, content string) (rel, id string, ok bool) {
+	if kindName == "open_questions" {
+		// A source legitimately yields several open questions; deduping them
+		// would collapse distinct clarifications into one artifact.
+		return "", "", false
+	}
+	var meta map[string]interface{}
+	if _, err := parseArtifactFrontmatter(strings.NewReader(content), &meta); err != nil {
+		return "", "", false
+	}
+	source, _ := meta["derived_from"].(string)
+	if strings.TrimSpace(source) == "" {
+		return "", "", false
+	}
+	arts, err := listArtifactsFor(cfg, p, kindName)
+	if err != nil {
+		return "", "", false
+	}
+	var bestRel, bestID string
+	var bestTime time.Time
+	for _, a := range arts {
+		if s, _ := a.Meta["derived_from"].(string); s != source {
+			continue
+		}
+		// Prefer the newest matching artifact: a stale partial write (the
+		// stub) must not shadow the full document written later.
+		info, err := os.Stat(a.Path)
+		if err != nil {
+			continue
+		}
+		if bestID != "" && !info.ModTime().After(bestTime) {
+			continue
+		}
+		r, err := filepath.Rel(p.DevTop, a.Path)
+		if err != nil {
+			continue
+		}
+		bestRel, bestID, bestTime = r, a.ID, info.ModTime()
+	}
+	if bestID == "" {
+		return "", "", false
+	}
+	return bestRel, bestID, true
+}
 
 // Generic artifact API. The engine serves any config-declared kind at
 // /api/artifacts/{kind} (list) and /api/artifacts/{kind}/{id...} (detail) by
@@ -104,7 +155,7 @@ func handleAPIArtifacts(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(items, func(i, j int) bool {
 		a, _ := items[i]["id"].(string)
 		b, _ := items[j]["id"].(string)
-		return a < b
+		return lessArtifactID(a, b)
 	})
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(items)
@@ -174,26 +225,39 @@ func handleAPIArtifactDetail(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-// nextIntentID scans the intents kind dir for the highest INT-<n> already
-// used and returns INT-<n+1>, so seeds never collide and re-runs are stable.
-func nextIntentID(root, ext string) string {
-	files, _ := filepath.Glob(filepath.Join(root, "INT-*"+ext))
-	maxID := 0
-	for _, f := range files {
-		var n int
-		if _, err := fmt.Sscanf(strings.TrimSuffix(filepath.Base(f), ext), "INT-%d", &n); err == nil && n > maxID {
-			maxID = n
+// isSeedKind reports whether a config-declared kind is a work-item seed: it
+// must exist and must never appear as the `to` of a derivation edge. Seeds
+// are the root of their own chain and are never derived from.
+func isSeedKind(cfg EngineConfig, kindName string) bool {
+	if _, ok := cfg.ArtifactKinds[kindName]; !ok {
+		return false
+	}
+	for _, e := range cfg.Derivation {
+		if e.To == kindName {
+			return false
 		}
 	}
-	return fmt.Sprintf("INT-%03d", maxID+1)
+	return true
 }
 
-// handleAPIIntentCreate seeds a new work item. The intent artifact is the
-// human-authored seed of a derivation chain (agent_writable=false): it gets
-// review: pending, and documentation derives only after the user approves it.
-//
-//	POST /api/intents  {"title":"...","intent":"..."}
+// handleAPIIntentCreate is the legacy route for feature intents. The generic
+// seed endpoint serves every seed kind; this keeps POST /api/intents working
+// for existing clients and tests.
 func handleAPIIntentCreate(w http.ResponseWriter, r *http.Request) {
+	handleWorkItemSeedCreate(w, r, "intents")
+}
+
+// handleAPISeedCreate seeds a new work item of any seed kind. The seed
+// artifact is the human-authored root of a derivation chain
+// (agent_writable=false): it gets review: pending, and derivation runs only
+// after the user approves it.
+//
+//	POST /api/seeds/{kind}  {"title":"...","intent":"..."}
+func handleAPISeedCreate(w http.ResponseWriter, r *http.Request) {
+	handleWorkItemSeedCreate(w, r, r.PathValue("kind"))
+}
+
+func handleWorkItemSeedCreate(w http.ResponseWriter, r *http.Request, kindName string) {
 	repo, ok := repoFromRequest(w, r)
 	if !ok {
 		return
@@ -203,9 +267,13 @@ func handleAPIIntentCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	kind, ok := cfg.ArtifactKinds["intents"]
+	if !isSeedKind(cfg, kindName) {
+		http.Error(w, "kind is not a work-item seed: "+kindName, 403)
+		return
+	}
+	kind, ok := cfg.ArtifactKinds[kindName]
 	if !ok {
-		http.Error(w, "no intents kind configured", 404)
+		http.Error(w, "no "+kindName+" kind configured", 404)
 		return
 	}
 	ext := kind.Extension
@@ -229,10 +297,11 @@ func handleAPIIntentCreate(w http.ResponseWriter, r *http.Request) {
 	if intentBody == "" {
 		intentBody = title
 	}
-	id := nextIntentID(artifactKindRootFor(repo.paths, kind), ext)
+	root := artifactKindRootFor(repo.paths, kind)
+	id := mintArtifactID(cfg, repo.paths, kindName)
 	meta := map[string]interface{}{"title": title, "review": "pending"}
 	content := composeFrontmatter(meta, intentBody)
-	path := filepath.Join(artifactKindRootFor(repo.paths, kind), id+ext)
+	path := filepath.Join(root, id+ext)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -241,10 +310,12 @@ func handleAPIIntentCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	gitCommitIn(repo, "intents: create "+id)
+	gitCommitIn(repo, kindName+": create "+id)
+	emitRunEvent("seed.created", kindName, map[string]interface{}{"id": id, "title": title})
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"id":      id,
+		"kind":    kindName,
 		"title":   title,
 		"review":  "pending",
 		"content": intentBody,

@@ -25,6 +25,7 @@ type EngineNav struct {
 type ArtifactKind struct {
 	Path             string                 `yaml:"path" json:"path"`
 	Extension        string                 `yaml:"extension" json:"extension"`
+	IDPrefix         string                 `yaml:"id_prefix" json:"id_prefix,omitempty"`
 	AgentWritable    bool                   `yaml:"agent_writable" json:"agent_writable"`
 	View             string                 `yaml:"view" json:"view"`
 	Nav              *EngineNav             `yaml:"nav" json:"nav,omitempty"`
@@ -38,6 +39,10 @@ type DerivationEdge struct {
 	Transform string `yaml:"transform" json:"transform"`
 	Gate      string `yaml:"gate" json:"gate,omitempty"`
 	Agent     string `yaml:"agent" json:"agent,omitempty"`
+	// Chain names the seed kind this edge belongs to. An edge without a chain
+	// applies to every seed (legacy single-chain configs). With multiple seed
+	// kinds the same from/to pair carries different transforms per chain.
+	Chain string `yaml:"chain,omitempty" json:"chain,omitempty"`
 	// Prompt is the derivation instruction for this edge, inlined in config.
 	// When empty, the engine falls back to a generic instruction.
 	Prompt string `yaml:"prompt" json:"prompt,omitempty"`

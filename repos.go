@@ -137,6 +137,19 @@ func (r *Repo) Config() (EngineConfig, error) {
 	return r.cfg, r.cfgErr
 }
 
+// docsPathsFor resolves the doc store directory for a repo from its engine
+// config: the `documentation` kind's declared path, falling back to the
+// legacy .devtop/docs directory when the config predates the kind model.
+func docsPathsFor(r *Repo) RepoPaths {
+	p := r.paths
+	if cfg, err := r.Config(); err == nil {
+		if kind, ok := cfg.ArtifactKinds["documentation"]; ok && kind.Path != "" {
+			p.Docs = filepath.Join(p.DevTop, kind.Path)
+		}
+	}
+	return p
+}
+
 // loadEngineConfigFrom parses <devTop>/config.yml, falling back to the bundled
 // default. Shared by LoadEngineConfig (legacy global) and per-repo Config.
 func loadEngineConfigFrom(devTop string) (EngineConfig, error) {
@@ -191,7 +204,7 @@ func (r *Repo) Status() RepoStatus {
 	} else {
 		st.Status = "nogit"
 	}
-	if entries, err := os.ReadDir(r.paths.Docs); err == nil {
+	if entries, err := os.ReadDir(docsPathsFor(r).Docs); err == nil {
 		for _, e := range entries {
 			if strings.HasSuffix(e.Name(), ".mdx") {
 				st.Docs++

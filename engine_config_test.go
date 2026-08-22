@@ -71,8 +71,8 @@ func TestLoadEngineConfig_ParsesDefault(t *testing.T) {
 	if err := loadEngineConfig(); err != nil {
 		t.Fatalf("loadEngineConfig: %v", err)
 	}
-	if len(engineConfig.ArtifactKinds) != 8 {
-		t.Fatalf("expected 8 default kinds, got %d", len(engineConfig.ArtifactKinds))
+	if len(engineConfig.ArtifactKinds) != 12 {
+		t.Fatalf("expected 12 default kinds, got %d", len(engineConfig.ArtifactKinds))
 	}
 	intents, ok := engineConfig.ArtifactKinds["intents"]
 	if !ok {
@@ -100,6 +100,15 @@ func TestLoadEngineConfig_ParsesDefault(t *testing.T) {
 			t.Fatalf("missing %s kind", k)
 		}
 	}
+	// The workflow-flavor seed kinds exist with their id prefixes.
+	for k, prefix := range map[string]string{"intents": "INT", "bugs": "BUG", "spikes": "SPIKE", "rfcs": "RFC", "chores": "CHORE"} {
+		if _, ok := engineConfig.ArtifactKinds[k]; !ok {
+			t.Fatalf("missing %s kind", k)
+		}
+		if engineConfig.ArtifactKinds[k].IDPrefix != prefix {
+			t.Errorf("%s id_prefix = %q, want %q", k, engineConfig.ArtifactKinds[k].IDPrefix, prefix)
+		}
+	}
 	if _, ok := engineConfig.ArtifactKinds["prds"]; ok {
 		t.Error("prds must be gone from the default config")
 	}
@@ -120,8 +129,8 @@ func TestLoadEngineConfig_ParsesDefault(t *testing.T) {
 	if engineConfig.AgentRuntime.Default != "docs" {
 		t.Errorf("agent_runtime.default = %q, want the scaffolded docs agent", engineConfig.AgentRuntime.Default)
 	}
-	if len(engineConfig.Derivation) != 5 {
-		t.Errorf("expected 5 derivation edges, got %d", len(engineConfig.Derivation))
+	if len(engineConfig.Derivation) != 15 {
+		t.Errorf("expected 15 derivation edges, got %d", len(engineConfig.Derivation))
 	}
 	if engineConfig.Derivation[0].Agent != "doc-builder" || engineConfig.Derivation[0].Transform != "describe_feature" {
 		t.Errorf("intents->documentation edge misconfigured: %+v", engineConfig.Derivation[0])
@@ -129,9 +138,22 @@ func TestLoadEngineConfig_ParsesDefault(t *testing.T) {
 	if engineConfig.Derivation[0].Gate != "intents.review == approved" {
 		t.Errorf("intents gate = %q", engineConfig.Derivation[0].Gate)
 	}
+	// Every chain-scoped edge names the seed kind it belongs to.
+	chains := map[string]bool{}
+	for _, e := range engineConfig.Derivation {
+		chains[e.Chain] = true
+	}
+	for _, seed := range []string{"intents", "bugs", "spikes", "rfcs", "chores"} {
+		if !chains[seed] {
+			t.Errorf("missing %s chain in derivation", seed)
+		}
+	}
+	if !kindReachesTickets(engineConfig, "chores") || kindReachesTickets(engineConfig, "spikes") {
+		t.Error("chore chain must reach tickets; spike chain must not")
+	}
 	last := engineConfig.Derivation[len(engineConfig.Derivation)-1]
-	if last.Agent != "ticket-deriver" || last.Gate != "requirements.review == approved" {
-		t.Errorf("requirements->tickets edge misconfigured: %+v", last)
+	if last.Agent != "ticket-deriver" || last.Gate != "chores.review == approved" {
+		t.Errorf("chores->tickets edge misconfigured: %+v", last)
 	}
 	if engineConfig.Pipeline.Nav == nil || engineConfig.Pipeline.Nav.Label != "Work items" || engineConfig.Pipeline.Nav.View != "pipeline" {
 		t.Errorf("pipeline nav misconfigured: %+v", engineConfig.Pipeline.Nav)
@@ -236,8 +258,8 @@ func TestAPIEngineConfig(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(out.ArtifactKinds) != 8 {
-		t.Errorf("expected 8 kinds in response, got %d", len(out.ArtifactKinds))
+	if len(out.ArtifactKinds) != 12 {
+		t.Errorf("expected 12 kinds in response, got %d", len(out.ArtifactKinds))
 	}
 	if _, ok := out.ArtifactKinds["intents"]; !ok {
 		t.Error("intents kind missing from response")

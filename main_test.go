@@ -55,6 +55,26 @@ title: "System Architecture"
 Stack: Go + Alpine.
 `), 0644)
 
+	// The kind-model store keeps docs in the documentation kind dir; the HTTP
+	// endpoints resolve it from the config, so the fixtures must live there.
+	docRoot := filepath.Join(DEVTOP_DIR, "documentation")
+	_ = os.MkdirAll(docRoot, 0755)
+	os.WriteFile(filepath.Join(docRoot, "index.mdx"), []byte(`---
+title: "Project Overview"
+---
+
+# Welcome
+Test documentation.
+`), 0644)
+
+	os.WriteFile(filepath.Join(docRoot, "architecture.mdx"), []byte(`---
+title: "System Architecture"
+---
+
+# Architecture
+Stack: Go + Alpine.
+`), 0644)
+
 	// Create sample tickets
 	os.WriteFile(filepath.Join(TICKETS_DIR, "001.md"), []byte(`---
 id: "001"

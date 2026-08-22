@@ -327,7 +327,8 @@ func TestWriteArtifact_ResolvesExistingIndexFile(t *testing.T) {
 }
 
 // TestWriteArtifact_CreatesByConvention: with no existing file, creation keeps
-// the placement convention (plain id -> <id>/index.mdx).
+// the placement convention (plain id -> <id>/index.mdx) — and the engine mints
+// the id, ignoring the caller's id for a file that does not exist.
 func TestWriteArtifact_CreatesByConvention(t *testing.T) {
 	setupClassifyEnv(t)
 	res := dispatchTool("write_artifact", map[string]interface{}{
@@ -336,11 +337,14 @@ func TestWriteArtifact_CreatesByConvention(t *testing.T) {
 	if strings.Contains(res, "Error") {
 		t.Fatalf("write_artifact failed: %s", res)
 	}
-	if _, err := os.Stat(joinPath(DEVTOP_DIR, "docs/new-page/index.mdx")); err != nil {
-		t.Errorf("convention index missing: %v", err)
+	if strings.Contains(res, "id=new-page") {
+		t.Errorf("supplied id must be ignored for a new file, got: %s", res)
 	}
-	if _, err := os.Stat(joinPath(DEVTOP_DIR, "docs/new-page.mdx")); err == nil {
-		t.Error("no-convention direct file must not exist")
+	if _, err := os.Stat(joinPath(DEVTOP_DIR, "docs/1/index.mdx")); err != nil {
+		t.Errorf("minted convention index missing: %v", err)
+	}
+	if _, err := os.Stat(joinPath(DEVTOP_DIR, "docs/new-page")); err == nil {
+		t.Error("caller-supplied id must not be honored for a new file")
 	}
 }
 

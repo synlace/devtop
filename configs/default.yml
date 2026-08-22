@@ -5,45 +5,109 @@
 # for external orchestrators. Materialized into $DEVTOP_DIR/config.yml on
 # first run so a repo owns its copy (edit, commit, and external tools read it).
 #
-# The target workflow: intent (the seed, entered by a human) -> documentation
-# -> requirements/decisions/open questions -> tickets. Every artifact is
-# reviewable on its own (review: pending|approved|rejected), and a derived
-# artifact feeds the next stage only after the user approves it. The PRD
-# concept is gone; "docs" is no longer the seed.
+# The target workflow: a work item is the seed (a feature intent, a bug, a
+# spike, an RFC, or a chore — entered by a human) and derivations expand it
+# into reviewable artifacts and tickets. Every artifact is reviewable on its
+# own (review: pending|approved|rejected), and a derived artifact feeds the
+# next stage only after the user approves it.
+#
+# A seed kind is a config-declared artifact kind that never appears as the
+# `to` of a derivation edge: the pipeline view treats each of its files as one
+# work item. Each seed kind has its own chain shape (its edges into the shared
+# kinds), and its own id prefix for the seed files. The PRD concept is gone;
+# "docs" is no longer the seed.
 #
 # Adding a kind is a config edit plus an engine-supported view — no code
 # change. A repo overrides this file after materialization.
 
 artifact_kinds:
-  # The seed. A work item IS an intent artifact: derived artifacts reference it
-  # through their `work_item` frontmatter, and the pipeline view reconstructs
-  # the chain from those edges. Not agent-writable: a prompt never creates it.
+  # The feature seed. A work item IS a seed artifact: derived artifacts
+  # reference it through their `work_item` frontmatter, and the pipeline view
+  # reconstructs the chain from those edges. No seed is agent-writable: a
+  # prompt never creates one.
   intents:
     path: intents
     extension: .mdx
+    id_prefix: INT
     agent_writable: false
     requires_approval: true
     view: list
     schema:
       title: string
       review: [pending, approved, rejected]
-  # Documentation derived from an approved intent.
+  # Defects against the current system: a change record, the fix direction,
+  # and tickets.
+  bugs:
+    path: bugs
+    extension: .mdx
+    id_prefix: BUG
+    agent_writable: false
+    requires_approval: true
+    view: list
+    schema:
+      title: string
+      review: [pending, approved, rejected]
+  # Research before commitment: findings, a recommendation, and open
+  # questions. A spike publishes without tickets.
+  spikes:
+    path: spikes
+    extension: .mdx
+    id_prefix: SPIKE
+    agent_writable: false
+    requires_approval: true
+    view: list
+    schema:
+      title: string
+      review: [pending, approved, rejected]
+  # Design proposals: a design doc, the proposal decisions, and tickets.
+  rfcs:
+    path: rfcs
+    extension: .mdx
+    id_prefix: RFC
+    agent_writable: false
+    requires_approval: true
+    view: list
+    schema:
+      title: string
+      review: [pending, approved, rejected]
+  # Maintenance work with no design phase: tickets directly.
+  chores:
+    path: chores
+    extension: .mdx
+    id_prefix: CHORE
+    agent_writable: false
+    requires_approval: true
+    view: list
+    schema:
+      title: string
+      review: [pending, approved, rejected]
+  # Documentation derived from an approved seed. For a feature it describes
+  # behavior; for a bug it is the change record; for a spike the findings; for
+  # an RFC the design doc.
   documentation:
     path: documentation
     extension: .mdx
+    id_prefix: DOC
     agent_writable: true
     requires_approval: true
     view: list
+    nav:
+      label: Docs
+      icon: file
+      order: 1
+      view: tree
     schema:
       work_item: string
       derived_from: string
       title: string
       review: [pending, approved, rejected]
   # Requirements derived from approved documentation. One documentation
-  # artifact derives many REQ artifacts; each ticket anchors one of them.
+  # artifact derives many REQ artifacts; each feature ticket anchors one of
+  # them.
   requirements:
     path: requirements
     extension: .mdx
+    id_prefix: REQ
     agent_writable: true
     requires_approval: true
     view: list
@@ -53,10 +117,12 @@ artifact_kinds:
       title: string
       acceptance: string
       review: [pending, approved, rejected]
-  # Decisions derived from approved documentation.
+  # Decisions derived from approved documentation. A bug's fix direction, a
+  # spike's recommendation, and an RFC's proposal decisions all live here.
   decisions:
     path: decisions
     extension: .mdx
+    id_prefix: DEC
     agent_writable: true
     requires_approval: true
     view: list
@@ -70,6 +136,7 @@ artifact_kinds:
   open_questions:
     path: open_questions
     extension: .mdx
+    id_prefix: OQ
     agent_writable: true
     requires_approval: true
     view: list
@@ -78,16 +145,19 @@ artifact_kinds:
       derived_from: string
       title: string
       review: [pending, approved, rejected]
-  # Tickets derived from approved requirements, one ticket per requirement.
+  # Tickets derived from an approved source (the chain tail): one ticket per
+  # source requirement or decision, one ticket per chore seed.
   tickets:
     path: tickets
     extension: .md
+    # No id_prefix: ticket ids are bare numbers (1, 2, ...) minted by the
+    # engine, Jira-style; never invent a ticket id.
     agent_writable: true
     view: board
     nav:
       label: Tickets
       icon: board
-      order: 2
+      order: 3
       view: board
     schema:
       id: string
@@ -129,15 +199,22 @@ artifact_kinds:
       description: string
       triggers: [string]
 
-# The transformation chain. Each edge applies the configured agent with the
+# The derivation chains. Each edge applies the configured agent with the
 # configured prompt to the source artifact(s); the gate (a review field on the
 # source) is enforced deterministically before any model runs. Deriving a kind
 # produces ONE or MORE artifacts of that kind — the agent creates REQ-001,
-# REQ-002, ... from a single documentation artifact, and one ticket per
-# approved requirement.
+# REQ-002, ... from a single documentation artifact, and one ticket per source.
+#
+# Chain shapes per seed kind:
+#   intents -> documentation -> requirements + decisions + open_questions -> tickets
+#   bugs    -> documentation (change record) -> decisions (fix direction) -> tickets
+#   spikes  -> documentation (findings) -> decisions (recommendation) + open_questions
+#   rfcs    -> documentation (design doc) -> decisions (proposal) -> tickets
+#   chores  -> tickets
 derivation:
   - from: intents
     to: documentation
+    chain: intents
     transform: describe_feature
     agent: doc-builder
     gate: "intents.review == approved"
@@ -145,7 +222,8 @@ derivation:
       Turn the intent into one feature documentation artifact.
       Read the intent artifact with a read tool (kind=intents).
       Write the documentation with write_artifact: kind=documentation.
-      The id is a new ID you generate (convention DOC-<n>).
+      Do not invent the id: write_artifact assigns it (DOC-<n>) and its
+      result names it; use the returned id in the frontmatter.
       The file has YAML frontmatter: title, work_item: <intent id>,
       derived_from: intents/<intent id>, and review: pending.
       Body: user-facing behaviour, scope, storage notes, acceptance surfaces.
@@ -153,6 +231,7 @@ derivation:
 
   - from: documentation
     to: requirements
+    chain: intents
     transform: derive_requirements
     agent: semantics-builder
     gate: "documentation.review == approved"
@@ -161,31 +240,42 @@ derivation:
       Read the documentation artifact with a read tool (kind=documentation).
       Write one requirements artifact per behaviour with
       write_artifact: kind=requirements.
-      Generate each id yourself following REQ-<n>.
+      Do not invent ids: write_artifact assigns each (REQ-<n>) and its
+      results name them; use the returned ids in the frontmatter.
       Each file has YAML frontmatter: title, work_item: <intent id>,
       derived_from: documentation/<documentation id>, acceptance, and
       review: pending.
       Each requirement is independently implementable: one behaviour, one
       acceptance statement a test can assert.
+      Produce only the requirements the documentation actually supports; a
+      single behaviour is one requirement. Do not invent requirements.
       Call git_commit after every write.
 
   - from: documentation
     to: decisions
+    chain: intents
     transform: derive_decisions
     agent: semantics-builder
     gate: "documentation.review == approved"
     prompt: |
-      Extract the technical decisions the documentation implies.
+      Extract the technical decisions the artifact implies.
       Read the documentation artifact with a read tool (kind=documentation).
       Write one decisions artifact per decision with write_artifact:
-      kind=decisions, generating ids DEC-<n>.
-      Each file has YAML frontmatter: title, work_item: <intent id>,
+      kind=decisions; write_artifact assigns each id (DEC-<n>) and its
+      results name them.
+      Each file has YAML frontmatter: title, work_item: <work item id>,
       derived_from: documentation/<documentation id>, and review: pending.
-      State the decision and its rationale; do not restate requirements.
+      For a bug chain the decision is the root cause and the chosen fix
+      direction. For a spike it is the recommendation (go / no-go with the
+      evidence). For an RFC it is one proposed design decision.
+      State the decision and its rationale; do not restate the documentation.
+      Produce a decision only when the documentation implies one; when none
+      exists, write nothing for this target kind.
       Call git_commit after every write.
 
   - from: documentation
     to: open_questions
+    chain: intents
     transform: derive_open_questions
     agent: semantics-builder
     gate: "documentation.review == approved"
@@ -193,13 +283,17 @@ derivation:
       List the open questions the documentation leaves unanswered.
       Read the documentation artifact with a read tool (kind=documentation).
       Write one open_questions artifact per question with write_artifact:
-      kind=open_questions, generating ids OQ-<n>.
-      Each file has YAML frontmatter: title, work_item: <intent id>,
+      kind=open_questions; write_artifact assigns each id (OQ-<n>) and its
+      results name them.
+      Each file has YAML frontmatter: title, work_item: <work item id>,
       derived_from: documentation/<documentation id>, and review: pending.
+      Produce an open question only when the documentation genuinely leaves
+      something unresolved; zero questions is valid output.
       Call git_commit after every write.
 
   - from: requirements
     to: tickets
+    chain: intents
     transform: derive_tickets
     agent: ticket-deriver
     gate: "requirements.review == approved"
@@ -207,13 +301,10 @@ derivation:
       Derive the ticket(s) for the named requirement(s).
       Read each requirement with a read tool (kind=requirements) before
       writing its ticket.
-      Create one ticket PER REQUIREMENT with create_ticket.
-      Each ticket frontmatter carries:
-      - work_item: <intent id>
-      - req: <requirement id>
-      - source: requirements/<requirement id>
-      - claimed_by: ""
-      - priority and status
+      Create one ticket PER REQUIREMENT with create_ticket, passing
+      work_item=<intent id>, req=<requirement id>, and
+      source=requirements/<requirement id> as tool arguments; the tool
+      persists them in the ticket frontmatter.
       Copy the requirement's acceptance criteria into the body, so the
       implementer has them without opening the requirement. Name a focused
       test file in a `tests` line of the body.
@@ -221,13 +312,198 @@ derivation:
       Never duplicate a requirement that already has a ticket.
       Call git_commit after every write.
 
+  - from: bugs
+    to: documentation
+    chain: bugs
+    transform: describe_change_record
+    agent: doc-builder
+    gate: "bugs.review == approved"
+    prompt: |
+      Turn the bug into one change record documentation artifact.
+      Read the bug artifact with a read tool (kind=bugs).
+      Write the documentation with write_artifact: kind=documentation.
+      Do not invent the id: write_artifact assigns it (DOC-<n>) and its
+      result names it; use the returned id in the frontmatter.
+      The file has YAML frontmatter: title, work_item: <bug id>,
+      derived_from: bugs/<bug id>, and review: pending.
+      Body: how to reproduce, the observed vs expected behaviour, the likely
+      root cause, and the scope of the fix. Keep it short.
+      Call git_commit after every write.
+
+  - from: documentation
+    to: decisions
+    chain: bugs
+    transform: derive_fix_direction
+    agent: semantics-builder
+    gate: "documentation.review == approved"
+    prompt: |
+      Extract the fix direction the change record implies.
+      Read the change record with a read tool (kind=documentation).
+      Write one decisions artifact per decision with write_artifact:
+      kind=decisions; write_artifact assigns each id (DEC-<n>) and its
+      results name them.
+      Each file has YAML frontmatter: title, work_item: <bug id>,
+      derived_from: documentation/<documentation id>, and review: pending.
+      State the chosen fix and why; do not restate the bug report.
+      Produce a decision only when the change record implies one.
+      Call git_commit after every write.
+
+  - from: decisions
+    to: tickets
+    chain: bugs
+    transform: derive_fix_tickets
+    agent: ticket-deriver
+    gate: "decisions.review == approved"
+    prompt: |
+      Derive the fix ticket(s) for the named decision(s).
+      Read each decision with a read tool (kind=decisions) before writing its
+      ticket.
+      Create one ticket PER DECISION with create_ticket, passing
+      work_item=<bug id>, req=<decision id>, and
+      source=decisions/<decision id> as tool arguments; the tool persists
+      them in the ticket frontmatter.
+      Copy the decision's rationale into the body so the implementer has it
+      without opening the decision. Name a focused test file in a `tests` line
+      of the body.
+      When the task names a delta list, create tickets ONLY for those ids.
+      Never duplicate a decision that already has a ticket.
+      Call git_commit after every write.
+
+  - from: spikes
+    to: documentation
+    chain: spikes
+    transform: describe_findings
+    agent: doc-builder
+    gate: "spikes.review == approved"
+    prompt: |
+      Turn the spike into one findings documentation artifact.
+      Read the spike artifact with a read tool (kind=spikes).
+      Write the documentation with write_artifact: kind=documentation.
+      Do not invent the id: write_artifact assigns it (DOC-<n>) and its
+      result names it; use the returned id in the frontmatter.
+      The file has YAML frontmatter: title, work_item: <spike id>,
+      derived_from: spikes/<spike id>, and review: pending.
+      Body: what you explored, what worked, what did not, measured evidence,
+      and constraints surfaced. Do not recommend — the decision comes next.
+      Call git_commit after every write.
+
+  - from: documentation
+    to: decisions
+    chain: spikes
+    transform: derive_recommendation
+    agent: semantics-builder
+    gate: "documentation.review == approved"
+    prompt: |
+      Turn the spike findings into one recommendation decision.
+      Read the findings artifact with a read tool (kind=documentation).
+      Write one decisions artifact with write_artifact: kind=decisions;
+      write_artifact assigns the id (DEC-<n>) and its result names it.
+      The file has YAML frontmatter: title, work_item: <spike id>,
+      derived_from: documentation/<documentation id>, and review: pending.
+      State the recommendation and the evidence; do not restate the findings.
+      Call git_commit after every write.
+
+  - from: documentation
+    to: open_questions
+    chain: spikes
+    transform: derive_open_questions
+    agent: semantics-builder
+    gate: "documentation.review == approved"
+    prompt: |
+      List the open questions the spike findings leave unanswered.
+      Read the findings artifact with a read tool (kind=documentation).
+      Write one open_questions artifact per question with write_artifact:
+      kind=open_questions; write_artifact assigns each id (OQ-<n>) and its
+      results name them.
+      Each file has YAML frontmatter: title, work_item: <spike id>,
+      derived_from: documentation/<documentation id>, and review: pending.
+      Produce an open question only when the findings genuinely leave
+      something unresolved; zero questions is valid output.
+      Call git_commit after every write.
+
+  - from: rfcs
+    to: documentation
+    chain: rfcs
+    transform: describe_design
+    agent: doc-builder
+    gate: "rfcs.review == approved"
+    prompt: |
+      Turn the RFC into one design documentation artifact.
+      Read the RFC artifact with a read tool (kind=rfcs).
+      Write the documentation with write_artifact: kind=documentation.
+      Do not invent the id: write_artifact assigns it (DOC-<n>) and its
+      result names it; use the returned id in the frontmatter.
+      The file has YAML frontmatter: title, work_item: <rfc id>,
+      derived_from: rfcs/<rfc id>, and review: pending.
+      Body: the problem, the proposed design, interfaces, and integration
+      points. Do not decide; the decisions come next.
+      Call git_commit after every write.
+
+  - from: documentation
+    to: decisions
+    chain: rfcs
+    transform: derive_proposal_decisions
+    agent: semantics-builder
+    gate: "documentation.review == approved"
+    prompt: |
+      Extract the design decisions the RFC doc implies.
+      Read the design doc artifact with a read tool (kind=documentation).
+      Write one decisions artifact per DEC with write_artifact:
+      kind=decisions; write_artifact assigns each id (DEC-<n>) and its
+      results name them.
+      Each file has YAML frontmatter: title, work_item: <rfc id>,
+      derived_from: documentation/<documentation id>, and review: pending.
+      State each decision and its rationale; do not restate the design doc.
+      Produce a decision only when the design doc implies one.
+      Call git_commit after every write.
+
+  - from: decisions
+    to: tickets
+    chain: rfcs
+    transform: derive_proposal_tickets
+    agent: ticket-deriver
+    gate: "decisions.review == approved"
+    prompt: |
+      Derive the ticket(s) for the named design decision(s).
+      Read each decision with a read tool (kind=decisions) before writing its
+      ticket.
+      Create one ticket PER DECISION with create_ticket, passing
+      work_item=<rfc id>, req=<decision id>, and
+      source=decisions/<decision id> as tool arguments; the tool persists
+      them in the ticket frontmatter.
+      Copy the decision's rationale into the body so the implementer has it
+      without opening the decision. Name a focused test file in a `tests` line
+      of the body.
+      When the task names a delta list, create tickets ONLY for those ids.
+      Never duplicate a decision that already has a ticket.
+      Call git_commit after every write.
+
+  - from: chores
+    to: tickets
+    chain: chores
+    transform: derive_chore_tickets
+    agent: ticket-deriver
+    gate: "chores.review == approved"
+    prompt: |
+      Derive the ticket(s) for the named chore.
+      Read the chore artifact with a read tool (kind=chores).
+      Create the tickets with create_ticket, one per work item in the chore,
+      passing work_item=<chore id>, req=<chore id>, and
+      source=chores/<chore id> as tool arguments; the tool persists them in
+      the ticket frontmatter.
+      Copy the chore's description into the body so the implementer has it
+      without opening the chore.
+      When the task names a delta list, create tickets ONLY for those ids.
+      Never duplicate a chore that already has a ticket.
+      Call git_commit after every write.
+
 # The cross-kind derivation view. Renders the `derivation` edges above as a
-# work-item flow: each intent is a chain of artifacts grouped by kind.
+# work-item flow: each seed is a chain of artifacts grouped by kind.
 pipeline:
   nav:
     label: Work items
     icon: flow
-    order: 1
+    order: 2
     view: pipeline
 
 # How changed source artifacts affect derived artifacts. Computed generically
@@ -259,7 +535,7 @@ agent_runtime:
 # parse to know the artifact vocabulary, which states are grabbable, and how
 # results are reported back. devtop never drives the lifecycle.
 handoff:
-  contract: "intents/*.mdx + each derived artifact's work_item/review fields + this config"
+  contract: "intents|bugs|spikes|rfcs|chores/*.mdx + each derived artifact's work_item/review fields + this config"
   grabbable: []
   report_back:
     - comment

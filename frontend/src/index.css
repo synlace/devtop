@@ -330,3 +330,12 @@ tr.copilotKitMarkdownElement:nth-child(even) td.copilotKitMarkdownElement {
 }
 .rc-tree-node-content-wrapper:hover { background: rgba(30, 41, 59, 0.4); }
 .rc-tree-treenode-selected > .rc-tree-node-content-wrapper { color: #93c5fd; }
+
+/* Work-item list: shrink toward Intent · Title · State when the pane narrows. */
+.wi-list { container-type: inline-size; }
+.wi-head, .wi-row { display: grid; grid-template-columns: 72px minmax(0, 1fr) 180px; align-items: center; }
+.wi-count { display: none; }
+@container (min-width: 640px) {
+  .wi-head, .wi-row { grid-template-columns: 72px minmax(0, 1fr) 44px 44px 44px 52px 180px; }
+  .wi-count { display: block; }
+}

@@ -49,8 +49,8 @@ type SkillDef struct {
 // generic `read`/`write` groups back the kind-parametric artifact tools; the
 // kind-specific `docs` group stays for legacy agents that name it directly.
 var toolGroups = map[string][]string{
-	"base":      {"git_commit", "ask_user", "list_docs"},
-	"read":      {"read_artifact"},
+	"base":      {"git_commit", "ask_user", "run_trace", "list_docs", "list_artifacts"},
+	"read":      {"read_artifact", "list_artifacts"},
 	"write":     {"write_artifact"},
 	"docs":      {"read_doc", "read_doc_at", "list_doc_revisions", "write_doc"},
 	"tickets":   {"list_tickets", "read_ticket", "create_ticket", "update_ticket", "add_comment"},
@@ -341,12 +341,35 @@ var readToolPathers = map[string]func(map[string]interface{}) (string, bool){
 	"read_doc_at":        docToolPath,
 	"list_doc_revisions": docToolPath,
 	"read_ticket":        ticketToolPath,
+	"list_artifacts":     listArtifactsToolPath,
 }
 
-// artifactToolPath mirrors write_artifact placement rules for any kind.
+// listArtifactsToolPath resolves a list_artifacts call to the kind's tree,
+// for scope matching only. The rel "kind/" matches globs like
+// "kind/**" (and a global "*" scope matches every kind).
+func listArtifactsToolPath(args map[string]interface{}) (string, bool) {
+	kind, _ := args["kind"].(string)
+	if kind == "" || strings.Contains(kind, "..") || strings.Contains(kind, "\\") {
+		return "", false
+	}
+	return kind + "/", true
+}
+
+// artifactToolPath mirrors write_artifact placement rules for any kind. An
+// empty id (a new artifact — the handler mints) resolves against the id the
+// next mint would return, so authorization and the actual write agree on the
+// path without allocating anything. Same precedent as create_ticket's
+// tickets/<new>.md placeholder.
 func artifactToolPath(args map[string]interface{}) (string, bool) {
 	kind, _ := args["kind"].(string)
 	id, _ := args["id"].(string)
+	if strings.TrimSpace(id) == "" {
+		// Authorization runs before the tool-context repo pin, so it
+		// resolves against the same globals the write resolver below uses.
+		if preview := previewMintArtifactID(engineConfig, defaultPaths(), kind); preview != "" {
+			id = preview
+		}
+	}
 	return resolveArtifactWriteTarget(kind, id)
 }
 
@@ -379,7 +402,9 @@ func ticketToolPath(args map[string]interface{}) (string, bool) {
 }
 
 // authorizeTool returns "" when the tool call is permitted for the agent,
-// or a human-readable denial the model receives as the tool result.
+// or a human-readable denial the model receives as the tool result. Denials
+// name the allowed scopes so the model can correct itself instead of
+// re-probing the same denied target.
 func (rt *agentRuntime) authorizeTool(name string, args map[string]interface{}) string {
 	if rt.allowlist != nil && !rt.allowlist[name] {
 		return fmt.Sprintf("Error: tool %q is not allowed for agent %q", name, rt.Slug)
@@ -390,13 +415,22 @@ func (rt *agentRuntime) authorizeTool(name string, args map[string]interface{}) 
 			return fmt.Sprintf("Error: cannot determine target path for tool %q", name)
 		}
 		if !scopeMatches(rt.writeScopes, rel) {
-			return fmt.Sprintf("Error: tool %q targets %q, outside the agent's write scope", name, rel)
+			return fmt.Sprintf("Error: tool %q targets %q, outside the agent's write scope (allowed: %s)", name, rel, strings.Join(rt.writeScopes, ", "))
 		}
 		return ""
 	}
 	if p, ok := readToolPathers[name]; ok && len(rt.readScopes) > 0 {
-		if rel, ok := p(args); ok && !scopeMatches(rt.readScopes, rel) {
-			return fmt.Sprintf("Error: tool %q targets %q, outside the agent's read scope", name, rel)
+		// An agent may inspect a kind it writes to: the read check admits
+		// anything inside either the read or the write scopes. Otherwise a
+		// semantics agent that can write requirements/ could never survey
+		// requirements/ before writing, which is the flail we saw.
+		rel, res := p(args)
+		if !res {
+			return fmt.Sprintf("Error: cannot determine target path for tool %q", name)
+		}
+		if !scopeMatches(rt.readScopes, rel) && !scopeMatches(rt.writeScopes, rel) {
+			allowed := append(append([]string{}, rt.readScopes...), rt.writeScopes...)
+			return fmt.Sprintf("Error: tool %q targets %q, outside the agent's read scope (allowed: %s)", name, rel, strings.Join(allowed, ", "))
 		}
 	}
 	return ""

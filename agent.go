@@ -167,15 +167,15 @@ func registerBuiltinTools() {
 		"type": "function",
 		"function": map[string]interface{}{
 			"name":        "write_artifact",
-			"description": "Write or overwrite an artifact of a config-declared, agent-writable kind (e.g. prds). Content includes YAML frontmatter and a markdown body.",
+			"description": "Write or overwrite an artifact of a config-declared, agent-writable kind. Content includes YAML frontmatter and a markdown body. The engine allocates ids: for a new artifact it mints the next id of the kind (REQ-1, DEC-2, ...) and the tool result names it — do not invent ids. A supplied id is honored only when the artifact already exists (an edit); for new artifacts it is ignored and a minted id is used.",
 			"parameters": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"kind":    map[string]interface{}{"type": "string", "description": "Artifact kind, declared in config.yml (e.g. 'prds')"},
-					"id":      map[string]interface{}{"type": "string", "description": "Artifact id, e.g. 'architecture/migrations'"},
+					"kind":    map[string]interface{}{"type": "string", "description": "Artifact kind, declared in config.yml (e.g. 'documentation', 'requirements')"},
+					"id":      map[string]interface{}{"type": "string", "description": "Optional artifact id, e.g. 'architecture/migrations'. Omit it to let the engine allocate the next id of the kind."},
 					"content": map[string]interface{}{"type": "string", "description": "Full file content (YAML frontmatter + markdown body)"},
 				},
-				"required": []string{"kind", "id", "content"},
+				"required": []string{"kind", "content"},
 			},
 		},
 	}, func(args map[string]interface{}) string {
@@ -193,9 +193,42 @@ func registerBuiltinTools() {
 		if k.View == "board" {
 			return fmt.Sprintf("Error: kind %q has a typed write flow; use its dedicated tool", kind)
 		}
-		rel, ok := resolveArtifactWriteTargetFor(cfg, p, kind, id)
-		if !ok {
-			return "Error: cannot determine target path for write_artifact"
+		// Mint when the caller sends no id — or sends an id for a file that
+		// does not exist yet. A supplied id is honored only for an existing
+		// file (an edit), so agents cannot invent ids for new artifacts: the
+		// engine always owns allocation. With no id, minting happens first —
+		// path resolution only runs against a concrete id.
+		rel := ""
+		needsMint := strings.TrimSpace(id) == ""
+		if !needsMint {
+			var okResolve bool
+			rel, okResolve = resolveArtifactWriteTargetFor(cfg, p, kind, id)
+			if !okResolve {
+				return "Error: cannot determine target path for write_artifact"
+			}
+			if _, err := os.Stat(filepath.Join(p.DevTop, rel)); err != nil {
+				needsMint = true
+			}
+		}
+		updated := false
+		if needsMint {
+			// Same-source dedupe: a second write for the same source in one
+			// run updates the existing artifact instead of minting a sibling.
+			if rel2, id2, ok2 := sameSourceArtifactFor(cfg, p, kind, content); ok2 {
+				rel, id, updated = rel2, id2, true
+				needsMint = false
+			}
+		}
+		if needsMint {
+			rel = ""
+			id = mintArtifactID(cfg, p, kind)
+			if id == "" {
+				return "Error: cannot allocate an id for kind " + kind
+			}
+			rel, _ = resolveArtifactWriteTargetFor(cfg, p, kind, id)
+			if rel == "" {
+				return "Error: cannot determine target path for write_artifact"
+			}
 		}
 		if _, err := guardPath(p.DevTop, rel); err != nil {
 			return fmt.Sprintf("Error: %v", err)
@@ -207,7 +240,11 @@ func registerBuiltinTools() {
 		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 			return fmt.Sprintf("Error writing artifact: %v", err)
 		}
-		return fmt.Sprintf("Written to .devtop/%s", rel)
+		verb := "Written"
+		if updated {
+			verb = "Updated (same source)"
+		}
+		return fmt.Sprintf("%s to .devtop/%s (id=%s)", verb, rel, id)
 	})
 
 	registerTool("read_artifact", map[string]interface{}{
@@ -242,6 +279,32 @@ func registerBuiltinTools() {
 			return fmt.Sprintf("Error: artifact '%s/%s' not found", kind, id)
 		}
 		return string(data)
+	})
+
+	registerTool("list_artifacts", map[string]interface{}{
+		"type": "function",
+		"function": map[string]interface{}{
+			"name":        "list_artifacts",
+			"description": "List the artifacts of a config-declared kind (e.g. 'requirements', 'decisions', 'open_questions', 'documentation'): their ids, titles, review state, and work item, newest first. Use this before writing to an existing kind — never guess ids.",
+			"parameters": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"kind": map[string]interface{}{"type": "string", "description": "Artifact kind, declared in config.yml (e.g. 'intents')"},
+				},
+				"required": []string{"kind"},
+			},
+		},
+	}, func(args map[string]interface{}) string {
+		kind, _ := args["kind"].(string)
+		arts, err := listArtifacts(kind)
+		if err != nil {
+			return fmt.Sprintf("Error listing %s: %v", kind, err)
+		}
+		if arts == nil {
+			arts = []kindArtifact{}
+		}
+		b, _ := json.MarshalIndent(arts, "", "  ")
+		return string(b)
 	})
 
 	registerTool("list_docs", map[string]interface{}{
@@ -317,8 +380,9 @@ func registerBuiltinTools() {
 					"description": map[string]interface{}{"type": "string", "description": "Markdown description"},
 					"priority":    map[string]interface{}{"type": "string", "enum": []string{"urgent", "high", "medium", "low"}, "description": "Priority level"},
 					"assignee":    map[string]interface{}{"type": "string", "description": "Assignee username (optional)"},
-					"source":      map[string]interface{}{"type": "string", "description": "Origin artifact slug, e.g. prds/data-layer (optional)"},
-					"req":         map[string]interface{}{"type": "string", "description": "Origin requirement id, e.g. REQ-011 (optional)"},
+					"source":      map[string]interface{}{"type": "string", "description": "Origin artifact slug, e.g. requirements/REQ-1 (optional)"},
+					"req":         map[string]interface{}{"type": "string", "description": "Origin source id this ticket implements, e.g. REQ-1 (optional)"},
+					"work_item":   map[string]interface{}{"type": "string", "description": "Work item id this ticket belongs to, e.g. INT-1 (optional)"},
 				},
 				"required": []string{"title", "description", "priority"},
 			},
@@ -330,6 +394,7 @@ func registerBuiltinTools() {
 		assignee, _ := args["assignee"].(string)
 		source, _ := args["source"].(string)
 		req, _ := args["req"].(string)
+		workItem, _ := args["work_item"].(string)
 
 		tid := getNextTicketIDP(toolPaths())
 		now := time.Now().UTC().Format("2006-01-02")
@@ -337,6 +402,7 @@ func registerBuiltinTools() {
 			ID:             tid,
 			Title:          title,
 			Req:            req,
+			WorkItem:       workItem,
 			Status:         "open",
 			Priority:       priority,
 			Assignee:       assignee,
@@ -540,7 +606,7 @@ func registerBuiltinTools() {
 		"type": "function",
 		"function": map[string]interface{}{
 			"name":        "git_commit",
-			"description": "Commit all changes made so far to git. Call this after every write/create/update operation. The message should describe what changed and why.",
+			"description": "Commit all changes made so far to git. Call this after every write/create/update operation. The message should describe what changed and why. If the result says the repository has no git, skip this call — do not retry it.",
 			"parameters": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -763,6 +829,14 @@ func gitCommitIn(repo *Repo, message string) string {
 	if repoDir == "" {
 		repoDir = repo.Root
 	}
+	// Fail loudly when the workspace has no git repository: deriving without
+	// commits leaves untraceable state, and "not a git repository" buried in
+	// a git error string is easy to miss.
+	probe := exec.Command("git", "rev-parse", "--is-inside-work-tree")
+	probe.Dir = repoDir
+	if er := probe.Run(); er != nil {
+		return "Error: not a git repository at " + repoDir + " — commits are disabled. Run 'git init' in the repository so derives leave reviewable history."
+	}
 	rel, err := filepath.Rel(repoDir, p.DevTop)
 	if err != nil {
 		rel = p.DevTop
@@ -940,6 +1014,9 @@ func runAgentWithDepth(ctx context.Context, repo *Repo, messages []AgentMessage,
 
 		choice := response.Choices[0]
 		if choice.Delta.Content != "" {
+			if run := CurrentRun(ctx); run != nil {
+				run.Touch()
+			}
 			outChan <- AgentChunk{Type: "text", Content: choice.Delta.Content}
 		}
 
@@ -999,6 +1076,7 @@ func runAgentWithDepth(ctx context.Context, repo *Repo, messages []AgentMessage,
 				args = make(map[string]interface{})
 			}
 
+			start := time.Now()
 			result := dispatchToolForRepo(repo, rt, tc.Name, args)
 			outChan <- AgentChunk{
 				Type:      "tool_call",
@@ -1006,6 +1084,11 @@ func runAgentWithDepth(ctx context.Context, repo *Repo, messages []AgentMessage,
 				Arguments: tc.Arguments,
 				Result:    result,
 				Index:     tc.Index,
+			}
+			// Run telemetry: mirror the call to the run trace and feed the
+			// loop/error guards. No-op outside a Run (chat, prospect).
+			if run := CurrentRun(ctx); run != nil {
+				run.ToolCall(tc.Name, tc.Arguments, args, result, time.Since(start))
 			}
 
 			followupMessages = append(followupMessages, AgentMessage{

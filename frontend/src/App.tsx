@@ -22,7 +22,9 @@ import {
   History,
   MoreVertical,
   Star,
-  GitBranch
+  GitBranch,
+  PanelRightClose,
+  PanelRightOpen
 } from 'lucide-react'
 import { CopilotKit, CopilotChat } from '@copilotkit/react-core/v2'
 import { useAgentContext } from '@copilotkit/react-core/v2'
@@ -149,12 +151,41 @@ const BUILTIN_ENGINE_CONFIG: EngineConfig = {
       requires_approval: true,
       view: 'list',
     },
+    bugs: {
+      path: 'bugs',
+      extension: '.mdx',
+      agent_writable: false,
+      requires_approval: true,
+      view: 'list',
+    },
+    spikes: {
+      path: 'spikes',
+      extension: '.mdx',
+      agent_writable: false,
+      requires_approval: true,
+      view: 'list',
+    },
+    rfcs: {
+      path: 'rfcs',
+      extension: '.mdx',
+      agent_writable: false,
+      requires_approval: true,
+      view: 'list',
+    },
+    chores: {
+      path: 'chores',
+      extension: '.mdx',
+      agent_writable: false,
+      requires_approval: true,
+      view: 'list',
+    },
     documentation: {
       path: 'documentation',
       extension: '.mdx',
       agent_writable: true,
       requires_approval: true,
       view: 'list',
+      nav: { label: 'Docs', icon: 'file', order: 1, view: 'tree' },
     },
     requirements: {
       path: 'requirements',
@@ -182,19 +213,29 @@ const BUILTIN_ENGINE_CONFIG: EngineConfig = {
       extension: '.md',
       agent_writable: true,
       view: 'board',
-      nav: { label: 'Tickets', icon: 'board', order: 2, view: 'board' },
+      nav: { label: 'Tickets', icon: 'board', order: 3, view: 'board' },
     },
   },
   derivation: [
-    { from: 'intents', to: 'documentation', transform: 'describe_feature' },
-    { from: 'documentation', to: 'requirements', transform: 'derive_requirements' },
-    { from: 'documentation', to: 'decisions', transform: 'derive_decisions' },
-    { from: 'documentation', to: 'open_questions', transform: 'derive_open_questions' },
-    { from: 'requirements', to: 'tickets', transform: 'derive_tickets', gate: 'requirements.review == approved' },
+    { from: 'intents', to: 'documentation', transform: 'describe_feature', chain: 'intents' },
+    { from: 'documentation', to: 'requirements', transform: 'derive_requirements', chain: 'intents' },
+    { from: 'documentation', to: 'decisions', transform: 'derive_decisions', chain: 'intents' },
+    { from: 'documentation', to: 'open_questions', transform: 'derive_open_questions', chain: 'intents' },
+    { from: 'requirements', to: 'tickets', transform: 'derive_tickets', chain: 'intents', gate: 'requirements.review == approved' },
+    { from: 'bugs', to: 'documentation', transform: 'describe_change_record', chain: 'bugs' },
+    { from: 'documentation', to: 'decisions', transform: 'derive_fix_direction', chain: 'bugs' },
+    { from: 'decisions', to: 'tickets', transform: 'derive_fix_tickets', chain: 'bugs', gate: 'decisions.review == approved' },
+    { from: 'spikes', to: 'documentation', transform: 'describe_findings', chain: 'spikes' },
+    { from: 'documentation', to: 'decisions', transform: 'derive_recommendation', chain: 'spikes' },
+    { from: 'documentation', to: 'open_questions', transform: 'derive_open_questions', chain: 'spikes' },
+    { from: 'rfcs', to: 'documentation', transform: 'describe_design', chain: 'rfcs' },
+    { from: 'documentation', to: 'decisions', transform: 'derive_proposal_decisions', chain: 'rfcs' },
+    { from: 'decisions', to: 'tickets', transform: 'derive_proposal_tickets', chain: 'rfcs', gate: 'decisions.review == approved' },
+    { from: 'chores', to: 'tickets', transform: 'derive_chore_tickets', chain: 'chores', gate: 'chores.review == approved' },
   ],
   replan: { detect: 'git_diff', stale_badge: true },
-  pipeline: { nav: { label: 'Work items', icon: 'flow', order: 1, view: 'pipeline' } },
-  handoff: { contract: 'intents/*.mdx + each derived artifact work_item/review + this config', grabbable: [], lifecycle_owner: 'external' },
+  pipeline: { nav: { label: 'Work items', icon: 'flow', order: 2, view: 'pipeline' } },
+  handoff: { contract: 'intents|bugs|spikes|rfcs|chores/*.mdx + each derived artifact work_item/review + this config', grabbable: [], lifecycle_owner: 'external' },
 }
 
 // Provider presets shown in the AI config wizard. LM Studio is keyless (the
@@ -247,7 +288,19 @@ function App() {
   const [artifactLists, setArtifactLists] = useState<Record<string, ArtifactItem[]>>({})
   
   // Chat Panel Resizing & Layout
-  const [chatWidth, setChatWidth] = useState<number>(384)
+  const readChatState = (): { width: number; collapsed: boolean } => {
+    try {
+      const v = JSON.parse(window.localStorage.getItem('devtop.chat.panel') ?? '{}') as Partial<{ width: number; collapsed: boolean }>
+      return { width: typeof v.width === 'number' && v.width >= 200 ? v.width : 384, collapsed: v.collapsed === true }
+    } catch { return { width: 384, collapsed: false } }
+  }
+  const CHAT_STATE = readChatState()
+  const [chatWidth, setChatWidth] = useState<number>(CHAT_STATE.width)
+  const [chatCollapsed, setChatCollapsed] = useState(CHAT_STATE.collapsed)
+
+  useEffect(() => {
+    window.localStorage.setItem('devtop.chat.panel', JSON.stringify({ width: chatWidth, collapsed: chatCollapsed }))
+  }, [chatWidth, chatCollapsed])
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false)
   
   // Thread State
@@ -1403,13 +1456,26 @@ useEffect(() => {
   const chatCanMount = chatReady && repos.length > 0 && activeRepoStatus?.initialized
 
   const chatPanel = (
+        <>
+        {chatCollapsed && !isFullscreen && (
+          <aside className="w-9 bg-[#090c15] border-l border-borderDark/60 flex-shrink-0 flex flex-col items-center py-2 z-20"
+            data-testid="chat-collapsed-rail">
+            <button
+              onClick={() => setChatCollapsed(false)}
+              className="h-7 w-7 rounded-lg border border-borderDark/50 hover:bg-borderDark/40 flex items-center justify-center text-slate-400 hover:text-slate-100 transition-colors"
+              title="Show chat"
+            >
+              <PanelRightOpen className="w-3.5 h-3.5" />
+            </button>
+          </aside>
+        )}
         <aside 
           ref={chatPanelRef}
           data-testid="copilot-chat-panel"
           className={`bg-[#090c15] border-l border-borderDark/60 flex-shrink-0 flex flex-col z-20 shadow-2xl ${
             isFullscreen ? 'fixed inset-0 w-full h-full z-50' : 'relative'
-          }`}
-          style={!isFullscreen ? { width: `${chatWidth}px` } : {}}
+          } ${chatCollapsed && !isFullscreen ? 'w-0 overflow-hidden' : ''}`}
+          style={!isFullscreen ? { width: chatCollapsed ? '0' : `${chatWidth}px` } : {}}
         >
           {/* Drag Handle */}
           {!isFullscreen && (
@@ -1470,6 +1536,13 @@ useEffect(() => {
                 title="Toggle Fullscreen"
               >
                 {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+              </button>
+              <button
+                onClick={() => setChatCollapsed(true)}
+                className="h-7 w-7 rounded-lg border border-borderDark/50 hover:bg-borderDark/40 flex items-center justify-center text-slate-400 hover:text-slate-100 transition-colors"
+                title="Collapse chat"
+              >
+                <PanelRightClose className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
@@ -1593,6 +1666,7 @@ useEffect(() => {
             </div>
           )}
         </aside>
+        </>
   )
 
   // Nav sections are data-driven from the engine config: one section per kind
@@ -1893,21 +1967,6 @@ useEffect(() => {
 
         {/* ===== MAIN CONTENT ===== */}
         <main className="flex-1 overflow-y-auto bg-bgDark border-r border-borderDark/60 flex flex-col">
-
-        {isMultiRepo && activeRepoStatus?.status === 'nogit' && (
-          <div className="flex-shrink-0 px-8 py-2.5 bg-amber-500/10 border-b border-amber-500/25 flex items-center justify-between">
-            <p className="text-xs text-amber-300 flex items-center gap-2">
-              <Info className="w-3.5 h-3.5" />
-              Agent commits require a git repo in <span className="font-mono text-amber-200">{activeRepoStatus.path}</span>
-            </p>
-            <button
-              onClick={() => refreshRepos()}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-500/20 text-amber-200 border border-amber-500/40 hover:bg-amber-500/30 transition-colors"
-            >
-              Re-scan
-            </button>
-          </div>
-        )}
           <header className="h-[57px] flex-shrink-0 border-b border-borderDark/40 px-8 flex items-center justify-between bg-bgDark/80 sticky top-0 z-10">
             <div className="flex items-center gap-3 text-xs font-medium text-slate-400 relative">
               {activeRepoStatus && (
@@ -2019,6 +2078,12 @@ useEffect(() => {
                 </Fragment>
               ))}
             </div>
+            {activePage.kind === 'pipeline' && (
+              <div className="text-right flex-shrink-0 ml-3">
+                <div className="text-sm font-semibold text-slate-100 leading-tight">Work items</div>
+                <div className="text-[11px] text-slate-500">Select an intent — derive, approve, and publish hands-off. Answer only when asked.</div>
+              </div>
+            )}
           </header>
 
           <div className="flex flex-1 min-h-0">
@@ -2043,7 +2108,7 @@ useEffect(() => {
               </aside>
             )}
 
-            <div className="flex-1 min-w-0 overflow-y-auto p-8">
+            <div className={`flex-1 min-w-0 overflow-y-auto ${isPipelinePage ? '' : 'p-8'}`}>
 
             {!showSettings && repos.length === 0 ? (
               <div className="h-full flex items-center justify-center fade-in">

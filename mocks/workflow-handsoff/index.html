@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>devtop — workflow handsoff (autonomous runs)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            bgDark: '#070a13',
+            surfaceDark: '#0c101f',
+            borderDark: '#1e293b',
+            accentBlue: '#3b82f6',
+            accentPurple: '#8b5cf6',
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'ui-monospace', 'Fira Code', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    * { scrollbar-width: thin; scrollbar-color: #1e293b transparent; font-family: 'Inter', sans-serif; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 9999px; }
+    .fade-in { animation: fadeIn 0.18s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+    .line-in { animation: lineIn 0.22s ease; }
+    @keyframes lineIn { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
+    .stage-chip { transition: all 0.25s ease; }
+  </style>
+</head>
+<body class="min-h-screen bg-bgDark text-slate-200 font-sans antialiased selection:bg-accentBlue/30 selection:text-white">
+
+<div class="flex h-screen overflow-hidden">
+
+  <!-- ======================= SIDEBAR (prod chrome) ======================= -->
+  <aside class="w-60 bg-[#05070d]/90 border-r border-borderDark/60 flex-shrink-0 flex flex-col z-20">
+    <div class="px-5 py-4 border-b border-borderDark/40 flex items-center gap-2.5">
+      <div class="h-7 w-7 rounded-lg bg-gradient-to-tr from-accentBlue to-accentPurple flex items-center justify-center font-bold text-white text-sm shadow-lg shadow-accentBlue/20">d</div>
+      <div>
+        <div class="text-sm font-semibold text-slate-100 tracking-tight leading-none">devtop</div>
+        <div class="text-[10px] text-slate-500 leading-none mt-1">workflow · handsoff</div>
+      </div>
+    </div>
+
+    <nav class="flex-1 overflow-y-auto p-3 space-y-5">
+      <div>
+        <div class="text-[10px] font-semibold text-slate-500 uppercase tracking-widest px-3 mb-1">Workspace</div>
+        <div class="space-y-px">
+          <a class="flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs font-medium border bg-accentBlue/10 text-slate-100 border-accentBlue/20">
+            <svg class="w-4 h-4 text-accentBlue" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
+            Work items
+          </a>
+          <a class="flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-500 hover:text-slate-200 hover:bg-borderDark/20 border border-transparent transition-all">
+            <svg class="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 3h10v7l-3 2 3 2v7H7v-7l3-2-3-2V3z"/></svg>
+            Documents
+          </a>
+          <a class="flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-500 hover:text-slate-200 hover:bg-borderDark/20 border border-transparent transition-all">
+            <svg class="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16"/></svg>
+            Requirements
+          </a>
+          <a class="flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-500 hover:text-slate-200 hover:bg-borderDark/20 border border-transparent transition-all">
+            <svg class="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h11M9 21V5a2 2 0 00-2-2H5a2 2 0 00-2 2v16a2 2 0 002 2h14a2 2 0 002-2v-8m-2-6l3 3-3 3m0-6l-3 3 3 3"/></svg>
+            Tickets
+          </a>
+        </div>
+      </div>
+      <div>
+        <div class="text-[10px] font-semibold text-slate-500 uppercase tracking-widest px-3 mb-1">Project</div>
+        <div class="space-y-px">
+          <a class="flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-500 hover:text-slate-200 hover:bg-borderDark/20 border border-transparent transition-all">
+            <svg class="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6c0-1.1.9-2 2-2h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V6z"/></svg>
+            Workflows
+          </a>
+        </div>
+      </div>
+    </nav>
+
+    <div class="px-4 py-3 border-t border-borderDark/40 bg-[#03050a]/40 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="flex items-center justify-center w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]"></span>
+        <span class="text-[11px] text-slate-400">synlace/devtop</span>
+      </div>
+      <span class="text-[9px] font-mono text-slate-600 uppercase tracking-wider border border-borderDark/40 px-1.5 py-0.5 rounded">mock</span>
+    </div>
+  </aside>
+
+  <!-- ======================= MAIN CONTENT ======================= -->
+  <main class="flex-1 overflow-y-auto bg-bgDark flex flex-col relative">
+    <header class="h-[57px] flex-shrink-0 border-b border-borderDark/40 px-6 flex items-center justify-between bg-bgDark/80 backdrop-blur-md sticky top-0 z-10">
+      <div class="flex items-center gap-2 text-xs font-medium text-slate-500">
+        <span>Work items</span>
+        <svg class="w-3.5 h-3.5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+        <span class="text-slate-200 font-semibold">Autonomous runs</span>
+      </div>
+    </header>
+
+    <div class="max-w-6xl mx-auto w-full px-6 pt-6 pb-14">
+      <!-- Autonomy banner -->
+      <div class="flex flex-wrap items-center gap-2 rounded-xl border border-borderDark/50 bg-surfaceDark/40 px-4 py-3 mb-5">
+        <span class="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400 flex-shrink-0">
+          <svg class="w-3.5 h-3.5 text-accentBlue" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          Autonomous runs
+        </span>
+        <p class="text-[11px] text-slate-400 leading-relaxed">
+          The agent derives, auto-approves, and commits each stage by itself. It pauses only to ask a
+          clarifying question — the run waits as long as you need, no timeouts.
+        </p>
+        <span class="ml-auto flex items-center gap-1.5" id="bannerChips"></span>
+      </div>
+
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <h2 class="text-base font-semibold text-slate-100 leading-tight">Work items</h2>
+          <p class="text-xs text-slate-500 mt-0.5">Every run below is hands-off unless a question is waiting on you.</p>
+        </div>
+      </div>
+
+      <div id="list"></div>
+      <div id="capture"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+// =====================================================================
+// Domain constants (mirror prod frontend/src/PipelineView.tsx)
+// =====================================================================
+const KIND_TEXT = {
+  INT: 'text-amber-400', BUG: 'text-rose-400', SPK: 'text-violet-400', RFC: 'text-sky-400',
+  CHR: 'text-lime-400', DOC: 'text-blue-400', REQ: 'text-purple-400', DEC: 'text-teal-400',
+  OQ: 'text-sky-400', DEV: 'text-slate-300',
+}
+const REVIEW_STYLE = {
+  pending:  'bg-amber-500/10 border-amber-500/25 text-amber-400',
+  approved: 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400',
+  rejected: 'bg-rose-500/10 border-rose-500/25 text-rose-400',
+}
+const ACT = 'px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed'
+const codeOf = cat => ({ documentation:'DOC', requirements:'REQ', decisions:'DEC', open_questions:'OQ', tickets:'DEV' }[cat] || cat.toUpperCase().slice(0,3))
+const kindName = cat => ({ documentation:'Feature document', requirements:'Requirement', decisions:'Decision', open_questions:'Open question', tickets:'Ticket' }[cat] || cat)
+
+// Prod derivation spinner (PipelineView headerRow).
+const spin = (size) => `<svg class="w-${size} h-${size} animate-spin text-accentBlue" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path></svg>`
+const fmt = s => `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`
+
+// =====================================================================
+// State
+// =====================================================================
+let items = []
+let expandedId = null
+let openChips = new Set()        // expanded artifact ids
+let filters = new Set()          // active kind filter codes
+let drafts = {}                  // textarea drafts (artifact id → text)
+let qDrafts = {}                 // clarifying question free-text answers
+let closedPanels = new Set()     // collapsed log/clar panels: 'log-{id}' | 'clar-{id}'
+let newTitle = ''
+let newOpen = false
+const timers = new Map()
+
+function countsOf(it) {
+  const a = it.artifacts || {}
+  return {
+    docs: (a.documentation||[]).length,
+    reqs: (a.requirements||[]).length,
+    decs: (a.decisions||[]).length + (a.open_questions||[]).length,
+    tickets: (a.tickets||[]).length,
+  }
+}
+function flatArtifacts(it) {
+  const a = it.artifacts || {}
+  return [
+    it.seed && { id: it.seed.id, cat: it.seedCat, title: it.seed.title, review: it.seed.review, body: it.seed.body, auto: true },
+    ...(a.documentation||[]).map(x=>({...x, cat:'documentation'})),
+    ...(a.requirements||[]).map(x=>({...x, cat:'requirements'})),
+    ...(a.decisions||[]).map(x=>({...x, cat:'decisions'})),
+    ...(a.open_questions||[]).map(x=>({...x, cat:'open_questions'})),
+    ...(a.tickets||[]).map(x=>({...x, cat:'tickets'})),
+  ].filter(Boolean)
+}
+
+// =====================================================================
+// Script engine. Step codes:
+//   log     — append an activity line
+//   stage   — advance the stage rail
+//   derive  — push an artifact (auto-approved), log derive + commit
+//   pause   — stop and ask a clarifying question (waits without a timeout)
+//   done    — finish the run
+// Every step mutates state and then calls syncRow(it), which patches only
+// the affected containers in place — no full re-render, so focus and
+// in-progress typing survive, and the page never "reloads".
+// =====================================================================
+const TICK = 1600
+
+function applyStep(it, s) {
+  const now = fmt(it.elapsed)
+  if (s.t === 'log') {
+    it.logs.push({ time: now, cls: s.cls || 'run', text: s.text })
+  } else if (s.t === 'stage') {
+    it.stage = s.n
+    it.logs.push({ time: now, cls: 'run', text: s.label })
+  } else if (s.t === 'derive') {
+    const cat = s.cat
+    it.artifacts[cat] = it.artifacts[cat] || []
+    const art = { id: s.art.id, title: s.art.title, body: s.art.body, review: s.art.review || 'approved', req: s.art.req, auto: true }
+    it.artifacts[cat].push(art)
+    it.fresh = art.id
+    setTimeout(() => { it.fresh = null; syncArtifacts(it) }, 1600)
+    it.logs.push({ time: now, cls: 'derive', text: `derived ${kindName(cat).toLowerCase()} ${art.id} — ${art.title}` })
+    it.logs.push({ time: now, cls: 'commit', text: `git commit: ${s.cat === 'tickets' ? 'tickets:' : cat === 'documentation' ? 'docs:' : 'requirements:'} add ${s.art.title.toLowerCase()}` })
+  } else if (s.t === 'pause') {
+    it.run = 'asking'
+    it.waited = 0
+    it.question = { q: s.q, ctx: s.ctx, options: s.options, recommended: s.recommended }
+    it.tail = it.script.slice(it.scriptIdx + 1)
+    it.script = null
+    expandedId = it.id                       // surface the question to the user
+    it.logs.push({ time: now, cls: 'ask', text: `needs a decision — handed back to the user` })
+  } else if (s.t === 'done') {
+    it.run = 'done'
+    it.stage = 4
+    it.published = true
+    it.question = null
+    it.logs.push({ time: now, cls: 'commit', text: 'git commit: publish work item ' + it.id })
+    timers.delete(it.id)
+  }
+  syncRow(it)
+}
+
+function stepRun(it) {
+  if (it.run !== 'running' || !it.script) return
+  const s = it.script[it.scriptIdx]
+  if (!s) {
+    it.run = 'done'; it.published = true
+    timers.delete(it.id)
+    syncRow(it)
+    return
+  }
+  applyStep(it, s)
+  it.scriptIdx++
+  if (it.run === 'running') {
+    timers.set(it.id, setTimeout(() => stepRun(it), s.wait || TICK))
+  }
+}
+
+function startRun(it) {
+  it.run = 'running'; it.stage = 1
+  it.scriptIdx = 0
+  it.logs = []
+  it.artifacts = { documentation:[], requirements:[], decisions:[], open_questions:[], tickets:[] }
+  it.question = null; it.tail = null
+  it.pauses = it.pauses || 0; it.elapsed = 0; it.waited = 0
+  it.logs.push({ time: '00:00', cls: 'run', text: `autonomous run started · seed intents/${it.seed.id}.mdx` })
+  render()
+  timers.set(it.id, setTimeout(() => stepRun(it), 900))
+}
+
+// Kick off a run that was already mid-script (a seeded running item)
+// without resetting the progress logged so far.
+function kickoffSeededRun(it) {
+  if (it.run !== 'running' || !it.script) return
+  it.scriptIdx = 0
+  timers.set(it.id, setTimeout(() => stepRun(it), 900))
+}
+
+// Answering (or continuing with the default) resumes the run.
+function resumeRun(it, answer, how) {
+  it.pauses = (it.pauses || 0) + 1
+  it.history = it.history || []
+  it.history.push({ q: it.question.q, answer, how })
+  it.logs.push({
+    time: fmt(it.elapsed), cls: how === 'default' ? 'ask' : 'derive',
+    text: how === 'default'
+      ? `continued with the recommended default: "${answer}"`
+      : `answered: "${answer}" — run resumed`
+  })
+  it.question = null
+  it.run = 'running'
+  it.script = it.tail; it.tail = null; it.scriptIdx = 0
+  syncRow(it)
+  timers.set(it.id, setTimeout(() => stepRun(it), 700))
+}
+function answer(id, opt) { const it = byId(id); if (!it || it.run !== 'asking') return; resumeRun(it, opt, 'user') }
+function answerFreeform(id) {
+  const it = byId(id)
+  const text = (qDrafts[id] || '').trim()
+  if (!it || it.run !== 'asking' || !text) return
+  resumeRun(it, text, 'user')
+}
+function continueDefault(id) { const it = byId(id); if (!it || it.run !== 'asking') return; resumeRun(it, it.question.recommended, 'default') }
+
+// =====================================================================
+// Seed data
+// =====================================================================
+function nextSeq(prefix, floor) {
+  nextSeq.n = nextSeq.n || (floor || 100)
+  return prefix + nextSeq.n++
+}
+
+function seedItems() {
+  nextSeq.n = 170
+
+  // ---- WI-017 · running right now, completes in a few ticks ----
+  const running = {
+    id: 'WI-017', seedCat: 'intents',
+    seed: { id: 'INT-017', title: 'Support custom operators', review: 'approved',
+            body: 'Users should be able to register own operators (e.g. modulo, exponent) and reuse them across sessions.' },
+    title: 'Custom operators', summary: 'Let users define and reuse their own operators in the calculator.',
+    run: 'running', stage: 2, elapsed: 6, pauses: 0, waited: 0,
+    artifacts: {
+      documentation: [ { id:'DOC-041', title:'Custom operators feature document', review:'approved', auto:true,
+        body:'The calculator ships with arithmetic operators only. This document covers a registry of user-defined operators, how definitions are written, and how they persist across sessions.' } ],
+      requirements: [ { id:'REQ-041', title:'Register a custom operator', review:'approved', auto:true,
+        body:'A user can define an operator with a name, symbol and expression, and it appears in the operator menu immediately.' } ],
+      decisions: [], open_questions: [], tickets: [],
+    },
+    history: [], question: null,
+    logs: [
+      { time:'00:00', cls:'run', text:'autonomous run started · seed intents/INT-017.mdx' },
+      { time:'00:02', cls:'run', text:'read work item + intent' },
+      { time:'00:04', cls:'derive', text:'derived documentation DOC-041 — Custom operators feature document' },
+      { time:'00:05', cls:'commit', text:'git commit: docs: add custom operators feature document' },
+      { time:'00:06', cls:'derive', text:'derived requirement REQ-041 — Register a custom operator' },
+    ],
+    script: [
+      { t:'log', cls:'commit', text:'git commit: requirements: add operator registry requirement' },
+      { t:'derive', cat:'decisions', art:{ id:'DEC-011', title:'Store definitions in local storage',
+        body:'User definitions live in local storage so custom operators survive reloads without a backend.' } },
+      { t:'derive', cat:'open_questions', art:{ id:'OQ-008', title:'Should operators support recursion?',
+        body:'A definition may reference previously defined operators. Limit recursion depth for this iteration.' } },
+      { t:'log', cls:'commit', text:'git commit: requirements: derive decisions and open questions' },
+      { t:'stage', n:3, label:'deriving tickets' },
+      { t:'derive', cat:'tickets', art:{ id:'DEV-171', title:'Implement operator registry', req:'REQ-041', body:'Model definitions, CRUD, and persistence in local storage.' } },
+      { t:'derive', cat:'tickets', art:{ id:'DEV-172', title:'Operator expression evaluator', req:'REQ-041', body:'Parse and evaluate user expressions with bounded recursion.' } },
+      { t:'log', cls:'commit', text:'git commit: tickets: add operator implementation tickets' },
+      { t:'stage', n:4, label:'run complete' },
+      { t:'done' },
+    ],
+  }
+
+  // ---- WI-015 · paused on a clarifying question (default expanded) ----
+  const asking = {
+    id: 'WI-015', seedCat: 'intents',
+    seed: { id: 'INT-015', title: 'Dark mode across the app', review: 'approved',
+            body: 'Users should be able to switch the app to a dark theme, with the choice remembered across sessions.' },
+    title: 'Dark mode', summary: 'Theme switching with a remembered preference.',
+    run: 'asking', stage: 2, elapsed: 9, pauses: 0, waited: 14,
+    question: {
+      q: 'Should the app follow the system theme by default?',
+      ctx: 'asked while deriving requirements · from documentation/dark-mode.mdx',
+      options: ['Follow system theme (recommended)', 'Always dark by default', 'Light until the user enables dark'],
+      recommended: 'Follow system theme',
+    },
+    tail: [
+      { t:'derive', cat:'open_questions', art:{ id:'OQ-006', title:'Persist the choice per device?',
+        body:'Follow-system needs a local override store so a user can pin one theme per device.' } },
+      { t:'log', cls:'commit', text:'git commit: requirements: add open question' },
+      { t:'stage', n:3, label:'deriving tickets' },
+      { t:'derive', cat:'tickets', art:{ id:'DEV-130', title:'Theme toggle in the header', req:'REQ-030',
+        body:'Render the toggle and flip the palette classes immediately.' } },
+      { t:'derive', cat:'tickets', art:{ id:'DEV-131', title:'Persist the theme choice', req:'REQ-031',
+        body:'Save the resolved theme and restore it on boot, honoring the default.' } },
+      { t:'log', cls:'commit', text:'git commit: tickets: add theme tickets' },
+      { t:'stage', n:4, label:'run complete' }, { t:'done' },
+    ],
+    script: null,
+    artifacts: {
+      documentation: [ { id:'DOC-030', title:'Dark mode feature document', review:'approved', auto:true,
+        body:'The app currently ships a single light theme. This document covers a dark palette, how the user switches themes, and how the chosen theme persists across sessions.' } ],
+      requirements: [
+        { id:'REQ-030', title:'Switch between light and dark themes', review:'approved', auto:true,
+          body:'A theme toggle in the header flips the app between light and dark palettes immediately.' },
+        { id:'REQ-031', title:'Remember the theme choice', review:'approved', auto:true,
+          body:'The last chosen theme persists across sessions, with a default applied on first run.' },
+      ],
+      decisions: [], open_questions: [], tickets: [],
+    },
+    history: [],
+    logs: [
+      { time:'00:00', cls:'run', text:'autonomous run started · seed intents/INT-015.mdx' },
+      { time:'00:02', cls:'derive', text:'derived documentation DOC-030 — Dark mode feature document' },
+      { time:'00:04', cls:'commit', text:'git commit: docs: add dark mode feature document' },
+      { time:'00:06', cls:'derive', text:'derived requirement REQ-030 — Switch between light and dark themes' },
+      { time:'00:07', cls:'derive', text:'derived requirement REQ-031 — Remember the theme choice' },
+      { time:'00:09', cls:'commit', text:'git commit: requirements: add theme requirements' },
+      { time:'00:09', cls:'ask', text:'needs a decision — handed back to the user' },
+    ],
+  }
+
+  // ---- WI-019 · completed hands-off ----
+  const done = {
+    id: 'WI-019', seedCat: 'intents',
+    seed: { id: 'INT-019', title: 'Export calculation history', review: 'approved',
+            body: 'Users should be able to export their saved calculations for sharing and accounting.' },
+    title: 'Export calculation history', summary: 'CSV, PDF and JSON export of saved calculations.',
+    run: 'done', stage: 4, elapsed: 161, pauses: 0, waited: 0,
+    artifacts: {
+      documentation: [ { id:'DOC-031', title:'Export feature document', review:'approved', auto:true,
+        body:'Users keep history in the app and want it elsewhere. This document covers export formats, the range picker, and where the export button lives.' } ],
+      requirements: [
+        { id:'REQ-032', title:'Export as CSV, PDF or JSON', review:'approved', auto:true,
+          body:'The export menu offers CSV, PDF and JSON. Each format writes the selected history entries.' },
+        { id:'REQ-033', title:'Pick a date range to export', review:'approved', auto:true,
+          body:'The export dialog filters entries by a from/to range before writing.' },
+      ],
+      decisions: [ { id:'DEC-012', title:'Export client-side', review:'approved', auto:true,
+        body:'Exports build in the browser. No server round-trip keeps the feature offline-capable.' } ],
+      open_questions: [],
+      tickets: [
+        { id:'DEV-160', title:'Build export service', req:'REQ-032', review:'approved', auto:true, body:'Serialize selected entries to CSV, PDF and JSON.' },
+        { id:'DEV-161', title:'Export menu and range dialog', req:'REQ-033', review:'approved', auto:true, body:'Render the export menu and the date-range picker.' },
+        { id:'DEV-162', title:'Export acceptance tests', req:'REQ-032', review:'approved', auto:true, body:'Cover each format, the range filter, and empty history.' },
+      ],
+    },
+    history: [], question: null,
+    logs: [
+      { time:'00:00', cls:'run', text:'autonomous run started · seed intents/INT-019.mdx' },
+      { time:'00:03', cls:'derive', text:'derived documentation DOC-031 — Export feature document' },
+      { time:'00:05', cls:'commit', text:'git commit: docs: add export feature document' },
+      { time:'00:11', cls:'derive', text:'derived requirements REQ-032, REQ-033 — export formats, range picker' },
+      { time:'00:12', cls:'derive', text:'derived decision DEC-012 — export client-side' },
+      { time:'00:14', cls:'commit', text:'git commit: requirements: add export requirements' },
+      { time:'00:21', cls:'derive', text:'derived tickets DEV-160..DEV-162 — export service, menu, tests' },
+      { time:'00:23', cls:'commit', text:'git commit: tickets: add export tickets' },
+      { time:'00:23', cls:'commit', text:'git commit: publish work item WI-019' },
+    ],
+  }
+
+  // ---- WI-020 · captured, not yet handed to the workflow ----
+  const idle = {
+    id: 'WI-020', seedCat: 'intents',
+    seed: { id: 'INT-020', title: 'Print a receipt for a calculation', review: 'approved',
+            body: 'Users should be able to print the current calculation as a receipt.' },
+    title: 'Print receipts', summary: 'One-click print of the live calculation.',
+    run: 'idle', stage: 0, elapsed: 0, pauses: 0, waited: 0,
+    artifacts: { documentation:[], requirements:[], decisions:[], open_questions:[], tickets:[] },
+    history: [], question: null, logs: [],
+  }
+
+  return [running, asking, done, idle]
+}
+
+// A reusable autonomous script for fresh work items — runs, pauses once
+// for a decision, then finishes. Mirrors what every new intent would do.
+function standardScript(it) {
+  const D = () => nextSeq('DOC-')
+  const R = () => nextSeq('REQ-')
+  const DE = () => nextSeq('DEC-')
+  const O = () => nextSeq('OQ-')
+  const T = () => nextSeq('DEV-')
+  return [
+    { t:'log', cls:'run', text:'reading intent + work item' },
+    { t:'stage', n:1, label:'deriving documentation' },
+    { t:'derive', cat:'documentation', art:{ id:D(), title:'Feature documentation',
+      body:'Scope derived from the intent: user-facing behaviour, persistence notes and acceptance surface. Written and committed without supervision.' } },
+    { t:'stage', n:2, label:'deriving requirements' },
+    { t:'derive', cat:'requirements', art:{ id:R(), title:'Support the core behaviour',
+      body:'The feature must satisfy the intent statement, including its happy path.' } },
+    { t:'derive', cat:'requirements', art:{ id:R(), title:'Persist state across sessions',
+      body:'User-visible state survives reloads and remains consistent.' } },
+    { t:'derive', cat:'decisions', art:{ id:DE(), title:'Implement in the client application',
+      body:'No backend required for this work item; local persistence keeps it self-contained.' } },
+    { t:'log', cls:'commit', text:'git commit: requirements: derive requirements + decision' },
+    { t:'pause',
+      q:'A behaviour choice falls out of the documentation. Where should this work item aim?',
+      ctx:'asked while deriving requirements · from documentation/' + it.seed.id + '.mdx',
+      options:['Cover the happy path first (recommended)','Full behaviour including edge cases','Prototype, decide later'],
+      recommended:'Cover the happy path first' },
+    { t:'stage', n:3, label:'deriving tickets' },
+    { t:'derive', cat:'tickets', art:{ id:T(), title:'Implement core behaviour', req:null,
+      body:'Build the behaviour described by the approved requirements.' } },
+    { t:'derive', cat:'tickets', art:{ id:T(), title:'Acceptance tests for this work item', req:null,
+      body:'Cover the flows defined by the approved requirements.' } },
+    { t:'log', cls:'commit', text:'git commit: tickets: add implementation tickets' },
+    { t:'stage', n:4, label:'run complete' }, { t:'done' },
+  ]
+}
+
+items = seedItems()
+expandedId = 'WI-015'
+const byId = id => items.find(i => i.id === id)
+
+// =====================================================================
+// Render helpers (pure HTML)
+// =====================================================================
+function reviewPill(a) {
+  const v = a.review
+  return `<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border whitespace-nowrap ${REVIEW_STYLE[v] || REVIEW_STYLE.pending}">
+    <span class="w-1.5 h-1.5 rounded-full ${v==='approved'?'bg-emerald-400':v==='rejected'?'bg-rose-400':'bg-amber-400'}"></span>${v==='approved'?'Approved':v==='rejected'?'Rejected':'Needs review'}</span>`
+}
+const autoTag = () => `<span class="inline-flex px-1.5 py-0.5 rounded text-[9px] font-medium border border-slate-500/30 bg-slate-500/10 text-slate-400" title="Approved by the agent without supervision">auto</span>`
+
+const stageChips = [
+  { n:0, label:'Intent' }, { n:1, label:'Documents' }, { n:2, label:'Requirements' }, { n:3, label:'Tickets' },
+]
+function stageRail(it) {
+  return `<div class="flex items-center gap-1 flex-wrap">
+    ${stageChips.map((sc, i) => {
+      const active = it.stage >= sc.n
+      const dot = sc.n === 0 ? 'bg-slate-400' : sc.n === 1 ? 'bg-blue-400' : sc.n === 2 ? 'bg-purple-400' : 'bg-slate-400'
+      const on = it.stage > sc.n || (it.run === 'done' && sc.n === 3)
+      const now = it.stage === sc.n && (it.run === 'running' || it.run === 'asking')
+      return `
+        <span class="stage-chip inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold border ${on ? 'border-slate-500/40 bg-slate-800/60 text-slate-300' : now ? 'border-accentBlue/50 bg-accentBlue/10 text-slate-100' : 'border-borderDark/60 text-slate-600'}">
+          ${now && it.run === 'running' ? spin(2.5) : `<span class="w-1.5 h-1.5 rounded-full ${now ? 'bg-accentBlue' : on ? 'bg-emerald-400' : dot}"></span>`}
+          ${sc.label}
+        </span>${i < stageChips.length - 1 ? '<span class="text-slate-700 select-none">→</span>' : ''}`
+    }).join('')}
+  </div>`
+}
+
+function lineHtml(l) {
+  const clsMap = { run:'text-accentBlue', derive:'text-blue-400', commit:'text-emerald-400', ask:'text-amber-400' }
+  const mark = { run:'▸', derive:'＋', commit:'✓', ask:'?' }
+  return `<div class="flex items-baseline gap-2 px-1 rounded text-[11px] font-mono hover:bg-white/[0.03] transition-colors">
+    <span class="text-slate-600 w-9 flex-shrink-0 tabular-nums select-none">${l.time}</span>
+    <span class="${clsMap[l.cls] || 'text-slate-500'} w-3 flex-shrink-0 text-center select-none">${mark[l.cls] || '·'}</span>
+    <span class="text-slate-400">${l.text}</span>
+  </div>`
+}
+function activityLogLines(it) {
+  return it.logs.map(lineHtml).join('')
+}
+
+function togglePanel(kind, id) {
+  const key = kind + '-' + id
+  if (closedPanels.has(key)) closedPanels.delete(key); else closedPanels.add(key)
+  const wrap = document.getElementById(key)
+  if (!wrap) return
+  const chev = wrap.querySelector('[data-panel-chev]')
+  const body = wrap.querySelector('[data-panel-body]')
+  if (chev) chev.classList.toggle('-rotate-90', closedPanels.has(key))
+  if (body) body.classList.toggle('hidden', closedPanels.has(key))
+}
+
+function logPanel(it) {
+  const closed = closedPanels.has('log-' + it.id)
+  const status = it.run === 'running'
+    ? `${spin(2.5)}<span>streaming</span>`
+    : it.run === 'asking' ? 'paused on a question'
+    : it.run === 'done' ? 'complete' : ''
+  return `
+  <div id="log-${it.id}" class="rounded-lg border border-borderDark/40 bg-[#0b1220]/60 overflow-hidden">
+    <button onclick="togglePanel('log','${it.id}')" class="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white/[0.04] transition-colors group">
+      <svg data-panel-chev class="w-3 h-3 text-slate-500 transition-transform duration-150 flex-shrink-0 ${closed ? '-rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+      <span class="text-[9px] uppercase tracking-[0.18em] font-semibold text-slate-500">Run log</span>
+      <span data-logcount class="font-mono text-[9px] text-slate-600 bg-slate-800/60 border border-borderDark/50 rounded px-1.5 py-0.5">${it.logs.length}</span>
+      <span class="ml-auto text-[10px] text-slate-600 inline-flex items-center gap-1.5">${status}</span>
+    </button>
+    <div data-panel-body class="${closed ? 'hidden' : ''}">
+      <div id="loglist-${it.id}" class="px-3 pb-2.5 space-y-0.5 max-h-44 overflow-y-auto">${activityLogLines(it)}</div>
+    </div>
+  </div>`
+}
+
+function clarificationEntries(it) {
+  const h = it.history || []
+  if (!h.length) {
+    const t = it.run === 'asking'
+      ? 'Paused on the question above — answer to continue.'
+      : it.run === 'done'
+        ? 'No decisions needed — ran fully hands-off.'
+        : 'No decisions needed yet.'
+    return `<p class="text-[11px] text-slate-600 py-0.5">${t}</p>`
+  }
+  return h.map(x => `
+    <div class="rounded-md border border-borderDark/50 bg-[#0f172a]/40 px-2.5 py-2">
+      <div class="text-[11px] text-slate-300">${x.q}</div>
+      <div class="text-[11px] text-slate-500 mt-1">→ <span class="text-emerald-400 font-medium">${x.answer}</span>
+        <span class="text-[10px]">· ${x.how === 'default' ? 'continued with the default' : 'answered by you'}</span></div>
+    </div>`).join('')
+}
+
+function clarPanel(it) {
+  const closed = closedPanels.has('clar-' + it.id)
+  const hasEntries = (it.history || []).length > 0
+  return `
+  <div id="clar-${it.id}" class="rounded-lg border border-borderDark/40 bg-surfaceDark/30 overflow-hidden">
+    <button onclick="togglePanel('clar','${it.id}')" class="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white/[0.04] transition-colors group">
+      <svg data-panel-chev class="w-3 h-3 text-slate-500 transition-transform duration-150 flex-shrink-0 ${closed ? '-rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+      <span class="text-[9px] uppercase tracking-[0.18em] font-semibold text-slate-500">Clarification log</span>
+      <span data-clarcount class="font-mono text-[9px] text-slate-600 bg-slate-800/60 border border-borderDark/50 rounded px-1.5 py-0.5">${(it.history || []).length}</span>
+    </button>
+    <div data-panel-body class="${closed ? 'hidden' : ''}">
+      <div id="clarcontent-${it.id}" class="px-3 pb-2.5 space-y-1.5 ${hasEntries ? 'max-h-44 overflow-y-auto' : ''}">${clarificationEntries(it)}</div>
+    </div>
+  </div>`
+}
+
+function questionCard(it) {
+  if (it.run !== 'asking' || !it.question) return ''
+  const q = it.question
+  return `
+  <div class="rounded-xl border border-amber-500/30 bg-gradient-to-b from-amber-500/[0.06] to-transparent p-4 fade-in" data-askcard>
+    <div class="flex items-center gap-2 mb-2">
+      <span class="relative flex w-2 h-2 flex-shrink-0">
+        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-60"></span>
+        <span class="relative inline-flex w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.9)]"></span>
+      </span>
+      <span class="text-[10px] font-bold uppercase tracking-[0.16em] text-amber-300">Paused for clarification · ${it.id}</span>
+      <span class="text-[10px] font-mono ml-auto text-amber-300/80">waiting for you · <span data-waitcard="${it.id}">${fmt(it.waited || 0)}</span></span>
+    </div>
+    <p class="text-sm font-semibold text-slate-100 mb-1.5">${q.q}</p>
+    <p class="text-[11px] text-slate-500 mb-3">${q.ctx}</p>
+
+    <div class="flex items-center gap-2 flex-wrap mb-3">
+      ${q.options.map(o => {
+        const rec = o === q.recommended
+        return `<button onclick="answer('${it.id}','${o.replace(/'/g, '')}')"
+          class="px-3.5 py-1.5 rounded-lg text-xs font-medium border transition-all active:scale-[0.98] ${rec ? 'bg-accentBlue/15 border-accentBlue/50 text-slate-100 shadow-[0_0_16px_-6px_rgba(59,130,246,0.7)]' : 'border-borderDark text-slate-300 hover:bg-borderDark/20 hover:text-slate-100'}">
+          ${o}${rec ? ' <span class="text-[9px] text-accentBlue font-mono ml-1">rec</span>' : ''}</button>`
+      }).join('')}
+    </div>
+
+    <div class="flex items-center gap-2 mb-3">
+      <input id="qdraft-${it.id}" value="${qDrafts[it.id] || ''}" oninput="qDrafts['${it.id}']=this.value"
+        class="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg bg-[#0b1220] border border-borderDark text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-accentBlue/60"
+        placeholder="Type your own answer…">
+      <button onclick="answerFreeform('${it.id}')" class="${ACT} bg-accentBlue text-white hover:bg-accentBlue/80">Answer</button>
+    </div>
+
+    <div class="flex items-center gap-3 pt-2 mt-1 border-t border-borderDark/20">
+      <span class="text-[11px] text-slate-500 flex-1">The run waits here as long as you need — it never times out.</span>
+      <button onclick="continueDefault('${it.id}')" class="text-[11px] font-medium text-accentBlue hover:underline flex-shrink-0" title="Resume with the recommended option">Continue with: ${q.recommended}</button>
+    </div>
+  </div>`
+}
+
+// Per-item, per-stage delta timers. The pill keeps its own elapsed/wait
+// spans so the 1s clock can patch them without re-rendering anything.
+function runStatePill(it) {
+  if (it.run === 'running') {
+    const stageLabel = it.stage === 1 ? 'Documenting' : it.stage === 2 ? 'Deriving requirements' : it.stage === 3 ? 'Deriving tickets' : 'Running'
+    return `<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border border-accentBlue/30 bg-accentBlue/10 text-slate-200 flex-shrink-0">
+      ${spin(2.5)}<span class="text-accentBlue font-semibold">${stageLabel}</span><span class="font-mono text-slate-500" data-elapsed="${it.id}">${fmt(it.elapsed)}</span></span>`
+  }
+  if (it.run === 'asking') {
+    return `<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border border-amber-500/30 bg-amber-500/10 text-amber-300 flex-shrink-0">
+      <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>Waiting on you<span class="font-mono text-amber-400/80" data-waitpill="${it.id}">${fmt(it.waited || 0)}</span></span>`
+  }
+  if (it.run === 'done') {
+    return `<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border bg-emerald-500/10 border-emerald-500/30 text-emerald-300 flex-shrink-0">
+      <svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+      ${it.published ? 'Published' : 'Done'} · hands-off</span>`
+  }
+  return `<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border border-borderDark text-slate-500 flex-shrink-0">Not started</span>`
+}
+
+function artifactRows(it) {
+  const fl = flatArtifacts(it)
+  const counts = {}
+  for (const a of fl) counts[codeOf(a.cat)] = (counts[codeOf(a.cat)] || 0) + 1
+  const filtered = filters.size === 0 ? fl : fl.filter(a => filters.has(codeOf(a.cat)))
+  const pill = (code, n, active) => `<button onclick="toggleFilter('${code}')"
+    class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border transition-colors ${active ? 'bg-slate-700 text-white border-slate-500' : `border-borderDark ${KIND_TEXT[code] || 'text-slate-400'} hover:text-slate-100`}">${code}<span class="text-[10px] ${active ? 'text-slate-300' : 'text-slate-600'}">${n}</span></button>`
+  const pills = `<div class="flex gap-1.5 items-center flex-wrap pb-1">
+    ${filters.size === 0
+      ? pill('All', fl.length, true)
+      : `<button onclick="clearFilters()" class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border border-borderDark text-slate-400 hover:text-slate-200">All <span class="text-[10px] text-slate-600">${fl.length}</span></button>`}
+    ${Object.entries(counts).map(([c, n]) => pill(c, n, filters.has(c))).join('')}
+  </div>`
+
+  const rows = filtered.map(a => {
+    const open = openChips.has(a.id)
+    const fresh = it.fresh === a.id
+    return `
+    <div class="rounded-lg border ${fresh ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-borderDark bg-[#0f172a]/40'}">
+      <div class="flex items-center gap-2 px-3 py-1.5 cursor-pointer select-none" onclick="toggleArtifact('${it.id}','${a.id}')">
+        <svg class="w-3 h-3 text-slate-500 transition-transform ${open ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+        <span class="font-mono text-[11px] font-semibold flex-shrink-0 ${KIND_TEXT[codeOf(a.cat)] || 'text-slate-300'}">${a.id}</span>
+        <span class="text-xs text-slate-200 truncate min-w-0 flex-1">${a.title}</span>
+        ${a.req ? `<span class="text-[9px] font-mono text-slate-600 flex-shrink-0">${a.req}</span>` : ''}
+        ${a.auto ? autoTag() : ''}
+        ${reviewPill(a)}
+        <button onclick="event.stopPropagation();setReview('${it.id}','${a.id}')" title="Agent auto-approved this — click to override"
+          class="w-6 h-6 grid place-items-center rounded-md border border-borderDark text-slate-500 hover:text-emerald-300 transition-colors"><svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg></button>
+      </div>
+      ${open ? `
+      <div class="px-3 pb-3">
+        <div class="flex items-center justify-between mb-1.5">
+          <span class="text-[10px] uppercase tracking-wider font-semibold"><span class="${KIND_TEXT[codeOf(a.cat)] || 'text-slate-500'}">${codeOf(a.cat)}</span><span class="text-slate-500 ml-1">· ${kindName(a.cat)}</span></span>
+          <button onclick="event.stopPropagation();toggleEdit('${it.id}','${a.id}')" class="p-1 rounded-md border border-borderDark text-slate-500 hover:text-slate-200 transition-colors ${openChips.has('edit:'+a.id) ? 'opacity-40' : ''}">
+            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 4H4a1 1 0 00-1 1v14a1 1 0 001 1h14a1 1 0 001-1v-7M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+        </div>
+        ${openChips.has('edit:'+a.id) ? `
+          <textarea id="artedit-${a.id}" oninput="drafts['${a.id}']=this.value" class="w-full min-h-[90px] resize-y rounded-lg border border-borderDark bg-[#0b1220] p-2 text-xs text-slate-200 focus:outline-none focus:border-accentBlue/60">${drafts[a.id] !== undefined ? drafts[a.id] : a.body}</textarea>
+          <div class="flex justify-end gap-2 mt-1.5">
+            <button onclick="toggleEdit('${it.id}','${a.id}')" class="${ACT} border border-borderDark text-slate-300 hover:bg-borderDark/20">Cancel</button>
+            <button onclick="saveEdit('${it.id}','${a.id}')" class="${ACT} bg-accentBlue text-white hover:bg-accentBlue/80">Save — re-derive dependents</button>
+          </div>`
+        : `<p class="text-xs text-slate-400 leading-relaxed whitespace-pre-wrap">${a.body || '—'}</p>`}
+      </div>` : ''}
+    </div>`
+  }).join('')
+
+  return `
+  <div class="rounded-lg border border-borderDark/40 bg-surfaceDark/20 p-3">
+    ${pills}
+    ${rows || '<p class="text-xs text-slate-600 p-2">No artifacts derived yet — they appear here as the run advances.</p>'}
+    <div class="flex items-center justify-between pt-1.5 text-[10px] text-slate-600">
+      <span>${filters.size ? `Showing ${filtered.length} of ${fl.length} artifacts` : fl.length + ' artifacts'}</span>
+      <span class="italic">auto-approval can be overridden inline — the run then re-derives dependents</span>
+    </div>
+  </div>`
+}
+
+function idleBlock(it) {
+  return `
+      <div class="flex items-center justify-between rounded-lg border border-borderDark/40 bg-surfaceDark/20 px-4 py-3">
+        <div class="text-[11px] text-slate-500">Captured but not yet handed to the workflow. Once started, it runs hands-off and pauses only if it needs a decision.</div>
+        <button onclick="sendIdleToRun('${it.id}')" class="${ACT} bg-accentBlue text-white hover:bg-accentBlue/80 inline-flex items-center gap-1.5">
+          ${spin(2.5)}Start autonomous run</button>
+      </div>`
+}
+
+function expandedBody(it) {
+  if (expandedId !== it.id) return ''
+  return `
+  <div class="border-t border-borderDark px-4 py-3 bg-white/[0.02] space-y-3 fade-in">
+    ${it.run === 'idle' ? stageRail(it) : ''}
+    ${it.run !== 'idle' ? `
+      <div id="rail-${it.id}">${stageRail(it)}</div>
+      <div class="grid gap-3 xl:grid-cols-2 items-start">
+        ${logPanel(it)}
+        ${clarPanel(it)}
+      </div>
+      <div id="artifacts-${it.id}">${artifactRows(it)}</div>`
+    : idleBlock(it)}
+  </div>`
+}
+
+function itemRow(it) {
+  const c = countsOf(it)
+  const open = expandedId === it.id
+  const fresh = it.run === 'running' && it.fresh
+  const asking = it.run === 'asking'
+  return `
+  <div class="border-b border-borderDark last:border-b-0 ${fresh ? 'bg-emerald-500/5' : ''} ${asking ? 'bg-amber-500/[0.03]' : ''}" id="row-${it.id}">
+    <div class="grid grid-cols-[96px_minmax(150px,1.2fr)_minmax(200px,1.8fr)_44px_44px_44px_52px_170px] gap-3 items-center px-4 py-2.5 cursor-pointer select-none hover:bg-white/5 transition-colors"
+      onclick="toggleExpand('${it.id}')">
+      <div class="flex items-center gap-1.5 font-mono text-xs text-slate-400">
+        <svg class="w-3 h-3 text-slate-500 transition-transform ${open ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+        ${it.id}
+      </div>
+      <div class="text-sm font-medium text-slate-100 truncate">${it.title}</div>
+      <div class="text-xs text-slate-500 truncate">${it.summary || it.title}</div>
+      <div class="text-center text-xs text-slate-400" id="cnt-${it.id}-docs">${c.docs}</div>
+      <div class="text-center text-xs text-slate-400" id="cnt-${it.id}-reqs">${c.reqs}</div>
+      <div class="text-center text-xs text-slate-400" id="cnt-${it.id}-decs">${c.decs}</div>
+      <div class="text-center text-xs text-slate-400" id="cnt-${it.id}-tickets">${c.tickets}</div>
+      <div class="flex items-center justify-end gap-2" onclick="event.stopPropagation()"><span id="pill-${it.id}">${runStatePill(it)}</span></div>
+    </div>
+    ${it.run === 'asking' && expandedId === it.id
+      ? `<div id="ask-${it.id}" class="px-4 pt-0.5">${questionCard(it)}</div>`
+      : `<div id="ask-${it.id}" class="hidden"></div>`}
+    ${expandedBody(it)}
+  </div>`
+}
+
+function bannerChips() {
+  const nRun = items.filter(i => i.run === 'running').length
+  const nAsk = items.filter(i => i.run === 'asking').length
+  const nDone = items.filter(i => i.run === 'done').length
+  const chip = (cls, dot, txt) => `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-medium border ${cls}"><span class="w-1.5 h-1.5 rounded-full ${dot}"></span>${txt}</span>`
+  return chip(nRun ? 'border-accentBlue/40 bg-accentBlue/10 text-slate-200' : 'border-borderDark text-slate-500', nRun ? 'bg-accentBlue' : 'bg-slate-600', `${nRun} running`) +
+    chip(nAsk ? 'border-amber-500/40 bg-amber-500/10 text-amber-300' : 'border-borderDark text-slate-500', nAsk ? 'bg-amber-400' : 'bg-slate-600', `${nAsk} waiting`) +
+    chip(nDone ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' : 'border-borderDark text-slate-500', nDone ? 'bg-emerald-400' : 'bg-slate-600', `${nDone} hands-off`)
+}
+
+function captureForm() {
+  return `
+  <form onsubmit="event.preventDefault();startNewWorkItem()" class="flex items-center gap-2 px-4 py-2.5 border-t border-dashed border-slate-700">
+    <button type="button" onclick="newOpen=!newOpen;render()" class="text-[13px] text-accentBlue hover:underline font-medium flex-shrink-0">${newOpen ? 'Cancel' : '+ Capture new work item'}</button>
+    ${newOpen ? `
+      <input autofocus oninput="newTitle=this.value" value="${newTitle}" onkeydown="if(event.key==='Enter'){event.preventDefault();startNewWorkItem()}"
+        class="flex-1 px-2.5 py-1.5 rounded-lg bg-[#0b1220] border border-borderDark text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-accentBlue/60"
+        placeholder="Title (the seed of a work item)…">
+      <button type="submit" class="${ACT} bg-accentBlue text-white hover:bg-accentBlue/80" ${newTitle.trim() ? '' : 'disabled'}>Capture & run</button>` : ''}
+  </form>`
+}
+
+// =====================================================================
+// Full render — boot and user interactions only. Never called by the
+// 1s clock or by script steps, so the page never re-mounts while waiting.
+// =====================================================================
+function render() {
+  document.getElementById('bannerChips').innerHTML = bannerChips()
+  document.getElementById('list').innerHTML = `
+    <div class="border border-borderDark rounded-xl overflow-hidden bg-[#0b1220]/50">
+      <div class="grid grid-cols-[96px_minmax(150px,1.2fr)_minmax(200px,1.8fr)_44px_44px_44px_52px_170px] gap-3 items-center px-4 py-2 bg-slate-800/40 border-b border-borderDark text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+        <span>ID</span><span>Title</span><span>Summary</span><span class="text-center">Docs</span><span class="text-center">Reqs</span><span class="text-center">Decis</span><span class="text-center">Ticks</span><span class="text-right">State</span>
+      </div>
+      ${items.map(itemRow).join('')}
+      ${captureForm()}
+    </div>`
+  for (const it of items) it.rendered = it.logs.length
+}
+
+// =====================================================================
+// Targeted in-place updates — patched after each script step, no re-mount.
+// =====================================================================
+function syncLogs(it) {
+  const el = document.getElementById('loglist-' + it.id)
+  if (!el) return
+  const done = it.rendered || 0
+  const tail = it.logs.slice(done)
+  if (tail.length) el.insertAdjacentHTML('beforeend', tail.map(lineHtml).join(''))
+  it.rendered = it.logs.length
+  const cnt = document.querySelector('#log-' + it.id + ' [data-logcount]')
+  if (cnt) cnt.textContent = it.logs.length
+}
+function syncArtifacts(it) {
+  const el = document.getElementById('artifacts-' + it.id)
+  if (el) el.innerHTML = artifactRows(it)
+}
+function syncRail(it) {
+  const el = document.getElementById('rail-' + it.id)
+  if (el) el.innerHTML = stageRail(it)
+}
+function syncClar(it) {
+  const body = document.getElementById('clarcontent-' + it.id)
+  if (body) body.innerHTML = clarificationEntries(it)
+  const cnt = document.querySelector('#clar-' + it.id + ' [data-clarcount]')
+  if (cnt) cnt.textContent = (it.history || []).length
+}
+function syncAsk(it) {
+  const el = document.getElementById('ask-' + it.id)
+  if (!el) return
+  const show = it.run === 'asking' && expandedId === it.id
+  el.classList.toggle('hidden', !show)
+  el.innerHTML = show ? questionCard(it) : ''
+}
+function syncPill(it) {
+  const el = document.getElementById('pill-' + it.id)
+  if (el) el.innerHTML = runStatePill(it)
+}
+function syncCounts(it) {
+  const c = countsOf(it)
+  for (const [k, v] of Object.entries({ docs:c.docs, reqs:c.reqs, decs:c.decs, tickets:c.tickets })) {
+    const el = document.getElementById(`cnt-${it.id}-${k}`)
+    if (el) el.textContent = v
+  }
+}
+function syncBanner() {
+  const el = document.getElementById('bannerChips')
+  if (el) el.innerHTML = bannerChips()
+}
+function syncRow(it) {
+  syncPill(it)
+  syncCounts(it)
+  syncBanner()
+  syncAsk(it)
+  syncRail(it)
+  syncLogs(it)
+  syncArtifacts(it)
+  syncClar(it)
+  const row = document.getElementById('row-' + it.id)
+  if (row) row.classList.toggle('bg-amber-500/[0.03]', it.run === 'asking')
+}
+
+// =====================================================================
+// Interactions — full re-render is fine here (user-initiated).
+// =====================================================================
+function toggleExpand(id) { expandedId = expandedId === id ? null : id; render() }
+function toggleArtifact(wiId, artId) {
+  if (openChips.has(artId)) openChips.delete(artId); else openChips.add(artId)
+  syncArtifacts(byId(wiId))
+}
+function toggleEdit(wiId, artId) {
+  const key = 'edit:' + artId
+  if (openChips.has(key)) openChips.delete(key); else openChips.add(key)
+  if (drafts[artId] === undefined) {
+    const a = flatArtifacts(byId(wiId)).find(x => x.id === artId)
+    if (a) drafts[artId] = a.body
+  }
+  syncArtifacts(byId(wiId))
+}
+function saveEdit(wiId, artId) {
+  const it = byId(wiId)
+  const a = flatArtifacts(it).find(x => x.id === artId)
+  if (a) {
+    a.body = drafts[artId] !== undefined ? drafts[artId] : a.body
+    a.review = 'pending'          // edited by hand → the gate re-opens
+    if (it.run === 'done') it.published = false
+  }
+  openChips.delete('edit:' + artId)
+  syncRow(it)
+}
+function setReview(wiId, artId) {
+  const it = byId(wiId)
+  const a = flatArtifacts(it).find(x => x.id === artId)
+  if (!a) return
+  const next = a.auto ? 'pending' : (a.review === 'pending' ? 'approved' : 'pending')
+  a.review = next
+  a.auto = false
+  syncRow(it)
+}
+function toggleFilter(code) {
+  if (filters.has(code)) filters.delete(code); else filters.add(code)
+  for (const it of items) syncArtifacts(it)
+}
+function clearFilters() {
+  filters = new Set()
+  for (const it of items) syncArtifacts(it)
+}
+
+function startNewWorkItem() {
+  const title = newTitle.trim()
+  if (!title) return
+  nextSeq.wi = (nextSeq.wi || 21) + 1
+  nextSeq.in = (nextSeq.in || 21) + 1
+  const it = {
+    id: 'WI-' + String(nextSeq.wi).padStart(3, '0'),
+    seedCat: 'intents',
+    seed: { id: 'INT-' + String(nextSeq.in).padStart(3, '0'), title, review: 'approved',
+            body: 'Users should be able to ' + title.toLowerCase() + '.' },
+    title, summary: title,
+    run: 'running', stage: 0, elapsed: 0, pauses: 0, waited: 0,
+    artifacts: { documentation:[], requirements:[], decisions:[], open_questions:[], tickets:[] },
+    history: [], question: null, logs: [],
+  }
+  it.script = standardScript(it)
+  items.unshift(it)
+  newTitle = ''; newOpen = false
+  expandedId = it.id
+  startRun(it)
+}
+function sendIdleToRun(id) {
+  const it = byId(id)
+  if (!it || it.run !== 'idle') return
+  it.script = standardScript(it)
+  expandedId = id
+  startRun(it)
+}
+
+// =====================================================================
+// Clock — one real second per tick. Running items accumulate elapsed;
+// waiting items accumulate how long the user has been away. Only the
+// delta numeric spans are patched — nothing is re-rendered, no timeouts.
+// =====================================================================
+setInterval(() => {
+  for (const it of items) {
+    if (it.run === 'running') {
+      it.elapsed++
+      const el = document.querySelector(`[data-elapsed="${it.id}"]`)
+      if (el) el.textContent = fmt(it.elapsed)
+    } else if (it.run === 'asking') {
+      it.waited = (it.waited || 0) + 1
+      const w = fmt(it.waited)
+      const p = document.querySelector(`[data-waitpill="${it.id}"]`)
+      if (p) p.textContent = w
+      const c = document.querySelector(`[data-waitcard="${it.id}"]`)
+      if (c) c.textContent = w
+    }
+  }
+}, 1000)
+
+render()
+items.forEach(kickoffSeededRun)
+</script>
+</body>
+</html>
